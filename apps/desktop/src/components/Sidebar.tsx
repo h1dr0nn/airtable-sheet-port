@@ -5,11 +5,11 @@ import {
   LayoutDashboard,
   ScrollText,
   Settings as SettingsIcon,
-  ShieldCheck,
   Table2,
   type LucideIcon
 } from "lucide-react";
 import { useAppStatus } from "../hooks/useAppStatus.js";
+import { APP_NAME } from "../lib/constants.js";
 import { NAV, type ScreenId } from "../lib/nav.js";
 
 const NAV_ICON_SIZE = 15;
@@ -19,7 +19,6 @@ const NAV_ICONS: Record<ScreenId, LucideIcon> = {
   dashboard: LayoutDashboard,
   sources: Database,
   tables: Table2,
-  permissions: ShieldCheck,
   changes: GitPullRequest,
   audit: ScrollText,
   settings: SettingsIcon
@@ -37,6 +36,13 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-edge bg-bg">
+      {/* Wordmark: the app identity lives here, not in the titlebar. */}
+      <div className="flex items-center gap-2 px-6 pb-1 pt-4">
+        <span aria-hidden className="h-2 w-2 shrink-0 rounded-[3px] bg-accent" />
+        <h1 className="truncate text-[12.5px] font-semibold tracking-[-0.01em] text-ink">
+          {APP_NAME}
+        </h1>
+      </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4" aria-label="Main navigation">
         {NAV.map((item) => {
           const isActive = active === item.id;

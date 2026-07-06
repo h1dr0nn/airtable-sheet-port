@@ -1,15 +1,6 @@
-import { useState } from "react";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  Switch
-} from "@sheet-port/ui";
-import { useDeletePermissionRule, useSavePermissionRule } from "../../hooks/usePermissions.js";
+import { Switch } from "@sheet-port/ui";
+import type { DataSource } from "@sheet-port/shared";
+import { useSavePermissionRule } from "../../hooks/usePermissions.js";
 import type { PermissionRuleRow, SavePermissionRule } from "../../lib/ipc.js";
 import { RelativeTime } from "../RelativeTime.js";
 import { ConfirmationChips } from "./ConfirmationChips.js";
@@ -33,99 +24,79 @@ function buildTogglePatch(field: ToggleField, checked: boolean): Partial<SavePer
   }
 }
 
-function toSaveShape(rule: PermissionRuleRow): SavePermissionRule {
+/** A source with no rule yet starts fully denied; first toggle creates the row. */
+function toSaveShape(source: DataSource, rule: PermissionRuleRow | undefined): SavePermissionRule {
+  if (rule) {
+    return {
+      id: rule.id,
+      sourceId: rule.sourceId,
+      tableId: rule.tableId,
+      read: rule.read,
+      write: rule.write,
+      deleteRecords: rule.deleteRecords,
+      requireConfirmationFor: [...rule.requireConfirmationFor]
+    };
+  }
   return {
-    id: rule.id,
-    sourceId: rule.sourceId,
-    tableId: rule.tableId,
-    read: rule.read,
-    write: rule.write,
-    deleteRecords: rule.deleteRecords,
-    requireConfirmationFor: [...rule.requireConfirmationFor]
+    id: null,
+    sourceId: source.id,
+    tableId: null,
+    read: false,
+    write: false,
+    deleteRecords: false,
+    requireConfirmationFor: []
   };
 }
 
-export function RuleRow({ rule }: { rule: PermissionRuleRow }) {
+type RuleRowProps = {
+  source: DataSource;
+  /** The source-wide rule (tableId === null), if one exists yet. */
+  rule: PermissionRuleRow | undefined;
+};
+
+/** One row per source managing its source-wide rule: access switches plus
+ * confirmation chips. Saving is optimistic for existing rules. */
+export function RuleRow({ source, rule }: RuleRowProps) {
   const save = useSavePermissionRule();
-  const remove = useDeletePermissionRule();
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const scope = `${rule.sourceId}/${rule.tableId ?? "*"}`;
 
   const saveWith = (patch: Partial<SavePermissionRule>) => {
-    save.mutate({ ...toSaveShape(rule), ...patch });
+    save.mutate({ ...toSaveShape(source, rule), ...patch });
   };
 
   return (
-    <article className="rounded-card border border-edge bg-raised shadow-card">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge px-5 py-3">
-        <span className="font-mono text-[13px] font-medium text-ink">{scope}</span>
-        <span className="text-[12px] text-ink-muted">
-          Updated <RelativeTime iso={rule.updatedAt} />
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Delete rule for ${scope}`}
-          className="ml-auto text-danger hover:bg-danger/10 hover:text-danger"
-          onClick={() => setIsConfirmOpen(true)}
-        >
-          Delete
-        </Button>
+    <article className="py-4 first:pt-0 last:pb-0">
+      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-[13px] font-medium text-ink">{source.name}</span>
+        <span className="font-mono text-[11.5px] text-ink-faint">{source.id}/*</span>
+        {rule ? (
+          <span className="ml-auto text-[12px] text-ink-muted">
+            Updated <RelativeTime iso={rule.updatedAt} />
+          </span>
+        ) : null}
       </header>
 
-      <div className="px-5 py-4">
-        <div className="flex flex-wrap items-center gap-6">
-          {TOGGLES.map(({ field, label }) => (
-            <label
-              key={field}
-              className="flex cursor-pointer items-center gap-2 text-[13px] text-ink"
-            >
-              <Switch
-                checked={rule[field]}
-                disabled={save.isPending}
-                onCheckedChange={(checked) => saveWith(buildTogglePatch(field, checked))}
-                aria-label={`${label} access for ${scope}`}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-
-        <div className="mt-4 border-t border-edge pt-4">
-          <p className="overline-label mb-2.5">Require confirmation for</p>
-          <ConfirmationChips
-            value={rule.requireConfirmationFor}
-            disabled={save.isPending}
-            onChange={(next) => saveWith({ requireConfirmationFor: next })}
-          />
-        </div>
+      <div className="mt-3 flex flex-wrap items-center gap-6">
+        {TOGGLES.map(({ field, label }) => (
+          <label key={field} className="flex cursor-pointer items-center gap-2 text-[13px] text-ink">
+            <Switch
+              checked={rule?.[field] ?? false}
+              disabled={save.isPending}
+              onCheckedChange={(checked) => saveWith(buildTogglePatch(field, checked))}
+              aria-label={`${label} access for ${source.name}`}
+            />
+            {label}
+          </label>
+        ))}
       </div>
 
-      <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete rule</DialogTitle>
-            <DialogDescription>
-              Agents lose all access granted by the rule for{" "}
-              <span className="font-mono text-ink">{scope}</span>. This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={remove.isPending}
-              onClick={() => {
-                remove.mutate(rule.id, { onSuccess: () => setIsConfirmOpen(false) });
-              }}
-            >
-              {remove.isPending ? "Deleting..." : "Delete rule"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <div className="mt-3.5">
+        <p className="overline-label mb-2">Require confirmation for</p>
+        <ConfirmationChips
+          value={rule?.requireConfirmationFor ?? []}
+          disabled={save.isPending}
+          onChange={(next) => saveWith({ requireConfirmationFor: next })}
+        />
+      </div>
     </article>
   );
 }

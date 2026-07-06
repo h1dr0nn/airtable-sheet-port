@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@sheet-port/ui";
+import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 import { ipc, type PermissionRuleRow, type SavePermissionRule } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
@@ -18,7 +18,6 @@ type SaveContext = {
 /** Optimistically applies edits to existing rules, then reconciles with the backend. */
 export function useSavePermissionRule() {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   return useMutation<PermissionRuleRow, unknown, SavePermissionRule, SaveContext>({
     mutationFn: (rule) => ipc.savePermissionRule(rule),
@@ -39,29 +38,10 @@ export function useSavePermissionRule() {
       if (context?.previous) {
         queryClient.setQueryData(queryKeys.permissionRules, context.previous);
       }
-      toast(getErrorMessage(error), "error");
+      toast.error("Permission rule not saved", { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast("Permission rule saved", "success");
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.permissionRules });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents });
-    }
-  });
-}
-
-export function useDeletePermissionRule() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: (id: number) => ipc.deletePermissionRule(id),
-    onError: (error) => {
-      toast(getErrorMessage(error), "error");
-    },
-    onSuccess: () => {
-      toast("Permission rule deleted", "success");
+      toast.success("Permission rule saved");
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.permissionRules });

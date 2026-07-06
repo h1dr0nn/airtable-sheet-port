@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Button, useToast } from "@sheet-port/ui";
+import { Button, toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 
 const COPIED_RESET_MS = 1500;
@@ -15,7 +15,6 @@ type CopyButtonProps = {
 export function CopyButton({ value, label, children }: CopyButtonProps) {
   const [isCopied, setIsCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
-  const { toast } = useToast();
 
   const handleCopy = async () => {
     try {
@@ -26,7 +25,7 @@ export function CopyButton({ value, label, children }: CopyButtonProps) {
       }
       resetTimerRef.current = window.setTimeout(() => setIsCopied(false), COPIED_RESET_MS);
     } catch (error: unknown) {
-      toast(getErrorMessage(error), "error");
+      toast.error("Copy failed", { description: getErrorMessage(error) });
     }
   };
 

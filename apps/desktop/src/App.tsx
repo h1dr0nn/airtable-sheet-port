@@ -1,4 +1,5 @@
 import { useState, type ComponentType } from "react";
+import { ToastViewport } from "@sheet-port/ui";
 import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
 import { useTheme } from "./hooks/useTheme.js";
@@ -7,7 +8,6 @@ import { AuditLog } from "./screens/AuditLog.js";
 import { Changes } from "./screens/Changes.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { DataSources } from "./screens/DataSources.js";
-import { Permissions } from "./screens/Permissions.js";
 import { Settings } from "./screens/Settings.js";
 import { Tables } from "./screens/Tables.js";
 
@@ -19,7 +19,6 @@ const SCREENS: Record<ScreenId, ComponentType<ScreenProps>> = {
   dashboard: Dashboard,
   sources: DataSources,
   tables: Tables,
-  permissions: Permissions,
   changes: Changes,
   audit: AuditLog,
   settings: Settings
@@ -34,7 +33,7 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg font-sans text-ink">
-      <Titlebar />
+      <Titlebar onNavigate={setScreen} />
       <div className="flex min-h-0 flex-1">
         <Sidebar active={screen} onNavigate={setScreen} />
         <main className="min-w-0 flex-1 overflow-y-auto">
@@ -43,6 +42,7 @@ export function App() {
           </div>
         </main>
       </div>
+      <ToastViewport />
     </div>
   );
 }

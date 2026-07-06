@@ -15,10 +15,14 @@ import {
   useGoogleDisconnect,
   useSetGoogleClientId
 } from "../hooks/useGoogleConfig.js";
+import { usePermissionRules } from "../hooks/usePermissions.js";
+import { useSources } from "../hooks/useSources.js";
 import { useTheme } from "../hooks/useTheme.js";
+import { APP_AUTHOR } from "../lib/constants.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { CopyButton } from "../components/CopyButton.js";
+import { RuleRow } from "../components/permissions/RuleRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
 
@@ -32,6 +36,36 @@ const RESOLVED_LABELS: Record<"light" | "dark", string> = {
   light: "light",
   dark: "dark"
 };
+
+function AppearanceCard() {
+  const { setting, resolved, setSetting } = useTheme();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Appearance</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-ink">Theme</p>
+            <p className="mt-0.5 text-[12.5px] text-ink-muted">
+              {setting === "system"
+                ? `Follows your system preference (currently ${RESOLVED_LABELS[resolved]})`
+                : "Fixed for this device"}
+            </p>
+          </div>
+          <SegmentedControl
+            options={THEME_OPTIONS}
+            value={setting}
+            onChange={setSetting}
+            ariaLabel="Theme"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function GoogleSheetsCard() {
   const { data: config, isPending } = useGoogleConfig();
@@ -124,67 +158,102 @@ function GoogleSheetsCard() {
   );
 }
 
-export function Settings() {
-  const { setting, resolved, setSetting } = useTheme();
+/** One source-wide rule per connected source; agents are denied by default. */
+function PermissionsCard() {
+  const { data: sources, isPending: isSourcesPending } = useSources();
+  const { data: rules, isPending: isRulesPending } = usePermissionRules();
+  const sourceList = sources ?? [];
+  const ruleList = rules ?? [];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Permissions</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isSourcesPending || isRulesPending ? (
+          <Skeleton className="h-24" />
+        ) : sourceList.length === 0 ? (
+          <p className="rounded-md border border-edge bg-surface px-3 py-6 text-center text-[12.5px] text-ink-muted">
+            Connect a data source first
+          </p>
+        ) : (
+          <>
+            <p className="mb-1 text-[12px] leading-4 text-ink-muted">
+              Source-wide access for agents; every source starts fully denied.
+            </p>
+            <div className="divide-y divide-edge">
+              {sourceList.map((source) => (
+                <RuleRow
+                  key={source.id}
+                  source={source}
+                  rule={ruleList.find(
+                    (rule) => rule.sourceId === source.id && rule.tableId === null
+                  )}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AboutCard() {
   const { data: status, isPending } = useAppStatus();
 
   return (
-    <>
-      <ScreenHeader title="Settings" description="Appearance, connections, and application details" />
-
-      <div className="max-w-2xl space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Appearance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium text-ink">Theme</p>
-                <p className="mt-0.5 text-[12.5px] text-ink-muted">
-                  {setting === "system"
-                    ? `Follows your system preference (currently ${RESOLVED_LABELS[resolved]})`
-                    : "Fixed for this device"}
-                </p>
-              </div>
-              <SegmentedControl
-                options={THEME_OPTIONS}
-                value={setting}
-                onChange={setSetting}
-                ariaLabel="Theme"
-              />
+    <Card>
+      <CardHeader>
+        <CardTitle>About</CardTitle>
+      </CardHeader>
+      <CardContent className="py-1">
+        {isPending || !status ? (
+          <Skeleton className="my-3 h-16" />
+        ) : (
+          <dl className="divide-y divide-edge">
+            <div className="flex h-9 items-center justify-between gap-4">
+              <dt className="text-[13px] text-ink-muted">Version</dt>
+              <dd className="font-mono text-[12.5px] text-ink">{status.appVersion}</dd>
             </div>
-          </CardContent>
-        </Card>
+            <div className="flex h-9 items-center justify-between gap-4">
+              <dt className="shrink-0 text-[13px] text-ink-muted">Database</dt>
+              <dd className="flex min-w-0 items-center gap-1">
+                <span className="truncate font-mono text-[12.5px] text-ink" title={status.dbPath}>
+                  {status.dbPath}
+                </span>
+                <CopyButton value={status.dbPath} label="Copy database path" />
+              </dd>
+            </div>
+            <div className="flex h-9 items-center justify-between gap-4">
+              <dt className="text-[13px] text-ink-muted">Created by</dt>
+              <dd className="text-[12.5px] font-medium text-ink">{APP_AUTHOR}</dd>
+            </div>
+          </dl>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
-        <GoogleSheetsCard />
+export function Settings() {
+  return (
+    <>
+      <ScreenHeader
+        title="Settings"
+        description="Appearance, connections, permissions, and application details"
+      />
 
-        <Card>
-          <CardHeader>
-            <CardTitle>About</CardTitle>
-          </CardHeader>
-          <CardContent className="py-1">
-            {isPending || !status ? (
-              <Skeleton className="my-3 h-16" />
-            ) : (
-              <dl className="divide-y divide-edge">
-                <div className="flex h-9 items-center justify-between gap-4">
-                  <dt className="text-[13px] text-ink-muted">Version</dt>
-                  <dd className="font-mono text-[12.5px] text-ink">{status.appVersion}</dd>
-                </div>
-                <div className="flex h-9 items-center justify-between gap-4">
-                  <dt className="shrink-0 text-[13px] text-ink-muted">Database</dt>
-                  <dd className="flex min-w-0 items-center gap-1">
-                    <span className="truncate font-mono text-[12.5px] text-ink" title={status.dbPath}>
-                      {status.dbPath}
-                    </span>
-                    <CopyButton value={status.dbPath} label="Copy database path" />
-                  </dd>
-                </div>
-              </dl>
-            )}
-          </CardContent>
-        </Card>
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+        <div className="space-y-4">
+          <AppearanceCard />
+          <AboutCard />
+        </div>
+        <div className="space-y-4">
+          <GoogleSheetsCard />
+          <PermissionsCard />
+        </div>
       </div>
     </>
   );

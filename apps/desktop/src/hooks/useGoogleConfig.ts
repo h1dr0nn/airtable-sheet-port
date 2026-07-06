@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useToast } from "@sheet-port/ui";
+import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 import { ipc } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
@@ -24,15 +24,14 @@ function invalidateGoogleState(queryClient: QueryClient): void {
 
 export function useSetGoogleClientId() {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   return useMutation({
     mutationFn: (clientId: string) => ipc.setGoogleClientId(clientId),
     onError: (error: unknown) => {
-      toast(getErrorMessage(error), "error");
+      toast.error("Client ID not saved", { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast("Google client ID saved", "success");
+      toast.success("Google client ID saved");
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.googleConfig });
@@ -42,15 +41,14 @@ export function useSetGoogleClientId() {
 
 export function useGoogleConnect() {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   return useMutation({
     mutationFn: () => ipc.googleConnect(),
     onError: (error: unknown) => {
-      toast(getErrorMessage(error), "error");
+      toast.error("Google Sheets connection failed", { description: getErrorMessage(error) });
     },
     onSuccess: (result) => {
-      toast(`Connected as ${result.email}`, "success");
+      toast.success("Google Sheets connected", { description: `Signed in as ${result.email}` });
     },
     onSettled: () => {
       invalidateGoogleState(queryClient);
@@ -60,15 +58,14 @@ export function useGoogleConnect() {
 
 export function useGoogleDisconnect() {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   return useMutation({
     mutationFn: () => ipc.googleDisconnect(),
     onError: (error: unknown) => {
-      toast(getErrorMessage(error), "error");
+      toast.error("Google Sheets disconnect failed", { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast("Google Sheets disconnected", "success");
+      toast.success("Google Sheets disconnected");
     },
     onSettled: () => {
       invalidateGoogleState(queryClient);

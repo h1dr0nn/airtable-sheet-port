@@ -96,6 +96,27 @@ input {
   }
 }
 
+/* Toast stack controls (ported from lyra-page, re-themed to tokens). */
+.toast-dismiss-btn {
+  color: rgb(var(--ink-faint));
+  transition: color 0.15s ease;
+}
+
+.toast-dismiss-btn:hover {
+  color: rgb(var(--danger));
+}
+
+.toast-clear-btn {
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.toast-clear-btn:hover {
+  color: rgb(var(--danger));
+  border-color: rgb(var(--danger));
+}
+
 /* Theme-aware scrollbars for the embedded webview. */
 *::-webkit-scrollbar {
   width: 10px;

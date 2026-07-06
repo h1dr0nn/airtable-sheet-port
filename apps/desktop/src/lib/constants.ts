@@ -1,3 +1,6 @@
+export const APP_NAME = "Airtable - Sheet Port";
+export const APP_AUTHOR = "h1dr0n";
+
 export const TABLE_PAGE_SIZE = 25;
 export const AUDIT_PAGE_SIZE = 100;
 export const APP_STATUS_REFETCH_MS = 5000;

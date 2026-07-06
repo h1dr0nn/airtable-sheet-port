@@ -2,7 +2,6 @@ export type ScreenId =
   | "dashboard"
   | "sources"
   | "tables"
-  | "permissions"
   | "changes"
   | "audit"
   | "settings";
@@ -18,7 +17,6 @@ export const NAV: readonly NavItem[] = [
   { id: "dashboard", label: "Dashboard", screen: "dashboard" },
   { id: "sources", label: "Data Sources", screen: "sources" },
   { id: "tables", label: "Tables", screen: "tables" },
-  { id: "permissions", label: "Permissions", screen: "permissions" },
   { id: "changes", label: "Changes", screen: "changes" },
   { id: "audit", label: "Audit Log", screen: "audit" },
   { id: "settings", label: "Settings", screen: "settings" }

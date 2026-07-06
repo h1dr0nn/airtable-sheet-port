@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@sheet-port/ui";
+import { toast } from "@sheet-port/ui";
 import type { ChangeStatus, PendingChange } from "@sheet-port/shared";
 import { getErrorMessage } from "../lib/errors.js";
 import { ipc } from "../lib/ipc.js";
@@ -17,15 +17,14 @@ function useDecideChange(
   successMessage: string
 ) {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   return useMutation({
     mutationFn: decide,
     onError: (error: unknown) => {
-      toast(getErrorMessage(error), "error");
+      toast.error("Change decision failed", { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast(successMessage, "success");
+      toast.success(successMessage);
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.changesRoot });
