@@ -3,15 +3,61 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
+  /* Token mirror of tailwind.config.ts for non-Tailwind consumers. */
+  --color-bg: #0a0d12;
+  --color-surface: #10141b;
+  --color-surface-raised: #161b24;
+  --color-border: rgba(148, 163, 184, 0.08);
+  --color-text: #e6eaf2;
+  --color-text-muted: #8a94a6;
+  --color-accent: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #60a5fa;
+  font-family: "Inter var", Inter, system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
 input {
   font: inherit;
+}
+
+::selection {
+  background: rgba(52, 211, 153, 0.25);
+}
+
+/* Slim dark scrollbars for the embedded webview. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-color: rgba(148, 163, 184, 0.16);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(148, 163, 184, 0.32);
 }
