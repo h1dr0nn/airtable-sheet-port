@@ -1,14 +1,14 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/shared" },
-    { "path": "packages/ui" },
-    { "path": "packages/core" },
-    { "path": "packages/storage" },
-    { "path": "packages/connectors/mock" },
-    { "path": "packages/connectors/google-sheets" },
-    { "path": "packages/connectors/provider" },
-    { "path": "apps/mcp-server" },
-    { "path": "apps/desktop" }
+    {
+      "path": "packages/shared"
+    },
+    {
+      "path": "packages/ui"
+    },
+    {
+      "path": "apps/desktop"
+    }
   ]
 }

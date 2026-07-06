@@ -14,12 +14,7 @@
     "baseUrl": ".",
     "paths": {
       "@sheet-port/shared": ["packages/shared/src/index.ts"],
-      "@sheet-port/core": ["packages/core/src/index.ts"],
-      "@sheet-port/storage": ["packages/storage/src/index.ts"],
-      "@sheet-port/ui": ["packages/ui/src/index.tsx"],
-      "@sheet-port/mock-connector": ["packages/connectors/mock/src/index.ts"],
-      "@sheet-port/google-sheets-connector": ["packages/connectors/google-sheets/src/index.ts"],
-      "@sheet-port/provider-connector": ["packages/connectors/provider/src/index.ts"]
+      "@sheet-port/ui": ["packages/ui/src/index.tsx"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "sheet-port": {
-      "command": "pnpm",
-      "args": ["--dir", "/absolute/path/to/airtable-sheet-port", "--filter", "@sheet-port/mcp-server", "start"]
+      "command": "C:/absolute/path/to/airtable-sheet-port/target/release/sheet-port-mcp.exe",
+      "args": []
     }
   }
 }
