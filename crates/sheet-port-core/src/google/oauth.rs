@@ -35,13 +35,92 @@ const STREAM_READ_TIMEOUT_SECS: u64 = 10;
 /// Safety cap while draining request headers from the browser.
 const MAX_HEADER_LINES: usize = 100;
 
-const SUCCESS_HTML: &str = "<!doctype html><html><head><meta charset=\"utf-8\">\
-<title>Airtable - Sheet Port</title></head>\
-<body style=\"font-family:system-ui,sans-serif;margin:4rem auto;max-width:32rem;text-align:center\">\
-<h1>Google Sheets connected</h1>\
-<p>You can close this tab and return to Airtable - Sheet Port.</p></body></html>";
+/// Shared themed shell for every loopback callback page: self-contained (no
+/// external assets), theme-aware via `prefers-color-scheme`. Palette mirrors the
+/// desktop app's light/dark tokens so the browser tab feels part of the product.
+/// The shell runs from `<!doctype>` through the wordmark; pages append their
+/// glyph, headings, and copy, then close with [`PAGE_SHELL_END`].
+const PAGE_SHELL_START: &str = "<!doctype html><html lang=\"en\"><head>\
+<meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>Airtable - Sheet Port</title>\
+<style>\
+:root{--bg:#F1F0ED;--card:#FFFFFF;--ink:#23262B;--muted:#6D6B66;--border:#E2E0DB;--accent:#B4552D;--success:#2F7D4F;--danger:#C0392B;--shadow:rgba(20,22,27,.08)}\
+@media (prefers-color-scheme:dark){:root{--bg:#1C1E23;--card:#24262C;--ink:#E7E5E0;--muted:#A09D96;--border:#35373E;--accent:#D9865B;--success:#5FB07D;--danger:#E06B5E;--shadow:rgba(0,0,0,.32)}}\
+*{box-sizing:border-box}html,body{height:100%}\
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;display:flex;align-items:center;justify-content:center;padding:1.5rem}\
+.card{width:100%;max-width:30rem;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 2px var(--shadow),0 12px 32px var(--shadow);padding:2.75rem 2.5rem;text-align:center}\
+.wordmark{margin:0 0 1.75rem;font-size:.6875rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}\
+.glyph{width:56px;height:56px;margin:0 auto 1.25rem;display:block}.glyph.ok{color:var(--success)}.glyph.err{color:var(--danger)}\
+h1{margin:0 0 .75rem;font-size:1.5rem;font-weight:600;letter-spacing:-.01em}\
+p{margin:0 0 1rem;font-size:.9375rem;color:var(--ink)}\
+.hint{margin:0;font-size:.8125rem;color:var(--muted)}\
+</style></head>\
+<body><main class=\"card\">\
+<p class=\"wordmark\">Airtable - Sheet Port</p>";
 
-const NOT_FOUND_HTML: &str = "<!doctype html><html><body>Not found</body></html>";
+/// Closes the card and document opened by [`PAGE_SHELL_START`].
+const PAGE_SHELL_END: &str = "</main></body></html>";
+
+/// Error glyph: x inside a circle, inheriting the current text colour.
+const GLYPH_ERROR: &str = "<svg class=\"glyph err\" viewBox=\"0 0 24 24\" \
+fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" \
+stroke-linejoin=\"round\" aria-hidden=\"true\">\
+<circle cx=\"12\" cy=\"12\" r=\"9\"></circle>\
+<path d=\"M15 9l-6 6M9 9l6 6\"></path></svg>";
+
+/// Body of the [`SUCCESS_HTML`] card (glyph + copy), between the shared shell
+/// boundaries. `concat!` keeps `SUCCESS_HTML` a compile-time `&str`.
+const SUCCESS_HTML: &str = concat!(
+    "<!doctype html><html lang=\"en\"><head>\
+<meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>Airtable - Sheet Port</title>\
+<style>\
+:root{--bg:#F1F0ED;--card:#FFFFFF;--ink:#23262B;--muted:#6D6B66;--border:#E2E0DB;--accent:#B4552D;--success:#2F7D4F;--danger:#C0392B;--shadow:rgba(20,22,27,.08)}\
+@media (prefers-color-scheme:dark){:root{--bg:#1C1E23;--card:#24262C;--ink:#E7E5E0;--muted:#A09D96;--border:#35373E;--accent:#D9865B;--success:#5FB07D;--danger:#E06B5E;--shadow:rgba(0,0,0,.32)}}\
+*{box-sizing:border-box}html,body{height:100%}\
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;display:flex;align-items:center;justify-content:center;padding:1.5rem}\
+.card{width:100%;max-width:30rem;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 2px var(--shadow),0 12px 32px var(--shadow);padding:2.75rem 2.5rem;text-align:center}\
+.wordmark{margin:0 0 1.75rem;font-size:.6875rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}\
+.glyph{width:56px;height:56px;margin:0 auto 1.25rem;display:block}.glyph.ok{color:var(--success)}.glyph.err{color:var(--danger)}\
+h1{margin:0 0 .75rem;font-size:1.5rem;font-weight:600;letter-spacing:-.01em}\
+p{margin:0 0 1rem;font-size:.9375rem;color:var(--ink)}\
+.hint{margin:0;font-size:.8125rem;color:var(--muted)}\
+</style></head>\
+<body><main class=\"card\">\
+<p class=\"wordmark\">Airtable - Sheet Port</p>",
+    "<svg class=\"glyph ok\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"></circle><path d=\"M8.5 12.5l2.5 2.5 4.5-5\"></path></svg>",
+    "<h1>Google Sheets Connected</h1>\
+<p>Your Google account is now linked to Airtable - Sheet Port.</p>\
+<p class=\"hint\">You can close this tab.</p>",
+    "</main></body></html>"
+);
+
+const NOT_FOUND_HTML: &str = concat!(
+    "<!doctype html><html lang=\"en\"><head>\
+<meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>Airtable - Sheet Port</title>\
+<style>\
+:root{--bg:#F1F0ED;--card:#FFFFFF;--ink:#23262B;--muted:#6D6B66;--border:#E2E0DB;--accent:#B4552D;--success:#2F7D4F;--danger:#C0392B;--shadow:rgba(20,22,27,.08)}\
+@media (prefers-color-scheme:dark){:root{--bg:#1C1E23;--card:#24262C;--ink:#E7E5E0;--muted:#A09D96;--border:#35373E;--accent:#D9865B;--success:#5FB07D;--danger:#E06B5E;--shadow:rgba(0,0,0,.32)}}\
+*{box-sizing:border-box}html,body{height:100%}\
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;display:flex;align-items:center;justify-content:center;padding:1.5rem}\
+.card{width:100%;max-width:30rem;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 2px var(--shadow),0 12px 32px var(--shadow);padding:2.75rem 2.5rem;text-align:center}\
+.wordmark{margin:0 0 1.75rem;font-size:.6875rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}\
+.glyph{width:56px;height:56px;margin:0 auto 1.25rem;display:block}.glyph.ok{color:var(--success)}.glyph.err{color:var(--danger)}\
+h1{margin:0 0 .75rem;font-size:1.5rem;font-weight:600;letter-spacing:-.01em}\
+p{margin:0 0 1rem;font-size:.9375rem;color:var(--ink)}\
+.hint{margin:0;font-size:.8125rem;color:var(--muted)}\
+</style></head>\
+<body><main class=\"card\">\
+<p class=\"wordmark\">Airtable - Sheet Port</p>",
+    "<h1>Not Found</h1>\
+<p>This page is only used by the Airtable - Sheet Port sign-in flow.</p>\
+<p class=\"hint\">You can close this tab.</p>",
+    "</main></body></html>"
+);
 
 /// Raw token endpoint response (authorization-code exchange and refresh).
 #[derive(Debug, Deserialize)]
@@ -345,13 +424,15 @@ fn read_request_target(stream: &TcpStream) -> Option<String> {
     Some(target)
 }
 
+/// Themed error page reusing the shared shell. The caller's `{message}` is the
+/// only dynamic part; it is trusted internal copy (never raw provider text), so
+/// no HTML escaping is applied here.
 fn error_html(message: &str) -> String {
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\">\
-<title>Airtable - Sheet Port</title></head>\
-<body style=\"font-family:system-ui,sans-serif;margin:4rem auto;max-width:32rem;text-align:center\">\
-<h1>Sign-in not completed</h1><p>{message} You can close this tab and try again \
-from the Airtable - Sheet Port desktop app.</p></body></html>"
+        "{PAGE_SHELL_START}{GLYPH_ERROR}\
+<h1>Sign-In Not Completed</h1><p>{message}</p>\
+<p class=\"hint\">You can close this tab and try again from the Airtable - Sheet Port desktop app.</p>\
+{PAGE_SHELL_END}"
     )
 }
 
