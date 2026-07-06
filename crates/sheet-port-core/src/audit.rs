@@ -56,6 +56,14 @@ pub fn record(
     Ok(event)
 }
 
+/// Deletes every audit event, returning the number of rows removed. Used by
+/// the desktop "Clear" action; the caller may record a fresh "audit_cleared"
+/// event afterwards so the wipe itself leaves a trace.
+pub fn clear(conn: &Connection) -> Result<usize, CoreError> {
+    conn.execute("DELETE FROM audit_events", [])
+        .map_err(|error| db_error("Could not clear audit events", error))
+}
+
 /// Newest first. Limit defaults to 100 and clamps to 1..=500; offset floors
 /// at 0. The rowid tiebreaker keeps same-millisecond events in insertion
 /// order (newest insert first).

@@ -10,7 +10,7 @@ import {
   type BadgeVariant
 } from "@sheet-port/ui";
 import type { AuditEvent } from "@sheet-port/shared";
-import { useAuditEvents } from "../hooks/useAuditEvents.js";
+import { useAuditEvents, useClearAuditEvents } from "../hooks/useAuditEvents.js";
 import { AUDIT_DROPDOWN_PAGE_SIZE } from "../lib/constants.js";
 import { formatRelativeTime } from "../lib/format.js";
 
@@ -83,7 +83,9 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const { data, isPending, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useAuditEvents(AUDIT_DROPDOWN_PAGE_SIZE);
+  const clearAudit = useClearAuditEvents();
   const events = data?.pages.flat() ?? [];
+  const isEmpty = events.length === 0;
 
   // Dismiss on outside pointer or Escape while open.
   useEffect(() => {
@@ -126,8 +128,16 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
       style={{ zIndex: "var(--z-dropdown)" }}
       className="absolute right-2 top-full mt-1 flex max-h-[70vh] w-[380px] flex-col overflow-hidden rounded-lg border border-edge bg-raised shadow-pop motion-safe:animate-scale-in"
     >
-      <div className="flex shrink-0 items-center border-b border-edge px-3 py-2.5">
+      <div className="flex shrink-0 items-center justify-between border-b border-edge px-3 py-2.5">
         <h2 className="text-[13px] font-semibold text-ink">Activity</h2>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isEmpty || clearAudit.isPending}
+          onClick={() => clearAudit.mutate()}
+        >
+          Clear
+        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

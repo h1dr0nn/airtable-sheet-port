@@ -49,6 +49,7 @@ pub fn run() {
             commands::approve_change,
             commands::reject_change,
             commands::list_audit_events,
+            commands::clear_audit_log,
             commands::token_status,
             commands::get_settings,
             commands::set_auto_approve,

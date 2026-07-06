@@ -114,6 +114,13 @@ Note: commit stays agent-side (`commit_change` MCP tool). The desktop only decid
 
 Newest first. Default limit 100, max 500.
 
+### `clear_audit_log() -> void`
+
+Deletes every row in `audit_events`, then records a single `audit_cleared`
+event (`actor='user'`, no source/table/metadata) AFTER the wipe so the clear
+itself leaves a trace. A freshly cleared log therefore holds exactly this one
+event.
+
 ### `token_status() -> TokenStatus`
 
 ```ts

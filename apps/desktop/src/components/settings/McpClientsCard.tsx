@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Badge,
   Button,
@@ -6,7 +6,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  Input,
   Select,
   SelectContent,
   SelectItem,
@@ -27,7 +26,6 @@ import {
 } from "../../hooks/useMcp.js";
 import type { BadgeVariant } from "@sheet-port/ui";
 import type { McpClient, McpClientState } from "../../lib/ipc.js";
-import { MCP_STDIO_COMMAND } from "../../lib/constants.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 
 type StatePresentation = {
@@ -55,27 +53,16 @@ type ClientDetailProps = {
   client: McpClient;
 };
 
-/** Status row, action pair, and editable binary path for the selected client. */
+/** Status row and action pair for the selected client. */
 function ClientDetail({ client }: ClientDetailProps) {
   const configure = useConfigureMcpClient();
   const unregister = useUnregisterMcpClient();
   const [isUnregisterConfirmOpen, setIsUnregisterConfirmOpen] = useState(false);
 
-  // Binary path defaults to the resolved sidecar path; editable per client so the
-  // user can point a client at a custom build. null draft = "not edited yet".
-  const [pathDraft, setPathDraft] = useState<string | null>(null);
-  // Reset the local edit whenever the selected client changes.
-  useEffect(() => {
-    setPathDraft(null);
-  }, [client.id]);
-
   const presentation = STATE_PRESENTATION[client.state] ?? UNKNOWN_PRESENTATION;
   const isInstalled = client.state !== "not_found";
   const isConfigured = client.state === "configured";
   const isBusy = configure.isPending || unregister.isPending;
-
-  const binaryPath = pathDraft ?? MCP_STDIO_COMMAND;
-  const isPathDirty = pathDraft !== null && pathDraft !== MCP_STDIO_COMMAND;
 
   const configureButton = (
     <Button
@@ -122,31 +109,6 @@ function ClientDetail({ client }: ClientDetailProps) {
             Unregister
           </Button>
         </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <label className="text-[12px] font-medium text-ink-muted" htmlFor="mcp-binary-path">
-          Server Binary Path
-        </label>
-        <div className="flex items-center gap-2">
-          <Input
-            id="mcp-binary-path"
-            className="font-mono text-[12.5px]"
-            value={binaryPath}
-            spellCheck={false}
-            autoComplete="off"
-            disabled={!isInstalled}
-            onChange={(event) => setPathDraft(event.target.value)}
-          />
-          {isPathDirty ? (
-            <Button variant="outline" size="sm" onClick={() => setPathDraft(null)}>
-              Reset
-            </Button>
-          ) : null}
-        </div>
-        <p className="text-[12px] leading-4 text-ink-muted">
-          Path written into {client.name}'s config. Defaults to the resolved sidecar binary.
-        </p>
       </div>
 
       {client.configPath ? (

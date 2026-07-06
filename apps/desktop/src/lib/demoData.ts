@@ -335,6 +335,13 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         .sort(newestEventFirst)
         .slice(effectiveOffset, effectiveOffset + effectiveLimit);
     },
+    async clearAuditLog(): Promise<void> {
+      await delay();
+      // Mirrors clear_audit_log: wipe first, then record a single trace event
+      // AFTER, so a freshly cleared log holds exactly this one entry.
+      auditEvents = [];
+      pushAudit({ actor: "user", action: "audit_cleared" });
+    },
     async tokenStatus(): Promise<TokenStatus> {
       await delay();
       return { googleSheets: isGoogleConnected(), provider: false };

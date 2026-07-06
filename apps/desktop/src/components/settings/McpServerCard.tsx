@@ -22,12 +22,7 @@ import {
   useStopMcpServer
 } from "../../hooks/useMcp.js";
 import type { McpTransport } from "../../lib/ipc.js";
-import {
-  MCP_PORT_MAX,
-  MCP_PORT_MIN,
-  MCP_STDIO_COMMAND,
-  buildMcpHttpUrl
-} from "../../lib/constants.js";
+import { MCP_PORT_MAX, MCP_PORT_MIN, buildMcpHttpUrl } from "../../lib/constants.js";
 import { CopyButton } from "../CopyButton.js";
 import { SegmentedControl, type SegmentedOption } from "../SegmentedControl.js";
 
@@ -180,8 +175,7 @@ export function McpServerCard() {
   const isRunning = config?.running ?? false;
   const transport = config?.transport ?? "stdio";
   const port = config?.port ?? MCP_PORT_MIN;
-  const connectionValue =
-    transport === "http" ? buildMcpHttpUrl(port) : MCP_STDIO_COMMAND;
+  const isHttp = transport === "http";
 
   return (
     <Card>
@@ -216,35 +210,30 @@ export function McpServerCard() {
               />
             </div>
 
-            {transport === "http" ? <PortField savedPort={port} /> : null}
+            {isHttp ? <PortField savedPort={port} /> : null}
 
-            {transport === "http" ? (
+            {isHttp ? (
               <ServerControl isRunning={isRunning} />
             ) : (
               <p className="border-t border-edge pt-4 text-[12px] leading-4 text-ink-muted">
-                Stdio clients launch the sidecar themselves, so there is nothing
-                to start here. Copy the launch command below into your client
-                config.
+                Clients launch the sidecar themselves - use MCP Clients to register it.
               </p>
             )}
 
-            <div className="space-y-1.5 border-t border-edge pt-4">
-              <p className="text-[12px] font-medium text-ink-muted">
-                {transport === "http" ? "Endpoint URL" : "Launch Command"}
-              </p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-md border border-edge bg-surface px-2.5 py-1.5 font-mono text-[12.5px] text-ink">
-                  {connectionValue}
-                </code>
-                <CopyButton
-                  value={connectionValue}
-                  label={transport === "http" ? "Copy endpoint URL" : "Copy launch command"}
-                />
+            {isHttp ? (
+              <div className="space-y-1.5 border-t border-edge pt-4">
+                <p className="text-[12px] font-medium text-ink-muted">Endpoint URL</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 truncate rounded-md border border-edge bg-surface px-2.5 py-1.5 font-mono text-[12.5px] text-ink">
+                    {buildMcpHttpUrl(port)}
+                  </code>
+                  <CopyButton value={buildMcpHttpUrl(port)} label="Copy endpoint URL" />
+                </div>
+                <p className="text-[12px] leading-4 text-ink-muted">
+                  Changing the transport or port requires restarting the sidecar to take effect.
+                </p>
               </div>
-              <p className="text-[12px] leading-4 text-ink-muted">
-                Changing the transport or port requires restarting the sidecar to take effect.
-              </p>
-            </div>
+            ) : null}
           </div>
         )}
       </CardContent>

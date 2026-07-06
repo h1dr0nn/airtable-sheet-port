@@ -21,11 +21,7 @@ import { useAuditEvents } from "../hooks/useAuditEvents.js";
 import { useChanges } from "../hooks/useChanges.js";
 import { useSources } from "../hooks/useSources.js";
 import { useTokenStatus } from "../hooks/useTokenStatus.js";
-import {
-  CLAUDE_DESKTOP_CONFIG_HINT,
-  DASHBOARD_AUDIT_COUNT,
-  DASHBOARD_CHANGES_COUNT
-} from "../lib/constants.js";
+import { DASHBOARD_AUDIT_COUNT, DASHBOARD_CHANGES_COUNT } from "../lib/constants.js";
 import type { ScreenId } from "../lib/nav.js";
 import { CopyButton } from "../components/CopyButton.js";
 import { RelativeTime } from "../components/RelativeTime.js";
@@ -99,16 +95,9 @@ function McpStatCard() {
           ) : null}
         </p>
       ) : (
-        <>
-          <p className="mt-2 text-[12.5px] leading-5 text-ink-muted">
-            Add sheet-port to claude_desktop_config.json, then restart Claude Desktop.
-          </p>
-          <div className="mt-2 -ml-2">
-            <CopyButton value={CLAUDE_DESKTOP_CONFIG_HINT} label="Copy Claude Desktop config">
-              Copy Config
-            </CopyButton>
-          </div>
-        </>
+        <p className="mt-2 text-[12.5px] leading-5 text-ink-muted">
+          Register Sheet Port with your MCP client from Settings, then restart the client.
+        </p>
       )}
     </StatCard>
   );

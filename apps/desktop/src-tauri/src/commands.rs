@@ -207,6 +207,27 @@ pub fn list_audit_events(
     audit::list(&conn, limit, offset).map_err(|error| error.to_string())
 }
 
+const AUDIT_CLEARED_ACTION: &str = "audit_cleared";
+
+/// Clears the entire audit log, then records a single `audit_cleared` event so
+/// the wipe itself leaves a trace. The trace is written AFTER the delete, so a
+/// freshly cleared log holds exactly this one event.
+#[tauri::command]
+pub fn clear_audit_log(state: Db<'_>) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    audit::clear(&conn).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        AUDIT_CLEARED_ACTION,
+        None,
+        None,
+        None,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn token_status(state: Db<'_>) -> Result<TokenStatus, String> {
     let conn = lock_conn(&state)?;

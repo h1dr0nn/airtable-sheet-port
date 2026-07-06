@@ -145,6 +145,8 @@ export interface IpcApi {
   approveChange(changeId: string): Promise<PendingChange>;
   rejectChange(changeId: string): Promise<PendingChange>;
   listAuditEvents(limit: number | null, offset: number | null): Promise<AuditEvent[]>;
+  /** Wipes the audit log, then records a single `audit_cleared` trace event. */
+  clearAuditLog(): Promise<void>;
   tokenStatus(): Promise<TokenStatus>;
   getGoogleConfig(): Promise<GoogleConfig>;
   /** Every connected Google account (sourceId + email), ordered by source id. */
@@ -203,6 +205,7 @@ const tauriIpc: IpcApi = {
   rejectChange: (changeId) => invoke<PendingChange>("reject_change", { changeId }),
   listAuditEvents: (limit, offset) =>
     invoke<AuditEvent[]>("list_audit_events", { limit, offset }),
+  clearAuditLog: () => invoke<void>("clear_audit_log"),
   tokenStatus: () => invoke<TokenStatus>("token_status"),
   getGoogleConfig: () => invoke<GoogleConfig>("get_google_config"),
   googleListAccounts: () => invoke<GoogleAccount[]>("google_list_accounts"),

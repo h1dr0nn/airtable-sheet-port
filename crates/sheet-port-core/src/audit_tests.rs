@@ -106,6 +106,23 @@ fn round_trips_optional_fields_and_omits_absent_ones() {
 }
 
 #[test]
+fn clear_removes_all_events_and_reports_count() {
+    let conn = open_temp_db();
+    insert_raw(&conn, "evt_1", "2026-01-01T00:00:00.000Z");
+    insert_raw(&conn, "evt_2", "2026-01-02T00:00:00.000Z");
+
+    let removed = clear(&conn).expect("clear");
+    assert_eq!(removed, 2, "clear reports the number of deleted rows");
+    assert!(
+        list(&conn, None, None).expect("list").is_empty(),
+        "no audit events remain after clear"
+    );
+
+    // Clearing an already-empty log is a no-op that removes nothing.
+    assert_eq!(clear(&conn).expect("clear again"), 0);
+}
+
+#[test]
 fn limit_clamps_low_values_and_offset_floors_at_zero() {
     let conn = open_temp_db();
     insert_raw(&conn, "evt_1", "2026-01-01T00:00:00.000Z");

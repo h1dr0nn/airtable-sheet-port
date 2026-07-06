@@ -1,5 +1,7 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@sheet-port/ui";
 import { AUDIT_PAGE_SIZE } from "../lib/constants.js";
+import { getErrorMessage } from "../lib/errors.js";
 import { ipc } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
 
@@ -13,5 +15,25 @@ export function useAuditEvents(pageSize: number = AUDIT_PAGE_SIZE) {
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) =>
       lastPage.length < pageSize ? undefined : allPages.length * pageSize
+  });
+}
+
+/** Wipes the audit log, then refreshes every audit query. Invalidating the
+ * `["audit-events"]` prefix covers both the paged dropdown key and the
+ * dashboard key so all activity surfaces reflect the cleared log. */
+export function useClearAuditEvents() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => ipc.clearAuditLog(),
+    onError: (error: unknown) => {
+      toast.error("Activity not cleared", { description: getErrorMessage(error) });
+    },
+    onSuccess: () => {
+      toast.success("Activity cleared");
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents });
+    }
   });
 }
