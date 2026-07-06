@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { Button, EmptyState, Skeleton } from "@sheet-port/ui";
 import { usePermissionRules } from "../hooks/usePermissions.js";
+import { useSources } from "../hooks/useSources.js";
 import { RuleFormDialog } from "../components/permissions/RuleFormDialog.js";
 import { RuleRow } from "../components/permissions/RuleRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 
 export function Permissions() {
   const { data: rules, isPending } = usePermissionRules();
+  const { data: sources } = useSources();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const list = rules ?? [];
+  const hasSources = (sources ?? []).length > 0;
 
   return (
     <>
@@ -30,7 +33,11 @@ export function Permissions() {
       ) : list.length === 0 ? (
         <EmptyState
           title="No rules yet"
-          description="Agents are denied by default. Add a rule to grant scoped access"
+          description={
+            hasSources
+              ? "Agents are denied by default. Add a rule to grant scoped access"
+              : "Agents are denied by default. Connect a data source, then add a rule to grant scoped access"
+          }
           action={
             <Button size="sm" onClick={() => setIsFormOpen(true)}>
               Add rule

@@ -48,6 +48,7 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
   const { data: sources } = useSources();
   const save = useSavePermissionRule();
   const [draft, setDraft] = useState<RuleDraft>(EMPTY_DRAFT);
+  const sourceList = sources ?? [];
   const canSubmit = draft.sourceId !== "" && !save.isPending;
 
   const submit = () => {
@@ -85,18 +86,25 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
             <label className={FIELD_LABEL_CLASS} htmlFor="rule-source">
               Source
             </label>
-            <Select value={draft.sourceId} onValueChange={(sourceId) => setDraft({ ...draft, sourceId })}>
-              <SelectTrigger id="rule-source" className="w-full" aria-label="Source">
-                <SelectValue placeholder="Choose a source" />
-              </SelectTrigger>
-              <SelectContent>
-                {(sources ?? []).map((source) => (
-                  <SelectItem key={source.id} value={source.id}>
-                    {source.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {sourceList.length === 0 ? (
+              <p className="rounded-md border border-edge bg-surface px-3 py-2 text-[12.5px] leading-5 text-ink-muted">
+                No data sources connected yet. Connect a data source first; rules always target a
+                connected source.
+              </p>
+            ) : (
+              <Select value={draft.sourceId} onValueChange={(sourceId) => setDraft({ ...draft, sourceId })}>
+                <SelectTrigger id="rule-source" className="w-full" aria-label="Source">
+                  <SelectValue placeholder="Choose a source" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sourceList.map((source) => (
+                    <SelectItem key={source.id} value={source.id}>
+                      {source.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div className="space-y-1.5">

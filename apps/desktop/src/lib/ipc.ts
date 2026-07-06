@@ -52,6 +52,15 @@ export type TokenStatus = {
   provider: boolean;     // ... user "provider"
 };
 
+export type GoogleConfig = {
+  clientId: string | null;       // OAuth desktop client id from Settings, null until saved
+  connectedEmail: string | null; // linked Google account, null when disconnected
+};
+
+export type GoogleConnectResult = {
+  email: string;
+};
+
 /** Every Tauri command from docs/ipc.md, typed. */
 export interface IpcApi {
   getAppStatus(): Promise<AppStatus>;
@@ -72,6 +81,11 @@ export interface IpcApi {
   rejectChange(changeId: string): Promise<PendingChange>;
   listAuditEvents(limit: number | null, offset: number | null): Promise<AuditEvent[]>;
   tokenStatus(): Promise<TokenStatus>;
+  getGoogleConfig(): Promise<GoogleConfig>;
+  setGoogleClientId(clientId: string): Promise<void>;
+  /** Long-running: resolves after the user finishes the browser consent flow. */
+  googleConnect(): Promise<GoogleConnectResult>;
+  googleDisconnect(): Promise<void>;
 }
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -92,7 +106,11 @@ const tauriIpc: IpcApi = {
   rejectChange: (changeId) => invoke<PendingChange>("reject_change", { changeId }),
   listAuditEvents: (limit, offset) =>
     invoke<AuditEvent[]>("list_audit_events", { limit, offset }),
-  tokenStatus: () => invoke<TokenStatus>("token_status")
+  tokenStatus: () => invoke<TokenStatus>("token_status"),
+  getGoogleConfig: () => invoke<GoogleConfig>("get_google_config"),
+  setGoogleClientId: (clientId) => invoke<void>("set_google_client_id", { clientId }),
+  googleConnect: () => invoke<GoogleConnectResult>("google_connect"),
+  googleDisconnect: () => invoke<void>("google_disconnect")
 };
 
 // Plain-browser dev preview falls back to clickable in-memory fixtures.

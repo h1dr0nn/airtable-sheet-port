@@ -16,6 +16,7 @@ import type { ChangeStatus } from "@sheet-port/shared";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import { useAuditEvents } from "../hooks/useAuditEvents.js";
 import { useChanges } from "../hooks/useChanges.js";
+import { useSources } from "../hooks/useSources.js";
 import { useTokenStatus } from "../hooks/useTokenStatus.js";
 import {
   CLAUDE_DESKTOP_CONFIG_HINT,
@@ -188,6 +189,28 @@ function TokenVaultStatCard() {
   );
 }
 
+/** Nudges first-run users toward connecting Google Sheets. */
+function ConnectSourceCallout({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
+  const { data: sources, isPending } = useSources();
+  if (isPending || (sources ?? []).length > 0) {
+    return null;
+  }
+
+  return (
+    <section className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-card border border-accent/30 bg-accent/[0.06] px-5 py-4">
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-ink">No data sources connected</p>
+        <p className="mt-0.5 text-[12.5px] text-ink-muted">
+          Connect a data source such as Google Sheets to give agents something to read.
+        </p>
+      </div>
+      <Button size="sm" onClick={() => onNavigate("sources")}>
+        Connect a data source
+      </Button>
+    </section>
+  );
+}
+
 function ListEmpty({ message }: { message: string }) {
   return <p className="py-6 text-center text-[13px] text-ink-muted">{message}</p>;
 }
@@ -274,6 +297,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: ScreenId) => vo
         title="Dashboard"
         description="Local capability broker between agents and your spreadsheets"
       />
+      <ConnectSourceCallout onNavigate={onNavigate} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <McpStatCard />
         <PendingStatCard onNavigate={onNavigate} />

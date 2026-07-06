@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Button,
   cn,
   EmptyState,
   FOCUS_RING,
@@ -12,6 +13,7 @@ import {
 } from "@sheet-port/ui";
 import { useSources } from "../hooks/useSources.js";
 import { useTablePage, useTableSchema, useTables } from "../hooks/useTables.js";
+import type { ScreenId } from "../lib/nav.js";
 import { RecordsTable } from "../components/tables/RecordsTable.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 
@@ -24,12 +26,13 @@ function TableListSkeleton() {
   );
 }
 
-export function Tables() {
+export function Tables({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { data: sources, isPending: sourcesPending } = useSources();
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [tableId, setTableId] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
 
+  const sourceList = sources ?? [];
   const effectiveSourceId = sourceId ?? sources?.[0]?.id ?? null;
   const { data: tables, isPending: tablesPending } = useTables(effectiveSourceId);
   const effectiveTableId = tableId ?? tables?.[0]?.tableId ?? null;
@@ -42,35 +45,47 @@ export function Tables() {
     setPageIndex(0);
   }, [effectiveSourceId]);
 
-  const isLoading = sourcesPending || tablesPending;
-
   return (
     <>
       <ScreenHeader
         title="Tables"
         description="Browse records through the same read path agents use"
         actions={
-          <Select value={effectiveSourceId ?? ""} onValueChange={(next) => setSourceId(next)}>
-            <SelectTrigger className="w-56" aria-label="Data source">
-              <SelectValue placeholder="Choose a source" />
-            </SelectTrigger>
-            <SelectContent>
-              {(sources ?? []).map((source) => (
-                <SelectItem key={source.id} value={source.id}>
-                  {source.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          sourceList.length > 0 ? (
+            <Select value={effectiveSourceId ?? ""} onValueChange={(next) => setSourceId(next)}>
+              <SelectTrigger className="w-56" aria-label="Data source">
+                <SelectValue placeholder="Choose a source" />
+              </SelectTrigger>
+              <SelectContent>
+                {sourceList.map((source) => (
+                  <SelectItem key={source.id} value={source.id}>
+                    {source.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : undefined
         }
       />
 
-      {isLoading ? (
+      {sourcesPending ? (
+        <TableListSkeleton />
+      ) : sourceList.length === 0 ? (
+        <EmptyState
+          title="No data sources"
+          description="Connect a data source to browse its tables here"
+          action={
+            <Button size="sm" onClick={() => onNavigate("sources")}>
+              Connect a data source
+            </Button>
+          }
+        />
+      ) : tablesPending ? (
         <TableListSkeleton />
       ) : (tables ?? []).length === 0 ? (
         <EmptyState
           title="No tables"
-          description="Placeholder sources expose their tables once the connector is authenticated"
+          description="This source has not exposed any tables yet"
         />
       ) : (
         <div className="space-y-4">

@@ -8,8 +8,8 @@ export const DASHBOARD_CHANGES_COUNT = 5;
 export const CLAUDE_DESKTOP_CONFIG_HINT = `{
   "mcpServers": {
     "sheet-port": {
-      "command": "node",
-      "args": ["<repo>/apps/mcp-server/dist/index.js"]
+      "command": "<repo>/target/release/sheet-port-mcp.exe",
+      "args": []
     }
   }
 }`;
