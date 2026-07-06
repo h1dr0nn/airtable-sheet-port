@@ -2,23 +2,28 @@
 
 ## Problem
 
-AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operational data maintenance, but direct access to Google Sheets or other provider credentials is too risky. A local broker should let agents inspect data and propose changes without receiving provider tokens or bypassing user policy.
+AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operational
+data maintenance, but direct access to Google Sheets or other provider credentials is
+too risky. A local broker should let agents inspect data and propose changes without
+receiving provider tokens or bypassing user policy.
 
 ## Target Users
 
 - Operators who manage Google Sheets or local tables as lightweight databases.
 - Developers building local AI workflows around tabular data.
 - Teams that want auditability and approval gates before agents modify business data.
-- Power users who want a safer alternative to sharing OAuth tokens or API keys with agents.
+- Power users who want a safer alternative to sharing OAuth tokens or API keys with
+  agents.
 
 ## Main Use Cases
 
 - Let an agent list connected sources and tables.
 - Let an agent inspect table schema and read bounded rows.
 - Let an agent search records by text.
-- Let an agent preview record updates and receive a diff.
-- Let a user or policy layer approve a pending change before commit.
-- Keep an audit trail of agent reads, previews, and writes.
+- Let an agent preview record updates or appends and receive a diff.
+- Require user approval in the desktop app before risky commits (enforced, not
+  advisory).
+- Keep a persistent audit trail of agent reads, previews, decisions, and writes.
 
 ## Non-Goals
 
@@ -26,36 +31,52 @@ AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operati
 - Airtable - Sheet Port is not a cloud-hosted proxy.
 - Airtable - Sheet Port does not expose raw provider APIs to agents.
 - The MVP does not implement destructive delete flows.
-- The MVP does not sync every spreadsheet feature such as formulas, charts, formatting, or pivot tables.
+- The MVP does not sync every spreadsheet feature such as formulas, charts, formatting,
+  or pivot tables.
 
-## MVP
+## MVP Status
 
-- Desktop shell with Dashboard, Data Sources, Tables, Permissions, Changes, and Audit Log screens.
-- Local MCP server with strict table-oriented tools.
-- Mock connector for development and tests.
-- Shared type layer and core services for permission, audit, schema, change, and connector routing.
-- Google Sheets and additional provider connector packages with clear integration TODOs.
+The MVP is runnable end to end against the mock connector:
+
+- Desktop app with Dashboard, Data Sources, Tables, Permissions, Changes, and Audit Log
+  screens, live-wired to the Rust backend via typed Tauri IPC (`docs/ipc.md`).
+- Local MCP sidecar with 9 strict table-oriented tools (stdio transport).
+- Shared SQLite database (WAL) used by both processes: sources, permission rules,
+  pending changes, audit events, mock data, and the sidecar heartbeat.
+- Enforced approval flow: previews create pending changes; `commit_change` refuses
+  changes that require confirmation until the user approves them in the desktop app;
+  permissions are re-checked at commit time.
+- SQLite-backed mock connector shared by the desktop UI and the sidecar; committed
+  changes persist and appear in both.
+- Google Sheets and additional provider connector packages exist as skeletons with
+  explicit integration TODOs; a keyring stub reports token presence.
 
 ## Future Roadmap
 
-- Google OAuth flow in Tauri with OS keychain token storage.
-- SQLite persistence for sources, schemas, permissions, pending changes, and audit events.
+- Google OAuth flow in Tauri with real OS keychain token storage.
 - Real Google Sheets connector with range-to-record mapping.
 - Additional table-provider connectors with source, table, field, and record mapping.
+- Delete flow with explicit confirmation semantics.
+- Database encryption at rest.
 - Desktop approval notifications for pending changes created by MCP calls.
 - Policy presets for read-only, safe update, and bulk-change lockdown modes.
 - Connector SDK for additional providers.
 
 ## Assumptions
 
-- The first MCP transport is stdio for compatibility with Claude Desktop and local agent clients.
-- The app will later own sidecar lifecycle, but the server can be run independently during development.
-- Real token storage is intentionally deferred behind a connector auth abstraction.
-- Delete operations remain out of the runnable MVP until confirmation and policy semantics are stronger.
+- The first MCP transport is stdio for compatibility with Claude Desktop and local agent
+  clients.
+- The MCP client (not the desktop app) spawns the sidecar; the desktop observes it
+  through the heartbeat table.
+- Real token storage is intentionally deferred behind a connector auth abstraction plus
+  the existing keyring stub.
+- Delete operations remain out of the runnable MVP until confirmation and policy
+  semantics are stronger.
 
 ## Current Limitations
 
-- Data is in-memory only.
-- Desktop UI uses mock state and is not yet wired to the MCP sidecar.
-- Google Sheets and additional provider packages are skeletons.
-- Tauri Rust commands are minimal placeholders.
+- Only the mock connector is functional; Google Sheets and additional provider packages
+  are skeletons.
+- No real OAuth yet; the keyring integration is a stub that no flow writes to.
+- No delete flow.
+- The shared SQLite database is unencrypted at rest.
