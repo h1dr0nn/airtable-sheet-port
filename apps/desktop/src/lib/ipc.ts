@@ -82,6 +82,26 @@ export type McpClient = {
   configPath: string | null;
 };
 
+/** Raw shape returned by the Rust mcp_detect_clients command. */
+type RawDetectedClient = {
+  id: string;
+  displayName: string;
+  installed: boolean;
+  configured: boolean;
+  detectable: boolean;
+  configPath?: string | null;
+};
+
+/** Collapses the backend booleans into the single UI state. */
+function toMcpClient(raw: RawDetectedClient): McpClient {
+  const state: McpClientState = raw.configured
+    ? "configured"
+    : raw.installed
+      ? "unconfigured"
+      : "not_found";
+  return { id: raw.id, name: raw.displayName, state, configPath: raw.configPath ?? null };
+}
+
 export type GoogleConnectResult = {
   email: string;
 };
@@ -169,7 +189,11 @@ const tauriIpc: IpcApi = {
   getMcpConfig: () => invoke<McpConfigView>("get_mcp_config"),
   setMcpTransport: (transport) => invoke<void>("set_mcp_transport", { transport }),
   setMcpPort: (port) => invoke<void>("set_mcp_port", { port }),
-  mcpDetectClients: () => invoke<McpClient[]>("mcp_detect_clients"),
+  mcpDetectClients: async () => {
+    // The Rust command reports raw booleans; the UI works with a single state.
+    const raw = await invoke<RawDetectedClient[]>("mcp_detect_clients");
+    return raw.map(toMcpClient);
+  },
   mcpConfigureClient: (id) => invoke<void>("mcp_configure_client", { id }),
   mcpUnregisterClient: (id) => invoke<void>("mcp_unregister_client", { id }),
   mcpConfigureAll: () => invoke<void>("mcp_configure_all")

@@ -44,6 +44,13 @@ const STATE_PRESENTATION: Record<McpClientState, StatePresentation> = {
   not_found: { label: "Not Found", dot: "idle", badge: "muted" }
 };
 
+// Fallback so an unexpected state can never white-screen the whole app.
+const UNKNOWN_PRESENTATION: StatePresentation = {
+  label: "Unknown",
+  dot: "idle",
+  badge: "muted"
+};
+
 type ClientDetailProps = {
   client: McpClient;
 };
@@ -62,7 +69,7 @@ function ClientDetail({ client }: ClientDetailProps) {
     setPathDraft(null);
   }, [client.id]);
 
-  const presentation = STATE_PRESENTATION[client.state];
+  const presentation = STATE_PRESENTATION[client.state] ?? UNKNOWN_PRESENTATION;
   const isInstalled = client.state !== "not_found";
   const isConfigured = client.state === "configured";
   const isBusy = configure.isPending || unregister.isPending;
