@@ -1,4 +1,4 @@
-export type DataSourceKind = "google_sheets" | "airtable" | "mock";
+export type DataSourceKind = "google_sheets" | "provider" | "mock";
 
 export type DataSource = {
   id: string;

@@ -92,16 +92,6 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  packages/connectors/airtable:
-    dependencies:
-      '@sheet-port/shared':
-        specifier: workspace:*
-        version: link:../../shared
-    devDependencies:
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
   packages/connectors/google-sheets:
     dependencies:
       '@sheet-port/shared':
@@ -116,6 +106,16 @@ importers:
         version: 5.9.3
 
   packages/connectors/mock:
+    dependencies:
+      '@sheet-port/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/connectors/provider:
     dependencies:
       '@sheet-port/shared':
         specifier: workspace:*

@@ -11,7 +11,7 @@ flowchart LR
   Core --> Registry["Connector Registry"]
   Registry --> Mock["Mock Connector"]
   Registry --> Sheets["Google Sheets Connector"]
-  Registry --> Airtable["Airtable Connector"]
+  Registry --> Provider["Additional Provider Connector"]
   Desktop["Tauri Desktop App"] --> Core
   Core --> Store["SQLite + Secure Storage (planned)"]
 ```
@@ -21,7 +21,7 @@ flowchart LR
 The desktop app is a React/Vite/Tauri shell. The initial UI shows:
 
 - Dashboard with MCP and connector state.
-- Data Sources with Google Sheets and Airtable placeholders.
+- Data Sources with Google Sheets and additional provider placeholders.
 - Tables with mock table preview.
 - Permissions editor for base rule shape.
 - Changes screen for pending diffs and mock approvals.
@@ -57,7 +57,7 @@ The core package contains domain services:
 
 ## Connector Layer
 
-Connectors implement a table abstraction rather than provider-specific APIs. The mock connector is complete enough for development. Google Sheets and Airtable packages currently define the boundary and TODOs for auth and mapping.
+Connectors implement a table abstraction rather than provider-specific APIs. The mock connector is complete enough for development. Google Sheets and additional provider packages currently define the boundary and TODOs for auth and mapping.
 
 ## Data Flow
 

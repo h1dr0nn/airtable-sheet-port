@@ -2,11 +2,11 @@
 
 ## Problem
 
-AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operational data maintenance, but direct access to Google Sheets or Airtable credentials is too risky. A local broker should let agents inspect data and propose changes without receiving provider tokens or bypassing user policy.
+AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operational data maintenance, but direct access to Google Sheets or other provider credentials is too risky. A local broker should let agents inspect data and propose changes without receiving provider tokens or bypassing user policy.
 
 ## Target Users
 
-- Operators who manage Google Sheets or Airtable as lightweight databases.
+- Operators who manage Google Sheets or local tables as lightweight databases.
 - Developers building local AI workflows around tabular data.
 - Teams that want auditability and approval gates before agents modify business data.
 - Power users who want a safer alternative to sharing OAuth tokens or API keys with agents.
@@ -34,14 +34,14 @@ AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operati
 - Local MCP server with strict table-oriented tools.
 - Mock connector for development and tests.
 - Shared type layer and core services for permission, audit, schema, change, and connector routing.
-- Google Sheets and Airtable connector packages with clear integration TODOs.
+- Google Sheets and additional provider connector packages with clear integration TODOs.
 
 ## Future Roadmap
 
 - Google OAuth flow in Tauri with OS keychain token storage.
 - SQLite persistence for sources, schemas, permissions, pending changes, and audit events.
 - Real Google Sheets connector with range-to-record mapping.
-- Airtable connector with base, table, field, and record mapping.
+- Additional table-provider connectors with source, table, field, and record mapping.
 - Desktop approval notifications for pending changes created by MCP calls.
 - Policy presets for read-only, safe update, and bulk-change lockdown modes.
 - Connector SDK for additional providers.
@@ -57,5 +57,5 @@ AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operati
 
 - Data is in-memory only.
 - Desktop UI uses mock state and is not yet wired to the MCP sidecar.
-- Google Sheets and Airtable packages are skeletons.
+- Google Sheets and additional provider packages are skeletons.
 - Tauri Rust commands are minimal placeholders.

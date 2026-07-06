@@ -30,9 +30,9 @@ The Google Sheets connector will map a spreadsheet to a source and sheets/ranges
 - Read and update only configured ranges.
 - Preserve formulas unless a policy explicitly allows formula changes.
 
-## Airtable Connector Plan
+## Additional Provider Connector Plan
 
-The Airtable connector will map bases to sources, tables to tables, fields to schema fields, and records directly to internal records. Planned work:
+Additional provider connectors will map workspaces or bases to sources, tables to tables, fields to schema fields, and records directly to internal records. Planned work:
 
 - API key or OAuth setup stored in OS keychain.
 - Base and table discovery.
@@ -44,12 +44,12 @@ The Airtable connector will map bases to sources, tables to tables, fields to sc
 
 Google Sheets does not have native row ids. Airtable - Sheet Port should create internal record ids using a table id plus row number or a hidden configured id column. The preferred production path is a stable id column because row-number ids shift when users sort or insert rows.
 
-## Airtable Mapping
+## Additional Provider Mapping
 
-Airtable records already have stable ids. Field metadata maps naturally into `FieldSchema`, while linked records, attachments, collaborators, and formulas should initially map to `unknown` until specific support is added.
+Some providers already have stable record ids. Field metadata maps naturally into `FieldSchema`, while linked records, attachments, collaborators, and formulas should initially map to `unknown` until specific support is added.
 
 ## Current Limitations
 
-- Google Sheets and Airtable connectors are skeleton packages.
+- Google Sheets and additional provider connectors are skeleton packages.
 - The mock connector stores all state in memory.
 - No rate limit or retry policy exists yet.

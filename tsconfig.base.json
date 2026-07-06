@@ -18,7 +18,7 @@
       "@sheet-port/ui": ["packages/ui/src/index.tsx"],
       "@sheet-port/mock-connector": ["packages/connectors/mock/src/index.ts"],
       "@sheet-port/google-sheets-connector": ["packages/connectors/google-sheets/src/index.ts"],
-      "@sheet-port/airtable-connector": ["packages/connectors/airtable/src/index.ts"]
+      "@sheet-port/provider-connector": ["packages/connectors/provider/src/index.ts"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

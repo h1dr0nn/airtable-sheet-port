@@ -6,7 +6,7 @@
     { "path": "packages/core" },
     { "path": "packages/connectors/mock" },
     { "path": "packages/connectors/google-sheets" },
-    { "path": "packages/connectors/airtable" },
+    { "path": "packages/connectors/provider" },
     { "path": "apps/mcp-server" },
     { "path": "apps/desktop" }
   ]

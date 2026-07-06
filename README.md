@@ -1,8 +1,8 @@
 # Airtable - Sheet Port
 
-Airtable - Sheet Port is a safe local port for AI agents to access Airtable-style tables and spreadsheets.
+Airtable - Sheet Port is a safe local port for AI agents to access tables and spreadsheets.
 
-It is a desktop permission broker for Airtable and Google Sheets workflows. The app owns OAuth tokens and local policy, while AI agents interact only through a narrow local MCP server with typed tools for reading, previewing, and committing table changes.
+It is a desktop permission broker for Google Sheets and local table workflows. The app owns OAuth tokens and local policy, while AI agents interact only through a narrow local MCP server with typed tools for reading, previewing, and committing table changes.
 
 ## Current Status
 
@@ -14,7 +14,7 @@ This repository contains the first runnable base:
 - core permission, audit, schema, change, and connector registry services
 - mock connector with example source, table, schema, records, append, and update
 - local MCP server using mock data
-- Google Sheets and Airtable connector skeletons with explicit auth TODOs
+- Google Sheets and additional provider connector skeletons with explicit auth TODOs
 - docs for product scope, architecture, security, MCP tools, connectors, and development
 
 ## Tech Stack
@@ -26,7 +26,7 @@ This repository contains the first runnable base:
 - Table UI: TanStack Table
 - MCP: `@modelcontextprotocol/sdk`
 - Validation: zod
-- Connectors: mock now, Google Sheets and Airtable skeletons
+- Connectors: mock now, Google Sheets and additional provider skeletons
 - Local persistence target: SQLite
 - Secure storage target: OS keychain abstraction
 
@@ -42,7 +42,7 @@ packages/
   ui/            Small local UI primitives
   connectors/
     google-sheets/
-    airtable/
+    providers/
 docs/
 examples/
 ```
@@ -79,6 +79,6 @@ Agents must never receive provider OAuth tokens, API keys, raw Google API access
 - Persist audit logs and pending changes in SQLite
 - Add OS keychain token storage
 - Complete Google OAuth and Sheets range mapping
-- Add Airtable auth and base/table discovery
+- Add additional provider auth and table discovery
 - Add desktop approval workflow connected to the MCP sidecar
 - Add signed local sidecar lifecycle management from Tauri

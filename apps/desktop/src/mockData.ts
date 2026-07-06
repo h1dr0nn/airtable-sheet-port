@@ -3,7 +3,7 @@ import type { AuditEvent, DataSource, PendingChange, PermissionRule, TableRecord
 export const sources: DataSource[] = [
   { id: "mock-source", kind: "mock", name: "Demo Workspace" },
   { id: "google-placeholder", kind: "google_sheets", name: "Google Sheets (connect soon)" },
-  { id: "airtable-placeholder", kind: "airtable", name: "Airtable (connect soon)" }
+  { id: "provider-placeholder", kind: "provider", name: "Additional provider (connect soon)" }
 ];
 
 export const schema: TableSchema = {

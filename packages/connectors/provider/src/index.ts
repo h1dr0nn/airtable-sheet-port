@@ -1,44 +1,44 @@
 import type { DataSource, ReadTableOptions, RecordPatch, TableConnector, TableRecord, TableRef, TableSchema } from "@sheet-port/shared";
 
-export type AirtableConnectorConfig = {
+export type ProviderConnectorConfig = {
   // TODO: Load API key or OAuth token from secure desktop-owned storage.
-  baseIds?: string[];
+  sourceIds?: string[];
 };
 
-export class AirtableConnector implements TableConnector {
-  readonly kind = "airtable" as const;
+export class ProviderConnector implements TableConnector {
+  readonly kind = "provider" as const;
 
-  constructor(private readonly config: AirtableConnectorConfig = {}) {}
+  constructor(private readonly config: ProviderConnectorConfig = {}) {}
 
   async listSources(): Promise<DataSource[]> {
-    return (this.config.baseIds ?? []).map((id) => ({
-      id: `airtable:${id}`,
+    return (this.config.sourceIds ?? []).map((id) => ({
+      id: `provider:${id}`,
       kind: this.kind,
-      name: `Airtable Base ${id}`
+      name: `Provider Source ${id}`
     }));
   }
 
   async listTables(_sourceId: string): Promise<TableRef[]> {
-    throw new Error("Airtable connector TODO: discover base tables after auth is implemented");
+    throw new Error("Provider connector TODO: discover tables after auth is implemented");
   }
 
   async describeTable(_sourceId: string, _tableId: string): Promise<TableSchema> {
-    throw new Error("Airtable connector TODO: map Airtable field metadata to TableSchema");
+    throw new Error("Provider connector TODO: map provider field metadata to TableSchema");
   }
 
   async readTable(_sourceId: string, _tableId: string, _options?: ReadTableOptions): Promise<TableRecord[]> {
-    throw new Error("Airtable connector TODO: read records with pagination and rate limiting");
+    throw new Error("Provider connector TODO: read records with pagination and rate limiting");
   }
 
   async findRecords(_sourceId: string, _tableId: string, _query: string): Promise<TableRecord[]> {
-    throw new Error("Airtable connector TODO: search/filter records safely");
+    throw new Error("Provider connector TODO: search/filter records safely");
   }
 
   async appendRecords(_sourceId: string, _tableId: string, _records: Array<Record<string, unknown>>): Promise<TableRecord[]> {
-    throw new Error("Airtable connector TODO: create records after preview and policy approval");
+    throw new Error("Provider connector TODO: create records after preview and policy approval");
   }
 
   async updateRecords(_sourceId: string, _tableId: string, _patches: RecordPatch[]): Promise<TableRecord[]> {
-    throw new Error("Airtable connector TODO: update records after preview and policy approval");
+    throw new Error("Provider connector TODO: update records after preview and policy approval");
   }
 }

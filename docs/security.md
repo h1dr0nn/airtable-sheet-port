@@ -12,7 +12,7 @@ The MVP includes connector TODOs but does not implement real token storage yet.
 
 ## Why Agents Never Receive Tokens
 
-If agents receive Google or Airtable credentials, they can bypass Airtable - Sheet Port policy, audit, preview, and confirmation flows. Airtable - Sheet Port keeps tokens behind a local capability broker so every action can be checked, logged, and shaped through narrow schemas.
+If agents receive provider credentials, they can bypass Airtable - Sheet Port policy, audit, preview, and confirmation flows. Airtable - Sheet Port keeps tokens behind a local capability broker so every action can be checked, logged, and shaped through narrow schemas.
 
 ## Local MCP Attack Surface
 

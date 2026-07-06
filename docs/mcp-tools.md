@@ -1,6 +1,6 @@
 # MCP Tools
 
-All tools use provider-neutral schemas. None expose raw Google or Airtable APIs.
+All tools use provider-neutral schemas. None expose raw Google or provider APIs.
 
 ## `list_sources`
 
