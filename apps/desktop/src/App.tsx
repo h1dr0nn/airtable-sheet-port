@@ -1,6 +1,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { AnimatedScreen, ToastViewport } from "@sheet-port/ui";
 import { CommandPalette } from "./components/CommandPalette.js";
+import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
 import { useSidebarCollapsed } from "./hooks/useSidebarCollapsed.js";
@@ -56,7 +57,9 @@ export function App() {
         <main className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-8 py-8">
             <AnimatedScreen screenKey={screen}>
-              <Screen onNavigate={setScreen} />
+              <ErrorBoundary resetKey={screen}>
+                <Screen onNavigate={setScreen} />
+              </ErrorBoundary>
             </AnimatedScreen>
           </div>
         </main>
