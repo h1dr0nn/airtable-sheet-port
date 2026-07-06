@@ -8,27 +8,19 @@ type EmptyStateProps = {
   className?: string;
 };
 
-/** Centered "[ NO RECORDS ]" style readout inside a hairline compartment. */
+/** Quiet centered message for empty collections. */
 export function EmptyState({ title, description, action, className }: EmptyStateProps) {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 border border-edge bg-surface",
+        "flex flex-col items-center justify-center rounded-card border border-edge bg-surface",
         "px-6 py-14 text-center",
         className
       )}
     >
-      <p className="font-mono text-[13px] font-bold uppercase tracking-[0.1em] text-ink">
-        {"[ "}
-        {title}
-        {" ]"}
-      </p>
-      {description ? (
-        <p className="max-w-sm font-mono text-[11px] uppercase tracking-[0.05em] text-ink-muted">
-          {description}
-        </p>
-      ) : null}
-      {action ? <div className="mt-3">{action}</div> : null}
+      <p className="text-[13px] font-medium text-ink">{title}</p>
+      {description ? <p className="mt-1 max-w-sm text-[13px] text-ink-muted">{description}</p> : null}
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }

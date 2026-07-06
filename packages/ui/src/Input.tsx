@@ -1,5 +1,6 @@
 import { forwardRef, type InputHTMLAttributes } from "react";
 import { cn } from "./cn.js";
+import { FOCUS_RING } from "./focus.js";
 
 export type InputProps = InputHTMLAttributes<HTMLInputElement>;
 
@@ -7,11 +8,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, ...p
   <input
     ref={ref}
     className={cn(
-      "h-9 w-full border border-edge-strong bg-bg px-3 font-mono text-[13px] text-ink",
-      "placeholder:text-ink-muted transition-colors hover:border-ink",
-      "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2",
-      "focus-visible:outline-hazard",
-      "disabled:cursor-not-allowed disabled:opacity-40",
+      "h-9 w-full rounded-md border border-edge-strong bg-bg px-3 font-sans text-[13px] text-ink",
+      "placeholder:text-ink-faint transition-colors hover:border-ink-faint",
+      FOCUS_RING,
+      "disabled:cursor-not-allowed disabled:opacity-50",
       className
     )}
     {...props}

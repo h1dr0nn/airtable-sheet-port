@@ -1,8 +1,29 @@
-import { cn, StatusDot } from "@sheet-port/ui";
+import { cn, FOCUS_RING, StatusDot } from "@sheet-port/ui";
+import {
+  Database,
+  GitPullRequest,
+  LayoutDashboard,
+  ScrollText,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  Table2,
+  type LucideIcon
+} from "lucide-react";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import { NAV, type ScreenId } from "../lib/nav.js";
 
-const FALLBACK_REV = "0.1.0";
+const NAV_ICON_SIZE = 15;
+const NAV_ICON_STROKE = 1.75;
+
+const NAV_ICONS: Record<ScreenId, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  sources: Database,
+  tables: Table2,
+  permissions: ShieldCheck,
+  changes: GitPullRequest,
+  audit: ScrollText,
+  settings: SettingsIcon
+};
 
 type SidebarProps = {
   active: ScreenId;
@@ -13,16 +34,13 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
   const { data: status } = useAppStatus();
   const pendingCount = status?.pendingCount ?? 0;
   const mcpRunning = status?.mcpRunning ?? false;
-  const rev = status?.appVersion ?? FALLBACK_REV;
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col bg-bg">
-      <nav className="flex-1 overflow-y-auto py-6" aria-label="Main navigation">
-        <p className="mb-3 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-muted">
-          /// Console
-        </p>
+    <aside className="flex w-56 shrink-0 flex-col border-r border-edge bg-bg">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4" aria-label="Main navigation">
         {NAV.map((item) => {
           const isActive = active === item.id;
+          const Icon = NAV_ICONS[item.id];
           return (
             <button
               key={item.id}
@@ -30,66 +48,62 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
               aria-current={isActive ? "page" : undefined}
               onClick={() => onNavigate(item.screen)}
               className={cn(
-                "relative flex w-full items-center gap-2 px-5 py-2 text-left",
-                "font-mono text-[11px] uppercase tracking-[0.08em] transition-colors",
-                "focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-2 focus-visible:outline-hazard",
-                isActive ? "text-ink" : "text-ink-muted hover:text-ink"
+                "relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left",
+                "text-[13px] font-medium transition-colors",
+                FOCUS_RING,
+                isActive
+                  ? "bg-accent/[0.07] text-accent"
+                  : "text-ink-muted hover:bg-surface hover:text-ink"
               )}
             >
-              {/* Active strike marker: 2px hazard bar on the compartment edge. */}
-              {isActive ? <span aria-hidden className="absolute left-0 top-0 h-full w-0.5 bg-hazard" /> : null}
-              <span aria-hidden className={cn("w-2 shrink-0", isActive ? "text-hazard" : "opacity-0")}>
-                {">"}
-              </span>
+              {/* Active marker: 3px rounded accent bar on the sidebar edge. */}
+              {isActive ? (
+                <span
+                  aria-hidden
+                  className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent"
+                />
+              ) : null}
+              <Icon
+                size={NAV_ICON_SIZE}
+                strokeWidth={NAV_ICON_STROKE}
+                aria-hidden
+                className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+              />
               {item.label}
             </button>
           );
         })}
       </nav>
 
-      <div className="border-t border-edge px-5 py-3">
-        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted">
-          [ MCP Server ]
-        </p>
-        <p className="mt-1.5 flex items-center gap-2">
-          <StatusDot status={mcpRunning ? "live" : "idle"} />
-          <span
-            className={cn(
-              "font-mono text-[11px] font-bold uppercase tracking-[0.08em]",
-              mcpRunning ? "text-signal" : "text-ink-muted"
-            )}
-          >
-            {mcpRunning ? "Running" : "Offline"}
-          </span>
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => onNavigate("changes")}
-        className={cn(
-          "flex w-full items-center justify-between border-t border-edge px-5 py-3 text-left transition-colors",
-          "font-mono text-[11px] uppercase tracking-[0.08em]",
-          "focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-2 focus-visible:outline-hazard",
-          pendingCount > 0 ? "text-ink hover:text-hazard" : "text-ink-muted hover:text-ink"
-        )}
-      >
-        Pending
-        <span
+      <div className="border-t border-edge px-3 py-3">
+        <button
+          type="button"
+          onClick={() => onNavigate("changes")}
           className={cn(
-            "inline-flex h-5 min-w-5 items-center justify-center border px-1.5 font-mono text-[11px] tabular-nums",
-            pendingCount > 0 ? "border-hazard text-hazard" : "border-edge text-ink-muted"
+            "flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left",
+            "text-[13px] font-medium text-ink-muted transition-colors hover:bg-surface hover:text-ink",
+            FOCUS_RING
           )}
         >
-          {pendingCount}
-        </span>
-      </button>
-
-      <footer className="border-t border-edge px-5 py-3">
-        <p className="font-mono text-[9px] uppercase tracking-[0.08em] text-ink-muted">
-          Sheet-Port(R) Rev {rev} / Local-Only
-        </p>
-      </footer>
+          Pending approvals
+          <span
+            className={cn(
+              "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5",
+              "text-[11px] font-semibold tabular-nums",
+              pendingCount > 0 ? "bg-warning/15 text-warning" : "bg-edge/60 text-ink-muted"
+            )}
+          >
+            {pendingCount}
+          </span>
+        </button>
+        <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[12px]">
+          <StatusDot status={mcpRunning ? "live" : "idle"} />
+          <span className="text-ink-muted">MCP server</span>
+          <span className={cn("ml-auto font-medium", mcpRunning ? "text-success" : "text-ink-muted")}>
+            {mcpRunning ? "Running" : "Offline"}
+          </span>
+        </div>
+      </div>
     </aside>
   );
 }

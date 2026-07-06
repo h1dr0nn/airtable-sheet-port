@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button, useToast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 
@@ -6,10 +6,13 @@ const COPIED_RESET_MS = 1500;
 
 type CopyButtonProps = {
   value: string;
+  /** Accessible label describing what gets copied. */
   label: string;
+  /** Visible idle text; defaults to "Copy". */
+  children?: ReactNode;
 };
 
-export function CopyButton({ value, label }: CopyButtonProps) {
+export function CopyButton({ value, label, children }: CopyButtonProps) {
   const [isCopied, setIsCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
   const { toast } = useToast();
@@ -32,10 +35,10 @@ export function CopyButton({ value, label }: CopyButtonProps) {
       variant="ghost"
       size="sm"
       aria-label={label}
-      className="w-14 px-0"
+      className="min-w-16 px-2"
       onClick={() => void handleCopy()}
     >
-      {isCopied ? "[ OK ]" : "Copy"}
+      {isCopied ? "Copied" : children ?? "Copy"}
     </Button>
   );
 }

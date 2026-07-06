@@ -19,7 +19,7 @@ import { useSavePermissionRule } from "../../hooks/usePermissions.js";
 import { useSources } from "../../hooks/useSources.js";
 import { ConfirmationChips } from "./ConfirmationChips.js";
 
-const FIELD_LABEL_CLASS = "font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted";
+const FIELD_LABEL_CLASS = "text-[12px] font-medium text-ink-muted";
 
 type RuleFormDialogProps = {
   open: boolean;
@@ -101,8 +101,7 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
 
           <div className="space-y-1.5">
             <label className={FIELD_LABEL_CLASS} htmlFor="rule-table">
-              Table id{" "}
-              <span className="font-normal normal-case tracking-normal">(blank = entire source)</span>
+              Table id <span className="font-normal">(blank = entire source)</span>
             </label>
             <Input
               id="rule-table"
@@ -113,15 +112,15 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
           </div>
 
           <div className="flex items-center gap-6">
-            <label className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink">
               <Switch checked={draft.read} onCheckedChange={(read) => setDraft({ ...draft, read })} aria-label="Read" />
               Read
             </label>
-            <label className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink">
               <Switch checked={draft.write} onCheckedChange={(write) => setDraft({ ...draft, write })} aria-label="Write" />
               Write
             </label>
-            <label className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink">
               <Switch
                 checked={draft.deleteRecords}
                 onCheckedChange={(deleteRecords) => setDraft({ ...draft, deleteRecords })}
@@ -132,7 +131,7 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
           </div>
 
           <div className="space-y-1.5">
-            <p className={FIELD_LABEL_CLASS}>[ Require confirmation for ]</p>
+            <p className={FIELD_LABEL_CLASS}>Require confirmation for</p>
             <ConfirmationChips
               value={draft.requireConfirmationFor}
               onChange={(requireConfirmationFor) => setDraft({ ...draft, requireConfirmationFor })}

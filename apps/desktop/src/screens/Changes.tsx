@@ -1,60 +1,24 @@
 import { useState } from "react";
-import { EmptyState, Skeleton, cn } from "@sheet-port/ui";
+import { EmptyState, Skeleton } from "@sheet-port/ui";
 import type { ChangeStatus } from "@sheet-port/shared";
 import { useChanges } from "../hooks/useChanges.js";
 import { ChangeCard } from "../components/changes/ChangeCard.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
+import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
 
-type StatusFilter = ChangeStatus | null;
+type FilterValue = ChangeStatus | "all";
 
-const FILTERS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
-  { value: null, label: "All" },
+const FILTERS: ReadonlyArray<SegmentedOption<FilterValue>> = [
+  { value: "all", label: "All" },
   { value: "pending", label: "Pending" },
   { value: "approved", label: "Approved" },
   { value: "committed", label: "Committed" },
   { value: "rejected", label: "Rejected" }
 ];
 
-function FilterControl({
-  active,
-  onChange
-}: {
-  active: StatusFilter;
-  onChange: (value: StatusFilter) => void;
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Filter changes by status"
-      className="inline-flex border border-edge bg-bg"
-    >
-      {FILTERS.map((filter) => {
-        const isActive = filter.value === active;
-        return (
-          <button
-            key={filter.label}
-            type="button"
-            role="radio"
-            aria-checked={isActive}
-            onClick={() => onChange(filter.value)}
-            className={cn(
-              "border-r border-edge px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]",
-              "transition-colors last:border-r-0",
-              "focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-2 focus-visible:outline-hazard",
-              isActive ? "bg-ink font-bold text-bg" : "text-ink-muted hover:text-ink"
-            )}
-          >
-            {filter.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export function Changes() {
-  const [filter, setFilter] = useState<StatusFilter>(null);
-  const { data: changes, isPending } = useChanges(filter);
+  const [filter, setFilter] = useState<FilterValue>("all");
+  const { data: changes, isPending } = useChanges(filter === "all" ? null : filter);
   const list = changes ?? [];
 
   return (
@@ -62,22 +26,28 @@ export function Changes() {
       <ScreenHeader
         title="Changes"
         description="Every agent write lands here as a preview before it can commit"
-        meta={isPending ? "CHG / SCAN" : `CHG ${list.length}`}
-        actions={<FilterControl active={filter} onChange={setFilter} />}
+        actions={
+          <SegmentedControl
+            options={FILTERS}
+            value={filter}
+            onChange={setFilter}
+            ariaLabel="Filter changes by status"
+          />
+        }
       />
 
       {isPending ? (
-        <div className="grid gap-px border border-edge bg-edge">
-          <Skeleton className="h-44" />
-          <Skeleton className="h-44" />
+        <div className="space-y-4">
+          <Skeleton className="h-44 rounded-card" />
+          <Skeleton className="h-44 rounded-card" />
         </div>
       ) : list.length === 0 ? (
         <EmptyState
-          title={filter === null ? "No changes" : `No ${filter} changes`}
+          title={filter === "all" ? "No changes yet" : `No ${filter} changes`}
           description="When an agent previews a write it appears here for review"
         />
       ) : (
-        <div className="grid gap-px border border-edge bg-edge">
+        <div className="space-y-4">
           {list.map((change) => (
             <ChangeCard key={change.id} change={change} />
           ))}

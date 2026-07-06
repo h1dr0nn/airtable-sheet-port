@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import {
+  cn,
   EmptyState,
+  FOCUS_RING,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Skeleton,
-  cn
+  Skeleton
 } from "@sheet-port/ui";
 import { useSources } from "../hooks/useSources.js";
 import { useTablePage, useTableSchema, useTables } from "../hooks/useTables.js";
@@ -18,7 +19,7 @@ function TableListSkeleton() {
   return (
     <div className="space-y-3">
       <Skeleton className="h-9 w-64" />
-      <Skeleton className="h-64" />
+      <Skeleton className="h-64 rounded-card" />
     </div>
   );
 }
@@ -42,14 +43,12 @@ export function Tables() {
   }, [effectiveSourceId]);
 
   const isLoading = sourcesPending || tablesPending;
-  const meta = isLoading ? "TBL / SCAN" : `SRC ${(sources ?? []).length} / TBL ${(tables ?? []).length}`;
 
   return (
     <>
       <ScreenHeader
         title="Tables"
         description="Browse records through the same read path agents use"
-        meta={meta}
         actions={
           <Select value={effectiveSourceId ?? ""} onValueChange={(next) => setSourceId(next)}>
             <SelectTrigger className="w-56" aria-label="Data source">
@@ -89,22 +88,22 @@ export function Tables() {
                     setPageIndex(0);
                   }}
                   className={cn(
-                    "border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.05em] transition-colors",
-                    "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard",
+                    "h-8 rounded-lg border px-3 text-[13px] font-medium transition-colors",
+                    FOCUS_RING,
                     isActive
-                      ? "border-ink bg-ink font-bold text-bg"
-                      : "border-edge text-ink-muted hover:border-edge-strong hover:text-ink"
+                      ? "border-accent/40 bg-accent/[0.08] text-accent"
+                      : "border-edge text-ink-muted hover:bg-surface hover:text-ink"
                   )}
                 >
                   {table.name}
-                  <span className="ml-1.5 text-[10px] opacity-70">{table.tableId}</span>
+                  <span className="ml-1.5 font-mono text-[11px] opacity-60">{table.tableId}</span>
                 </button>
               );
             })}
           </div>
 
           {pagePending || !schema || !page ? (
-            <Skeleton className="h-96" />
+            <Skeleton className="h-96 rounded-card" />
           ) : page.total === 0 ? (
             <EmptyState
               title="No records"

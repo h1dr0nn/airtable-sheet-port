@@ -10,8 +10,8 @@ function baseProps(className: string | undefined) {
     fill: "none",
     stroke: "currentColor",
     strokeWidth: 1.75,
-    strokeLinecap: "square",
-    strokeLinejoin: "miter",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
     "aria-hidden": true
   } as const;
 }
@@ -20,6 +20,14 @@ export function XIcon({ className }: IconProps) {
   return (
     <svg {...baseProps(className)}>
       <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <path d="M3 8.5l3.5 3.5L13 4.5" />
     </svg>
   );
 }

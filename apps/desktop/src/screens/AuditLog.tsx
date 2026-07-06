@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Badge, Button, Card, EmptyState, Skeleton, cn, type BadgeVariant } from "@sheet-port/ui";
+import { Badge, Button, Card, cn, EmptyState, FOCUS_RING, Skeleton, type BadgeVariant } from "@sheet-port/ui";
+import { ChevronRight } from "lucide-react";
 import type { AuditEvent } from "@sheet-port/shared";
 import { useAuditEvents } from "../hooks/useAuditEvents.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
@@ -9,8 +10,8 @@ const ISO_TIME_START = 11;
 const ISO_TIME_END = 19;
 
 const ACTOR_VARIANTS: Record<"agent" | "user" | "system", BadgeVariant> = {
-  agent: "default",
-  user: "strong",
+  agent: "accent",
+  user: "default",
   system: "muted"
 };
 
@@ -28,8 +29,8 @@ function AuditRow({ event }: { event: AuditEvent }) {
   const target = [event.sourceId, event.tableId].filter(Boolean).join("/");
 
   return (
-    <li className="border-t border-edge first:border-t-0">
-      <div className="flex h-8 items-center gap-3 px-4">
+    <li>
+      <div className="flex h-9 items-center gap-3 px-4">
         <button
           type="button"
           aria-label={isExpanded ? "Collapse metadata" : "Expand metadata"}
@@ -37,27 +38,31 @@ function AuditRow({ event }: { event: AuditEvent }) {
           disabled={!hasMetadata}
           onClick={() => setIsExpanded((current) => !current)}
           className={cn(
-            "w-4 shrink-0 font-mono text-xs text-ink-muted transition-colors",
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-muted transition-colors",
             "enabled:hover:text-ink disabled:opacity-30",
-            "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard"
+            FOCUS_RING
           )}
         >
-          <span aria-hidden>{isExpanded ? "-" : "+"}</span>
+          <ChevronRight
+            size={14}
+            aria-hidden
+            className={cn("transition-transform", isExpanded && "rotate-90")}
+          />
         </button>
         <time
           dateTime={event.timestamp}
-          className="shrink-0 font-mono text-[11px] tabular-nums text-ink-muted"
+          className="shrink-0 font-mono text-[12px] tabular-nums text-ink-muted"
         >
           {formatIsoTimestamp(event.timestamp)}
         </time>
         <Badge variant={ACTOR_VARIANTS[event.actor]}>{event.actor}</Badge>
-        <span className="truncate font-mono text-xs text-ink">{event.action}</span>
+        <span className="truncate text-[13px] text-ink">{event.action}</span>
         {target !== "" ? (
-          <span className="ml-auto truncate font-mono text-[11px] text-ink-muted">{target}</span>
+          <span className="ml-auto truncate font-mono text-[12px] text-ink-muted">{target}</span>
         ) : null}
       </div>
       {isExpanded && hasMetadata ? (
-        <pre className="mx-4 mb-3 overflow-x-auto border border-edge bg-bg p-3 font-mono text-[11px] leading-4 text-ink-muted">
+        <pre className="mx-4 mb-3 overflow-x-auto rounded-lg border border-edge bg-surface p-3 font-mono text-[12px] leading-5 text-ink-muted">
           {JSON.stringify(event.metadata, null, 2)}
         </pre>
       ) : null}
@@ -74,24 +79,23 @@ export function AuditLog() {
       <ScreenHeader
         title="Audit Log"
         description="Every read, preview, decision, and commit, in order"
-        meta={isPending ? "EVT / SCAN" : `EVT ${events.length}${hasNextPage ? "+" : ""}`}
       />
 
       {isPending ? (
-        <div className="grid gap-px border border-edge bg-edge">
-          <Skeleton className="h-8" />
-          <Skeleton className="h-8" />
-          <Skeleton className="h-8" />
+        <div className="space-y-2">
+          <Skeleton className="h-9" />
+          <Skeleton className="h-9" />
+          <Skeleton className="h-9" />
         </div>
       ) : events.length === 0 ? (
         <EmptyState
-          title="No records"
+          title="No activity yet"
           description="Agent activity is recorded here as soon as it happens"
         />
       ) : (
         <>
           <Card className="overflow-hidden">
-            <ol>
+            <ol className="divide-y divide-edge">
               {events.map((event) => (
                 <AuditRow key={event.id} event={event} />
               ))}
@@ -100,12 +104,12 @@ export function AuditLog() {
           {hasNextPage ? (
             <div className="mt-4 flex justify-center">
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={isFetchingNextPage}
                 onClick={() => void fetchNextPage()}
               >
-                {isFetchingNextPage ? "Loading..." : ">>> Load more"}
+                {isFetchingNextPage ? "Loading..." : "Load more"}
               </Button>
             </div>
           ) : null}

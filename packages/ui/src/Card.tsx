@@ -1,35 +1,30 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "./cn.js";
 
-/** Bordered compartment: 1px hairline frame, square, panel fill. */
+/** Raised card: 10px radius, hairline edge, soft light-mode shadow. */
 export function Card({ className, ...props }: HTMLAttributes<HTMLElement>) {
-  return <section className={cn("border border-edge bg-surface", className)} {...props} />;
-}
-
-/** Header strip separated from the body by a hairline. */
-export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div
-      className={cn("flex items-center justify-between gap-3 border-b border-edge px-4 py-2", className)}
+    <section
+      className={cn("rounded-card border border-edge bg-raised shadow-card", className)}
       {...props}
     />
   );
 }
 
-/** Compartment label in "[ LABEL ]" ASCII framing. */
-export function CardTitle({ className, children, ...props }: HTMLAttributes<HTMLHeadingElement>) {
+/** Header strip: overline label on the left, optional action on the right. */
+export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <h3
-      className={cn("font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-ink-muted", className)}
+    <div
+      className={cn("flex items-center justify-between gap-3 border-b border-edge px-5 py-3", className)}
       {...props}
-    >
-      {"[ "}
-      {children}
-      {" ]"}
-    </h3>
+    />
   );
 }
 
+export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) {
+  return <h3 className={cn("overline-label", className)} {...props} />;
+}
+
 export function CardContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("px-4 py-3", className)} {...props} />;
+  return <div className={cn("px-5 py-4", className)} {...props} />;
 }

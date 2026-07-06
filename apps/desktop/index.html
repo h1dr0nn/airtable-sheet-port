@@ -1,9 +1,35 @@
 <!doctype html>
-<html lang="en" style="background-color: #0a0a0a; overflow: hidden; color-scheme: dark">
+<html lang="en" style="overflow: hidden">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Airtable - Sheet Port</title>
+    <style>
+      /* Pre-hydration backgrounds; tokens in styles.css take over after load. */
+      html {
+        background-color: #f1f0ed;
+      }
+      html.dark {
+        background-color: #1c1e23;
+      }
+    </style>
+    <script>
+      // Theme bootstrap: apply the stored theme before first paint (no flash).
+      // Mirrors src/lib/theme.ts; keep the storage key in sync.
+      (function () {
+        var stored = null;
+        try {
+          stored = window.localStorage.getItem("sheet-port-theme");
+        } catch (storageError) {
+          /* storage unavailable: fall through to the system preference */
+        }
+        var dark =
+          stored === "dark" ||
+          (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

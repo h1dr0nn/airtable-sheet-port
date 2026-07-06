@@ -15,31 +15,30 @@ export function Permissions() {
       <ScreenHeader
         title="Permissions"
         description="What agents may read or write, and which actions need your confirmation"
-        meta={isPending ? "RULES / SCAN" : `RULES ${list.length} / DENY-DEFAULT`}
         actions={
-          <Button variant="secondary" size="sm" onClick={() => setIsFormOpen(true)}>
-            + Add rule
+          <Button size="sm" onClick={() => setIsFormOpen(true)}>
+            Add rule
           </Button>
         }
       />
 
       {isPending ? (
-        <div className="grid gap-px border border-edge bg-edge">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
+        <div className="space-y-4">
+          <Skeleton className="h-32 rounded-card" />
+          <Skeleton className="h-32 rounded-card" />
         </div>
       ) : list.length === 0 ? (
         <EmptyState
-          title="No rules"
+          title="No rules yet"
           description="Agents are denied by default. Add a rule to grant scoped access"
           action={
-            <Button variant="secondary" size="sm" onClick={() => setIsFormOpen(true)}>
-              + Add rule
+            <Button size="sm" onClick={() => setIsFormOpen(true)}>
+              Add rule
             </Button>
           }
         />
       ) : (
-        <div className="grid gap-px border border-edge bg-edge">
+        <div className="space-y-4">
           {list.map((rule) => (
             <RuleRow key={rule.id} rule={rule} />
           ))}

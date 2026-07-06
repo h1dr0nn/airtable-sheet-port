@@ -2,12 +2,11 @@ import { cn } from "./cn.js";
 
 export type StatusDotStatus = "live" | "idle" | "alert";
 
-// "live" is terminal green, reserved for the MCP RUNNING readout.
 // Only the live dot may pulse (motion-safe).
 const DOT_CLASSES: Record<StatusDotStatus, string> = {
-  live: "bg-signal motion-safe:animate-dot-pulse",
-  idle: "bg-ink-muted",
-  alert: "bg-hazard"
+  live: "bg-success motion-safe:animate-dot-pulse",
+  idle: "bg-ink-faint",
+  alert: "bg-danger"
 };
 
 type StatusDotProps = {
@@ -15,7 +14,12 @@ type StatusDotProps = {
   className?: string;
 };
 
-/** Square 6x6px status indicator. */
+/** Round 8x8px status indicator. */
 export function StatusDot({ status, className }: StatusDotProps) {
-  return <span className={cn("inline-block h-1.5 w-1.5 shrink-0", DOT_CLASSES[status], className)} aria-hidden />;
+  return (
+    <span
+      className={cn("inline-block h-2 w-2 shrink-0 rounded-full", DOT_CLASSES[status], className)}
+      aria-hidden
+    />
+  );
 }

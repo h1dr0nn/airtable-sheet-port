@@ -56,31 +56,29 @@ export function RuleRow({ rule }: { rule: PermissionRuleRow }) {
   };
 
   return (
-    <article className="bg-surface">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge px-4 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted">
-          RULE / <span className="text-ink">{scope}</span>
-        </span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.05em] text-ink-muted">
+    <article className="rounded-card border border-edge bg-raised shadow-card">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge px-5 py-3">
+        <span className="font-mono text-[13px] font-medium text-ink">{scope}</span>
+        <span className="text-[12px] text-ink-muted">
           Updated <RelativeTime iso={rule.updatedAt} />
         </span>
         <Button
           variant="ghost"
           size="sm"
           aria-label={`Delete rule for ${scope}`}
-          className="ml-auto text-hazard hover:border-hazard hover:text-hazard"
+          className="ml-auto text-danger hover:bg-danger/10 hover:text-danger"
           onClick={() => setIsConfirmOpen(true)}
         >
-          Del
+          Delete
         </Button>
       </header>
 
-      <div className="px-4 py-3">
+      <div className="px-5 py-4">
         <div className="flex flex-wrap items-center gap-6">
           {TOGGLES.map(({ field, label }) => (
             <label
               key={field}
-              className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+              className="flex cursor-pointer items-center gap-2 text-[13px] text-ink"
             >
               <Switch
                 checked={rule[field]}
@@ -93,10 +91,8 @@ export function RuleRow({ rule }: { rule: PermissionRuleRow }) {
           ))}
         </div>
 
-        <div className="mt-3 border-t border-edge pt-3">
-          <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted">
-            [ Require confirmation for ]
-          </p>
+        <div className="mt-4 border-t border-edge pt-4">
+          <p className="overline-label mb-2.5">Require confirmation for</p>
           <ConfirmationChips
             value={rule.requireConfirmationFor}
             disabled={save.isPending}

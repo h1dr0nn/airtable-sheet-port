@@ -26,16 +26,11 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 const TOAST_DURATION_MS = 4000;
 
+// Variant reads as a colored left border; the body stays neutral.
 const VARIANT_CLASSES: Record<ToastVariant, string> = {
-  success: "border-ink text-ink",
-  error: "border-hazard text-hazard",
-  info: "border-edge-strong text-ink"
-};
-
-const VARIANT_MARKERS: Record<ToastVariant, string> = {
-  success: "[ OK ]",
-  error: "[ ERR ]",
-  info: "[ SYS ]"
+  success: "border-l-success",
+  error: "border-l-danger",
+  info: "border-l-edge-strong"
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -63,15 +58,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               key={item.id}
               role="status"
               className={cn(
-                "pointer-events-auto flex items-baseline gap-2 border bg-raised px-3.5 py-2.5",
-                "font-mono text-[11px] uppercase tracking-[0.05em]",
+                "pointer-events-auto rounded-lg border border-edge bg-raised px-4 py-3 shadow-pop",
+                "border-l-2 font-sans text-[13px] leading-5 text-ink",
                 "motion-safe:animate-fade-in",
                 VARIANT_CLASSES[item.variant]
               )}
             >
-              <span className="shrink-0 font-bold" aria-hidden>
-                {VARIANT_MARKERS[item.variant]}
-              </span>
               <span className="min-w-0 break-words">{item.message}</span>
             </div>
           ))}

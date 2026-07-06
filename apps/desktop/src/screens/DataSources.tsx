@@ -13,13 +13,13 @@ import { useSources } from "../hooks/useSources.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 
 const STATUS_VARIANTS: Record<SourceStatus, BadgeVariant> = {
-  connected: "strong",
+  connected: "success",
   placeholder: "muted",
   error: "danger"
 };
 
 const STATUS_LABELS: Record<SourceStatus, string> = {
-  connected: "OK / Connected",
+  connected: "Connected",
   placeholder: "Placeholder",
   error: "Error"
 };
@@ -30,24 +30,20 @@ function SourceCard({ source }: { source: DataSource }) {
   const status = source.status ?? "placeholder";
 
   return (
-    <article className="flex flex-col border border-edge bg-surface">
-      <header className="flex items-center justify-between gap-3 border-b border-edge px-4 py-2">
-        <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted">
-          {"[ "}
-          {source.kind}
-          {" ]"}
-        </h3>
+    <article className="flex flex-col rounded-card border border-edge bg-raised shadow-card">
+      <header className="flex items-center justify-between gap-3 border-b border-edge px-5 py-3">
+        <h3 className="overline-label">{source.kind}</h3>
         <Badge variant={STATUS_VARIANTS[status]}>{STATUS_LABELS[status]}</Badge>
       </header>
-      <div className="flex-1 px-4 py-3">
-        <p className="font-mono text-sm font-bold text-ink">{source.name}</p>
-        <p className="mt-1.5 font-mono text-[11px] uppercase leading-4 tracking-[0.05em] text-ink-muted">
+      <div className="flex-1 px-5 py-4">
+        <p className="text-[15px] font-semibold text-ink">{source.name}</p>
+        <p className="mt-1 text-[13px] leading-5 text-ink-muted">
           {status === "connected"
             ? "Available to agents through permission rules"
             : "Connector scaffolded; authentication is not wired up yet"}
         </p>
       </div>
-      <footer className="px-4 pb-3">
+      <footer className="px-5 pb-4">
         {status === "connected" ? (
           <Button variant="secondary" size="sm" disabled>
             Connected
@@ -58,7 +54,7 @@ function SourceCard({ source }: { source: DataSource }) {
               {/* Disabled buttons swallow pointer events; the span keeps the tooltip alive. */}
               <span className="inline-block">
                 <Button variant="outline" size="sm" disabled>
-                  {">>> Connect"}
+                  Connect
                 </Button>
               </span>
             </TooltipTrigger>
@@ -79,13 +75,12 @@ export function DataSources() {
       <ScreenHeader
         title="Data Sources"
         description="Connected table providers and placeholders waiting on OAuth"
-        meta={isPending ? "SRC / SCAN" : `SRC ${list.length}`}
       />
       {isPending ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Skeleton className="h-40" />
-          <Skeleton className="h-40" />
-          <Skeleton className="h-40" />
+          <Skeleton className="h-40 rounded-card" />
+          <Skeleton className="h-40 rounded-card" />
+          <Skeleton className="h-40 rounded-card" />
         </div>
       ) : list.length === 0 ? (
         <EmptyState title="No sources" description="No table providers are configured yet" />

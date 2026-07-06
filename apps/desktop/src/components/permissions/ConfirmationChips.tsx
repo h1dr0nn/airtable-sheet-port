@@ -1,4 +1,4 @@
-import { cn } from "@sheet-port/ui";
+import { cn, FOCUS_RING } from "@sheet-port/ui";
 import type { ConfirmationAction } from "@sheet-port/shared";
 
 export const CONFIRMATION_ACTIONS: readonly ConfirmationAction[] = [
@@ -15,7 +15,7 @@ type ConfirmationChipsProps = {
   disabled?: boolean;
 };
 
-/** Square toggle markers; armed confirmation requirements read as hazard warnings. */
+/** Toggle chips; armed confirmation requirements read as amber markers. */
 export function ConfirmationChips({ value, onChange, disabled = false }: ConfirmationChipsProps) {
   const toggle = (action: ConfirmationAction) => {
     const next = value.includes(action)
@@ -36,12 +36,12 @@ export function ConfirmationChips({ value, onChange, disabled = false }: Confirm
             disabled={disabled}
             onClick={() => toggle(action)}
             className={cn(
-              "border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.05em] transition-colors",
-              "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard",
-              "disabled:cursor-not-allowed disabled:opacity-40",
+              "rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors",
+              FOCUS_RING,
+              "disabled:cursor-not-allowed disabled:opacity-50",
               isActive
-                ? "border-hazard font-bold text-hazard"
-                : "border-edge text-ink-muted hover:border-edge-strong hover:text-ink"
+                ? "border-warning/40 bg-warning/10 text-warning"
+                : "border-edge text-ink-muted hover:bg-surface hover:text-ink"
             )}
           >
             {action}

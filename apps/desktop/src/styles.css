@@ -1,24 +1,60 @@
+@import "@fontsource-variable/inter/index.css";
 @import "@fontsource/jetbrains-mono/400.css";
-@import "@fontsource/jetbrains-mono/700.css";
-@import "@fontsource/archivo-black/index.css";
+@import "@fontsource/jetbrains-mono/500.css";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Semantic tokens as raw RGB channels so Tailwind opacity modifiers work
+ * (see tailwind.config.ts). Light mode is warm paper, dark mode is graphite:
+ * neither extreme, both calibrated for AA text contrast.
+ */
 :root {
+  color-scheme: light;
+  --bg: 241 240 237; /* #F1F0ED warm paper */
+  --surface: 248 247 245; /* #F8F7F5 */
+  --raised: 255 255 255; /* #FFFFFF */
+  --overlay: 18 19 23; /* dialog scrim base, both modes */
+  --ink: 35 38 43; /* #23262B */
+  --ink-muted: 109 107 102; /* #6D6B66 */
+  --ink-faint: 152 149 142; /* #98958E decorative only */
+  --edge: 226 224 219; /* #E2E0DB */
+  --edge-strong: 201 198 191; /* #C9C6BF */
+  --accent: 172 78 39; /* #AC4E27 burnished copper, tuned for AA on paper */
+  --accent-hover: 155 69 34; /* #9B4522 */
+  --accent-ink: 255 255 255;
+  --success: 54 112 73; /* #367049 */
+  --warning: 138 94 20; /* #8A5E14 */
+  --danger: 179 55 46; /* #B3372E */
+  --danger-solid: 179 55 46;
+  --danger-solid-hover: 160 47 39; /* #A02F27 */
+  --shadow-card: 0 1px 2px rgba(35, 38, 43, 0.06);
+  --shadow-pop: 0 4px 16px rgba(35, 38, 43, 0.12);
+}
+
+.dark {
   color-scheme: dark;
-  /* Token mirror of tailwind.config.ts for non-Tailwind consumers. */
-  --color-bg: #0a0a0a;
-  --color-surface: #101010;
-  --color-raised: #141414;
-  --color-border: #262626;
-  --color-border-strong: #3a3a3a;
-  --color-text: #eaeaea;
-  --color-text-muted: #8a8a85;
-  --color-hazard: #ff2a2a;
-  --color-signal: #4af626;
-  font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --bg: 28 30 35; /* #1C1E23 graphite */
+  --surface: 36 38 44; /* #24262C */
+  --raised: 44 47 54; /* #2C2F36 */
+  --overlay: 10 11 14;
+  --ink: 231 229 224; /* #E7E5E0 slightly warm */
+  --ink-muted: 160 157 150; /* #A09D96 */
+  --ink-faint: 117 114 107; /* #75726B decorative only */
+  --edge: 53 55 62; /* #35373E */
+  --edge-strong: 74 76 85; /* #4A4C55 */
+  --accent: 217 134 91; /* #D9865B copper, lifted for dark */
+  --accent-hover: 199 120 79; /* #C7784F */
+  --accent-ink: 35 38 43; /* dark umber text on copper */
+  --success: 127 191 142; /* #7FBF8E */
+  --warning: 217 168 78; /* #D9A84E */
+  --danger: 224 108 95; /* #E06C5F */
+  --danger-solid: 194 76 64; /* #C24C40 keeps white text readable */
+  --danger-solid-hover: 178 66 55; /* #B24237 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
 html,
@@ -30,38 +66,11 @@ body,
 body {
   margin: 0;
   overflow: hidden;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-variant-numeric: tabular-nums;
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: "Inter Variable", "Inter", -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
-}
-
-/* CRT scanlines over the whole app. Static, subtle, non-interactive. */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.22) 2px,
-    rgba(0, 0, 0, 0.22) 4px
-  );
-}
-
-/* Global SVG noise grain (feTurbulence data URI; img-src data: is CSP-allowed). */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 9998;
-  pointer-events: none;
-  opacity: 0.03;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)'/%3E%3C/svg%3E");
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -70,10 +79,24 @@ input {
 }
 
 ::selection {
-  background: rgba(255, 42, 42, 0.4);
+  background: rgb(var(--accent) / 0.25);
 }
 
-/* Square dark scrollbars for the embedded webview. */
+@layer components {
+  /*
+   * The single sanctioned overline: tiny section labels on card headers.
+   * The only place uppercase is allowed in the app.
+   */
+  .overline-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgb(var(--ink-muted));
+  }
+}
+
+/* Theme-aware scrollbars for the embedded webview. */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -84,9 +107,10 @@ input {
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: #262626;
+  background-color: rgb(var(--edge-strong));
+  border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: #3a3a3a;
+  background-color: rgb(var(--ink-faint));
 }

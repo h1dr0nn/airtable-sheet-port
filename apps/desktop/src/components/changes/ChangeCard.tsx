@@ -14,16 +14,16 @@ import { DiffViewer } from "./DiffViewer.js";
 const CHANGE_ID_LENGTH = 8;
 
 const STATUS_VARIANTS: Record<ChangeStatus, BadgeVariant> = {
-  pending: "default",
-  approved: "strong",
-  committed: "strong",
+  pending: "warning",
+  approved: "default",
+  committed: "success",
   rejected: "danger"
 };
 
 const STATUS_LABELS: Record<ChangeStatus, string> = {
   pending: "Pending",
-  approved: "OK / Approved",
-  committed: "OK / Committed",
+  approved: "Approved",
+  committed: "Committed",
   rejected: "Rejected"
 };
 
@@ -34,32 +34,32 @@ const TYPE_VARIANTS: Record<ChangeType, BadgeVariant> = {
 };
 
 function ChangeOutcome({ change }: { change: PendingChange }) {
-  const baseClass = "font-mono text-[11px] uppercase tracking-[0.05em] text-ink-muted";
+  const baseClass = "text-[12.5px] text-ink-muted";
   if (change.status === "committed" && change.committedAt) {
     return (
       <p className={baseClass}>
-        [ OK ] Committed <RelativeTime iso={change.committedAt} className="text-ink" />
-        {change.decidedBy ? ` / by ${change.decidedBy}` : null}
+        Committed <RelativeTime iso={change.committedAt} className="text-ink" />
+        {change.decidedBy ? ` by ${change.decidedBy}` : null}
       </p>
     );
   }
   if (change.status === "rejected" && change.decidedAt) {
     return (
       <p className={baseClass}>
-        <span className="text-hazard">Rejected</span>{" "}
-        <RelativeTime iso={change.decidedAt} className="text-hazard" />
+        <span className="font-medium text-danger">Rejected</span>{" "}
+        <RelativeTime iso={change.decidedAt} className="text-danger" />
       </p>
     );
   }
   if (change.status === "approved" && change.decidedAt) {
     return (
       <p className={baseClass}>
-        [ OK ] Approved <RelativeTime iso={change.decidedAt} className="text-ink" /> / awaiting agent
-        commit
+        Approved <RelativeTime iso={change.decidedAt} className="text-ink" /> · waiting for the agent
+        to commit
       </p>
     );
   }
-  return <p className={baseClass}>Auto-commit / no confirmation required by policy</p>;
+  return <p className={baseClass}>Auto-commit · no confirmation required by policy</p>;
 }
 
 export function ChangeCard({ change }: { change: PendingChange }) {
@@ -69,20 +69,20 @@ export function ChangeCard({ change }: { change: PendingChange }) {
   const needsDecision = change.status === "pending" && change.requiresConfirmation;
 
   return (
-    <article className="bg-surface">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-4 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted">
-          CHG / {change.id.slice(0, CHANGE_ID_LENGTH)}
+    <article className="overflow-hidden rounded-card border border-edge bg-raised shadow-card">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-5 py-3">
+        <span className="font-mono text-[12px] text-ink-muted">
+          #{change.id.slice(0, CHANGE_ID_LENGTH)}
         </span>
         <Badge variant={TYPE_VARIANTS[change.type]}>{change.type}</Badge>
-        <span className="font-mono text-xs text-ink-muted">
+        <span className="font-mono text-[12px] text-ink-muted">
           {change.sourceId}/{change.tableId}
         </span>
         {change.requiresConfirmation ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span tabIndex={0}>
-                <Badge variant="danger">Confirm Req</Badge>
+                <Badge variant="warning">Needs confirmation</Badge>
               </span>
             </TooltipTrigger>
             <TooltipContent>Policy requires user confirmation before commit</TooltipContent>
@@ -94,16 +94,14 @@ export function ChangeCard({ change }: { change: PendingChange }) {
         </span>
       </header>
 
-      <div className="px-4 py-3">
+      <div className="px-5 py-4">
         <DiffViewer change={change} />
       </div>
 
-      <footer className="flex items-center justify-between gap-3 border-t border-edge px-4 py-2.5">
+      <footer className="flex items-center justify-between gap-3 border-t border-edge px-5 py-3">
         {needsDecision ? (
           <>
-            <p className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-hazard">
-              {">> Awaiting decision"}
-            </p>
+            <p className="text-[13px] font-medium text-warning">Awaiting your decision</p>
             <div className="flex items-center gap-2">
               <Button
                 variant="destructive"

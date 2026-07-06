@@ -1,4 +1,5 @@
 export { cn } from "./cn.js";
+export { FOCUS_RING } from "./focus.js";
 export { Badge, type BadgeProps, type BadgeVariant } from "./Badge.js";
 export { Button, type ButtonProps } from "./Button.js";
 export { Card, CardContent, CardHeader, CardTitle } from "./Card.js";
