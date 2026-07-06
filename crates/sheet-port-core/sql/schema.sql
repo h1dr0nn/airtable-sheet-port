@@ -1,8 +1,7 @@
 -- Airtable - Sheet Port shared SQLite schema.
--- Single source of truth for BOTH the Rust desktop backend (rusqlite, include_str!)
--- and the Node MCP sidecar (node:sqlite). Idempotent: every statement uses IF NOT EXISTS.
--- KEEP IN SYNC: packages/storage/src/sql.ts embeds a verbatim copy of this file
--- (SCHEMA_SQL); any edit here must be mirrored there.
+-- Single source of truth for the desktop app and the MCP sidecar, both of
+-- which embed it via include_str! in sheet-port-core. Idempotent: every
+-- statement uses IF NOT EXISTS.
 -- Connections must set: PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON.
 
 CREATE TABLE IF NOT EXISTS meta (

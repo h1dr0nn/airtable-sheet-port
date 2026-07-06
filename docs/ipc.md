@@ -8,11 +8,11 @@ in `@sheet-port/shared`.
 
 ## Shared state model
 
-Rust and the Node MCP sidecar share one SQLite database (WAL mode):
+The desktop app and the Rust MCP sidecar (`crates/sheet-port-mcp`) share one SQLite database (WAL mode):
 
 - Path: `%APPDATA%/sheet-port/sheet-port.db` (Windows), `~/Library/Application Support/sheet-port/sheet-port.db` (macOS), `$XDG_DATA_HOME/sheet-port/sheet-port.db` or `~/.local/share/sheet-port/sheet-port.db` (Linux).
 - Env override: `SHEET_PORT_DB` (absolute file path) - used by tests and smoke scripts.
-- Schema: `packages/storage/schema.sql`, seed: `packages/storage/seed.sql`. Rust embeds both via `include_str!`; the Node side loads the same files. Whichever process opens the DB first applies schema + seed (idempotent).
+- Schema: `crates/sheet-port-core/sql/schema.sql`, seed: `crates/sheet-port-core/sql/seed.sql`. Both are embedded once via `include_str!` in the shared core crate, so the desktop app and the sidecar apply identical SQL. Whichever process opens the DB first applies schema + seed (the schema is idempotent; the seed is guarded by the `meta` key `seeded`).
 - Connection pragmas: `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`.
 
 ## Commands

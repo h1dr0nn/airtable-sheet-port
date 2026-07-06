@@ -11,86 +11,97 @@ server with typed tools for reading, previewing, and committing table changes.
 
 Working end to end today (against the built-in mock connector):
 
-- Two local processes share one SQLite database (WAL): the Tauri desktop app
-  (Rust backend, rusqlite) and the Node MCP sidecar (`node:sqlite`). No direct IPC;
-  each reads fresh state from the DB.
+- The entire broker is Rust. Two local processes share one SQLite database (WAL):
+  the Tauri desktop app and the Rust MCP sidecar (`crates/sheet-port-mcp`). Both are
+  thin shells over one core crate (`crates/sheet-port-core`) that owns all broker
+  logic. No direct IPC; each process reads fresh state from the DB.
 - MCP sidecar with 9 typed tools (`list_sources`, `list_tables`, `describe_table`,
   `read_table`, `find_records`, `preview_update_records`, `append_records`,
-  `commit_change`, `get_audit_log`) with strict zod bounds.
+  `commit_change`, `get_audit_log`) with strict input bounds.
 - Enforced approval flow: writes become pending changes with diffs;
   `commit_change` refuses changes that require confirmation until the user approves
   them in the desktop app; status transitions are atomic guarded UPDATEs; permissions
   are re-checked at commit time.
 - Desktop UI live-wired via typed Tauri IPC (`docs/ipc.md`): Dashboard (sidecar
   heartbeat status), Data Sources, Tables, Permissions editor, Changes
-  (approve/reject with diff viewer), Audit Log. Custom titlebar
+  (approve/reject with diff viewer), Audit Log, and Settings with a dual light/dark
+  theme (Light / Dark / System, persisted in localStorage). Custom titlebar
   (`decorations: false`), tight CSP, minimal capabilities.
 - Persistent audit log written by both processes (agent tool calls, user decisions,
   permission edits).
 - SQLite-backed mock connector shared by the desktop UI and the sidecar; committed
   changes persist and show up in both.
 - Keyring stub (service `sheet-port`): the desktop reports whether token entries exist;
-  secrets never cross IPC.
+  secrets never leave the Rust process or the OS keychain.
 
 Not yet: real Google OAuth, functional Google Sheets / provider connectors, delete
 flows, DB encryption at rest.
 
 ## Tech Stack
 
-- Monorepo: pnpm workspaces, strict TypeScript project references
-- Desktop: Tauri 2 (Rust backend with rusqlite; React 18 + Vite frontend)
-- UI: Tailwind CSS, TanStack Query + Table, lucide-react
-- MCP: `@modelcontextprotocol/sdk` (stdio transport), zod validation
-- Persistence: shared SQLite (WAL); schema/seed in `packages/storage`, embedded by both
-  Rust (`include_str!`) and Node
+- Broker: Rust workspace (`Cargo.toml` at the repo root)
+  - `crates/sheet-port-core`: permissions, change lifecycle, audit, connectors,
+    heartbeat, keychain vault, shared SQLite access (rusqlite with bundled SQLite)
+  - `crates/sheet-port-mcp`: stdio MCP sidecar built on `rmcp` (tool schemas via
+    `schemars`, async runtime `tokio`)
+  - `apps/desktop/src-tauri`: Tauri 2 shell; thin `#[tauri::command]` wrappers over
+    the core crate
+- Frontend: React 18 + Vite, Tailwind CSS, TanStack Query + Table, Radix primitives
+  (`packages/ui`), lucide-react; TypeScript types mirrored in `packages/shared`
+- Persistence: shared SQLite (WAL); schema/seed live once at
+  `crates/sheet-port-core/sql/` and are embedded via `include_str!`
 - Secrets: OS keychain via the `keyring` crate (stub for now)
+- Monorepo glue: pnpm workspaces for the frontend packages only
 
 ## Repo Structure
 
 ```txt
+crates/
+  sheet-port-core/    Broker core: db.rs, permissions.rs, changes.rs, audit.rs,
+                      heartbeat.rs, mock_data.rs, sources.rs, vault.rs, connectors/
+    sql/              schema.sql + seed.sql (single source of truth)
+  sheet-port-mcp/     Rust MCP sidecar (stdio), the 9 typed tools, heartbeat task
 apps/
-  desktop/            React/Vite frontend + Tauri 2 Rust backend
-    src/              Screens, hooks, typed IPC client (browser demo fallback)
-    src-tauri/        db.rs, queries.rs, commands.rs, models.rs
-  mcp-server/         Node MCP sidecar (stdio), 9 typed tools, heartbeat
+  desktop/            React/Vite frontend + Tauri 2 Rust shell
+    src/              Screens (incl. Settings/theme), hooks, typed IPC client
+                      (browser demo fallback)
+    src-tauri/        commands.rs (thin wrappers over sheet-port-core)
 packages/
-  shared/             Shared types + BULK_UPDATE_THRESHOLD
-  core/               Domain services + storage ports (permissions, changes, audit,
-                      connector registry, schema)
-  storage/            SQLite layer (node:sqlite) + schema.sql + seed.sql shared with Rust
-  ui/                 Small UI helpers
-  connectors/
-    mock/             SQLite-backed mock connector (shared with the desktop UI)
-    google-sheets/    Skeleton (OAuth + range mapping TODO)
-    provider/         Skeleton (additional provider TODO)
-docs/                 Scope, architecture, security, MCP tools, connectors, development,
-                      IPC contract (docs/ipc.md is canonical)
+  shared/             TypeScript types for the frontend (mirrors docs/ipc.md)
+  ui/                 Small React UI primitives (Radix-based)
+docs/                 Scope, architecture, security, MCP tools, connectors,
+                      development, IPC contract (docs/ipc.md is canonical)
 examples/             Claude Desktop config
+scripts/              e2e-smoke.mjs (protocol-level MCP smoke test)
 ```
 
 ## Quick Start
 
+Build the MCP sidecar (requires the Rust toolchain):
+
 ```bash
-pnpm install
-pnpm build
+cargo build --release -p sheet-port-mcp
 ```
 
-Run the desktop app (requires the Rust toolchain and Tauri 2 prerequisites):
+Run the desktop app (requires Node 20+, pnpm 9, and the Tauri 2 prerequisites):
 
 ```bash
+pnpm install
 pnpm --filter @sheet-port/desktop tauri:dev
 ```
 
 Run tests:
 
 ```bash
-pnpm test
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo test --workspace          # all broker logic (core + MCP crates)
+cargo build -p sheet-port-mcp   # debug binary needed by the e2e smoke
+pnpm test                       # frontend vitest + MCP e2e smoke
 ```
 
 Connect Claude Desktop: copy `examples/claude-desktop-config.json` into your Claude
-Desktop configuration and adjust the absolute path. The config runs the sidecar's
-`start` script (`node dist/index.js`), so `pnpm build` must have been run first.
+Desktop configuration and adjust the absolute path. The config launches the release
+binary at `target/release/sheet-port-mcp.exe` (`sheet-port-mcp` on macOS/Linux), so
+run `cargo build --release -p sheet-port-mcp` first.
 
 Both processes share the same database
 (Windows `%APPDATA%\sheet-port\sheet-port.db`; see `docs/development.md` for macOS and
@@ -100,28 +111,31 @@ Linux paths and the `SHEET_PORT_DB` override).
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | All packages in watch mode (parallel) |
-| `pnpm build` | Build all TS packages and apps |
+| `cargo build --release -p sheet-port-mcp` | Build the MCP sidecar binary |
+| `cargo test --workspace` | Rust unit tests for the whole broker |
+| `cargo clippy --workspace` | Rust lints |
+| `pnpm dev` | Frontend packages in watch mode (parallel) |
+| `pnpm build` | Build the TS packages and the frontend |
 | `pnpm typecheck` | Strict TypeScript, no emit |
-| `pnpm test` | TS unit + integration tests (incl. MCP e2e smoke) |
+| `pnpm test` | Frontend vitest + MCP e2e smoke (`scripts/e2e-smoke.mjs`) |
+| `pnpm test:e2e` | MCP e2e smoke only (needs `cargo build -p sheet-port-mcp`) |
 | `pnpm lint` / `pnpm format` | Lint / Prettier |
 | `pnpm --filter @sheet-port/desktop dev` | Frontend only at `http://127.0.0.1:8477` (demo fixtures) |
 | `pnpm --filter @sheet-port/desktop tauri:dev` | Full desktop app (Rust + React) |
-| `pnpm --filter @sheet-port/mcp-server dev` | Sidecar via tsx (stdio) |
-| `pnpm --filter @sheet-port/mcp-server start` | Sidecar from `dist/` (build first) |
-| `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` | Rust backend tests |
 
 ## Security Note
 
 Agents never receive provider OAuth tokens, API keys, raw provider API access, shell
-execution, JavaScript execution, or unrestricted writes. Every write is a pending change
-with a diff; changes flagged by policy require user approval in the desktop app before
-`commit_change` succeeds, permissions are re-checked at commit, and everything is
-audited to SQLite. See `docs/security.md`.
+execution, JavaScript execution, or unrestricted writes. The whole broker path is Rust:
+tokens stay between the OS keychain and the Rust process, and no npm package ever runs
+inside the broker. Every write is a pending change with a diff; changes flagged by
+policy require user approval in the desktop app before `commit_change` succeeds,
+permissions are re-checked at commit, and everything is audited to SQLite. See
+`docs/security.md`.
 
 ## Roadmap
 
-- Real Google OAuth in Tauri with OS keychain token storage
+- Real Google OAuth in Tauri with OS keychain token storage (next up)
 - Functional Google Sheets connector (range-to-record mapping)
 - Additional provider connector (bases, field type mapping, rate limits)
 - Delete flow with explicit confirmation semantics

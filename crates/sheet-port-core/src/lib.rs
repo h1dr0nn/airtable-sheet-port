@@ -4,7 +4,6 @@
 //! (schema + seed under sql/), permission rules, pending-change lifecycle,
 //! audit log, connectors, MCP heartbeat, and keychain token status. The Tauri
 //! desktop shell and the MCP server are thin wrappers over this crate.
-//! Behavior mirrors the TypeScript reference implementation; user-facing
 //! error wording is part of the contract (docs/mcp-tools.md, docs/ipc.md).
 
 pub mod audit;

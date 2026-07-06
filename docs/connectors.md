@@ -2,50 +2,66 @@
 
 ## Connector Abstraction
 
-Connectors implement the provider-neutral `TableConnector` contract from
-`@sheet-port/shared`:
+Connectors implement the provider-neutral `TableConnector` trait defined in
+`crates/sheet-port-core/src/connectors/mod.rs`:
 
-- list sources
-- list tables
-- describe table
-- read records (bounded)
-- find records (text search)
-- append records
-- update records
+- `kind` (the `SourceKind` the connector serves)
+- `list_sources`
+- `list_tables`
+- `describe_table`
+- `read_table` (bounded)
+- `find_records` (text search)
+- `append_records`
+- `update_records`
 
-The contract hides provider-specific tokens, endpoints, ranges, and response shapes from
+Every method receives the shared `rusqlite::Connection`, so connectors that persist
+state (like the mock connector) use the same database as the rest of the broker. The
+trait hides provider-specific tokens, endpoints, ranges, and response shapes from
 agents.
 
 ## Connector Registry
 
-`ConnectorRegistry` (`packages/core`) routes each call by source id. The registry is
-constructed with a `ResolveSourceKind` lookup that reads the `sources.kind` column from
-the shared SQLite database (via `SourceStore`), so adding a source row with a known kind
-is enough to route it - no code changes in the registry. Unknown source ids and kinds
-without a registered connector produce explicit errors.
+`ConnectorRegistry` (same module) routes each call by source id: it resolves the
+`sources.kind` column through `sources::get_kind` and dispatches to the connector
+registered for that kind, so adding a source row with a known kind is enough to route
+it - no code changes in the registry. Registering a second connector for the same kind
+replaces the first. Unknown source ids and kinds without a registered connector produce
+explicit errors.
 
-The MCP sidecar (`apps/mcp-server/src/context.ts`) currently registers only the mock
-connector.
+`ConnectorRegistry::with_default_connectors` (used by both the MCP sidecar and any
+future desktop-side routing) currently registers only the mock connector; the Google
+Sheets and provider connectors join once their auth lands.
 
 ## Mock Connector
 
-`@sheet-port/mock-connector` (`packages/connectors/mock`) is fully SQLite-backed: table
-schemas live in `mock_tables` and records in `mock_records`, shared with the desktop
-UI. Committed changes made through MCP tools are immediately visible in the desktop
-Tables screen, and everything persists across restarts of both processes.
+`MockConnector` (`crates/sheet-port-core/src/connectors/mock.rs`, storage in
+`mock_data.rs`) is fully SQLite-backed: table schemas live in `mock_tables` and records
+in `mock_records`, shared with the desktop UI. Committed changes made through MCP tools
+are immediately visible in the desktop Tables screen, and everything persists across
+restarts of both processes.
 
 Behavior:
 
 - Schema discovery from the stored `FieldSchema[]` JSON.
 - Bounded reads ordered by a stable `position` column; new records take
   `max(position) + 1`.
-- Case-insensitive text search across all field values, capped at 100 results.
+- Case-insensitive text search across all field values, capped at 100 results
+  (`FIND_RECORDS_LIMIT`).
 - Append generates `rec_<uuid>` ids; update shallow-merges patch fields and skips
   unknown record ids. Both run inside an immediate transaction.
 
-Seed data (`packages/storage/seed.sql`): source `mock-source` ("Demo Workspace") with a
-`customers` table and three records, plus a permission rule that requires confirmation
-for every write action.
+Seed data (`crates/sheet-port-core/sql/seed.sql`): source `mock-source`
+("Demo Workspace") with a `customers` table and three records, plus a permission rule
+that requires confirmation for every write action.
+
+## Stub Connectors
+
+`GoogleSheetsConnector` and `ProviderConnector`
+(`crates/sheet-port-core/src/connectors/google_sheets.rs` and `provider.rs`) implement
+the trait but return explicit "not implemented" errors from every data method; they are
+not registered in `with_default_connectors`. The seeded `google-placeholder` and
+`provider-placeholder` source rows show as placeholders in the desktop UI and are not
+returned by the MCP `list_sources` tool.
 
 ## Google Sheets Connector Plan
 
@@ -54,7 +70,7 @@ tables. Planned work:
 
 - Tauri OAuth flow using Google consent.
 - Store refresh tokens in the OS keychain (service `sheet-port`, user `google_sheets`;
-  the desktop `token_status` command already reads this entry).
+  the desktop `token_status` command already reads this entry through `vault.rs`).
 - Discover spreadsheets through Drive picker or user-provided spreadsheet ids.
 - Infer table headers from the first row or a configured header row.
 - Map rows to records with stable generated row ids.
@@ -88,7 +104,7 @@ initially map to `unknown` until specific support is added.
 
 ## Current Limitations
 
-- Google Sheets and additional provider connectors are skeleton packages that throw on
-  use; their seeded source rows show as placeholders in the desktop UI.
+- Google Sheets and additional provider connectors are stubs that return "not
+  implemented" errors; their seeded source rows show as placeholders in the desktop UI.
 - No rate limit or retry policy exists yet.
 - The mock connector performs no schema validation on written field values.

@@ -2,22 +2,27 @@
 
 ## Prerequisites
 
-- Node.js 24 or newer (the storage layer uses the built-in `node:sqlite` module)
-- pnpm 9 (the repo pins `packageManager: pnpm@9.x`)
-- Rust toolchain (stable) plus the Tauri 2 platform prerequisites for desktop builds
+- Rust toolchain (stable) - the whole broker (core crate, MCP sidecar, Tauri backend)
+  is Rust
+- Tauri 2 platform prerequisites for desktop builds
+- Node.js 20+ and pnpm 9, needed only for the React frontend
+  (the e2e smoke script additionally uses the built-in `node:sqlite` module to
+  simulate desktop approvals, so running `pnpm test` needs a Node release that ships
+  it unflagged; Node 24 is recommended)
 
 ## Install
 
 ```bash
-pnpm install
+pnpm install   # frontend packages only; cargo fetches Rust deps on first build
 ```
 
 ## Dev Commands
 
 ```bash
-pnpm dev                                   # all packages in watch mode (parallel)
-pnpm --filter @sheet-port/mcp-server dev   # sidecar via tsx (stdio transport)
-pnpm --filter @sheet-port/desktop dev      # frontend only, Vite dev server
+cargo build -p sheet-port-mcp               # MCP sidecar (debug, used by the e2e smoke)
+cargo build --release -p sheet-port-mcp     # MCP sidecar (release, used by Claude Desktop)
+pnpm dev                                    # frontend packages in watch mode (parallel)
+pnpm --filter @sheet-port/desktop dev       # frontend only, Vite dev server
 pnpm --filter @sheet-port/desktop tauri:dev # full desktop app (Rust + React)
 ```
 
@@ -29,8 +34,10 @@ titlebar (the window uses `decorations: false`), and the shared database.
 ## Build Commands
 
 ```bash
-pnpm build       # all TS packages + apps
-pnpm typecheck   # tsc project references, no emit
+cargo build --workspace   # all Rust crates
+pnpm build                # TS packages + frontend
+pnpm typecheck            # tsc project references, no emit
+cargo clippy --workspace  # Rust lints
 pnpm lint
 pnpm format
 ```
@@ -38,14 +45,19 @@ pnpm format
 ## Test Commands
 
 ```bash
-pnpm test                                                     # TS unit + integration tests
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml  # Rust backend tests
+cargo test --workspace          # all broker logic (sheet-port-core: 78 tests, sheet-port-mcp: 14)
+cargo build -p sheet-port-mcp   # build the debug sidecar binary for the e2e smoke
+pnpm test                       # frontend vitest + MCP e2e smoke
+pnpm test:e2e                   # MCP e2e smoke only
 ```
 
-The MCP end-to-end smoke runs as part of the TS test suite: it builds/starts the sidecar
-over stdio against a temp database (via `SHEET_PORT_DB`) and drives the
-preview -> approve -> commit flow. Rust tests use isolated temp-file databases and never
-touch your real data.
+The MCP end-to-end smoke (`scripts/e2e-smoke.mjs`) spawns
+`target/debug/sheet-port-mcp` (`.exe` on Windows) over stdio against a temp database
+(via `SHEET_PORT_DB`) and drives the preview -> approve -> commit enforcement,
+including the "commit refused without approval" path and the heartbeat row. It fails
+fast with a clear message when the binary is missing, so run
+`cargo build -p sheet-port-mcp` first. Rust tests use isolated temp-file databases and
+never touch your real data.
 
 ## Shared Database
 
@@ -59,48 +71,58 @@ Both processes open the same SQLite file (WAL mode). Locations:
 
 Override with the `SHEET_PORT_DB` environment variable (absolute file path). This is how
 tests and smoke scripts isolate state. Whichever process opens the DB first applies
-`packages/storage/schema.sql` and `packages/storage/seed.sql` (both idempotent). To
-reset local state, stop both processes and delete the DB file (plus its `-wal`/`-shm`
-siblings).
+`crates/sheet-port-core/sql/schema.sql` and `crates/sheet-port-core/sql/seed.sql`
+(embedded via `include_str!` in `db.rs`; the schema is idempotent and the seed is
+guarded by the `meta` key `seeded`). To reset local state, stop both processes and
+delete the DB file (plus its `-wal`/`-shm` siblings).
 
 `docs/ipc.md` is the canonical contract for the Tauri commands and the shared-state
-model; keep `apps/desktop/src/lib/ipc.ts` and `src-tauri/src/models.rs` in sync with it.
+model; keep `apps/desktop/src/lib/ipc.ts` and `crates/sheet-port-core/src/types.rs` in
+sync with it.
 
 ## How to Run the MCP Server
 
 ```bash
-pnpm --filter @sheet-port/mcp-server dev     # tsx, for development
-pnpm build && pnpm --filter @sheet-port/mcp-server start   # node dist/index.js
+cargo build --release -p sheet-port-mcp
+./target/release/sheet-port-mcp        # sheet-port-mcp.exe on Windows; stdio transport
 ```
 
-The server uses stdio transport. For Claude Desktop use
-`examples/claude-desktop-config.json`; note that the `start` script runs
-`node dist/index.js`, so `pnpm build` must run first.
+For Claude Desktop use `examples/claude-desktop-config.json`; it points at the release
+binary, so build it first. stdout belongs to the MCP transport; diagnostics go to
+stderr.
 
 ## How to Add a New MCP Tool
 
-1. Register it in `apps/mcp-server/src/tools.ts` via `server.registerTool` with a strict,
-   bounded zod input schema (follow the existing limits: list sizes 1-100, page limits
-   1-500, query strings capped). Add `annotations: READ_ONLY` for read-only tools.
-2. Check permissions first through `context.permissions`
-   (`assertCanRead` / `assertCanWrite`). Writes must go through `context.changes`
-   (preview + commit), never directly through a connector.
-3. Route data access through `context.registry` (never a concrete connector).
-4. Record an audit event through `context.audit` with actor `agent` and useful metadata.
-5. Document the tool in `docs/mcp-tools.md` (input bounds, output shape, permission,
-   example call and response).
+1. Define the input model in `crates/sheet-port-mcp/src/args.rs`: a `Deserialize` +
+   `JsonSchema` struct with `rename_all = "camelCase"` and a `validate` method that
+   enforces the contract bounds (follow the existing limits: list sizes 1-100, page
+   limits 1-500, query strings capped at 200 chars). Reuse the constants from
+   `sheet_port_core::constants`.
+2. Implement the tool in `crates/sheet-port-mcp/src/tools.rs`. Check permissions first
+   through `sheet_port_core::permissions` (`assert_can_read` / `assert_can_write`).
+   Writes must go through `sheet_port_core::changes` (preview + commit), never directly
+   through a connector.
+3. Route data access through the `ConnectorRegistry` passed into the closure (never a
+   concrete connector).
+4. Record an audit event through `sheet_port_core::audit::record` with actor
+   `AuditActor::Agent` and useful metadata.
+5. Register the tool in `crates/sheet-port-mcp/src/server.rs` with a `#[tool(...)]`
+   method; add `annotations(read_only_hint = true)` for read-only tools.
+6. Add unit tests in `tools_tests.rs` / `args_tests.rs` and document the tool in
+   `docs/mcp-tools.md` (input bounds, output shape, permission, example call and
+   response).
 
 ## How to Add a New Connector
 
-1. Create a package under `packages/connectors/<provider>` implementing the
-   `TableConnector` interface from `@sheet-port/shared` with a unique `kind`.
-2. If the kind is new, add it to `DataSourceKind` in `packages/shared` and to the
-   `sources.kind` CHECK constraint in `packages/storage/schema.sql` (mirror the change
-   in `packages/storage/src/sql.ts`).
-3. Register it in `createAppContext` (`apps/mcp-server/src/context.ts`) via
-   `registry.register(...)`. The registry routes by the `sources.kind` column, so a
+1. Add a module under `crates/sheet-port-core/src/connectors/` implementing the
+   `TableConnector` trait (`connectors/mod.rs`) with a unique `kind`.
+2. If the kind is new, add a variant to `SourceKind` in
+   `crates/sheet-port-core/src/types.rs` and extend the `sources.kind` CHECK
+   constraint in `crates/sheet-port-core/sql/schema.sql`.
+3. Register it in `ConnectorRegistry::with_default_connectors`
+   (`connectors/mod.rs`). The registry routes by the `sources.kind` column, so a
    source row with your kind is all the wiring the router needs.
-4. Keep credentials inside desktop-owned services (OS keychain, service `sheet-port`).
+4. Keep credentials inside the OS keychain (service `sheet-port`, see `vault.rs`).
    Connectors must never receive tokens through MCP tool inputs.
 5. Add provider mapping notes to `docs/connectors.md`.
 

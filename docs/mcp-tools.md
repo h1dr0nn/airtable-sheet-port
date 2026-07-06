@@ -1,11 +1,13 @@
 # MCP Tools
 
-The sidecar (`apps/mcp-server`) registers exactly 9 tools. All schemas are
-provider-neutral zod schemas; none expose raw Google or provider APIs. Every tool
-returns a single text content block containing pretty-printed JSON with the shapes
-below. Every call writes an audit event (actor `agent`).
+The Rust sidecar (`crates/sheet-port-mcp`) registers exactly 9 tools. All input
+schemas are provider-neutral (generated via `schemars`, with every bound enforced in
+`src/args.rs`); none expose raw Google or provider APIs. Every tool returns a single
+text content block containing pretty-printed JSON with the shapes below. Every call
+writes an audit event (actor `agent`).
 
-Shared types (from `@sheet-port/shared`):
+Shared types (TypeScript notation; defined in `crates/sheet-port-core/src/types.rs`
+and mirrored for the frontend in `packages/shared`):
 
 ```ts
 type DataSource   = { id: string; kind: "google_sheets" | "provider" | "mock"; name: string; status?: "connected" | "placeholder" | "error" };
@@ -29,7 +31,8 @@ type PendingChange = {
 type AuditEvent   = { id: string; timestamp: string; actor: "user" | "agent" | "system"; action: string; sourceId?: string; tableId?: string; metadata?: Record<string, unknown> };
 ```
 
-Examples below match the seed data in `packages/storage/seed.sql`: one connected mock
+Examples below match the seed data in `crates/sheet-port-core/sql/seed.sql`: one
+connected mock
 source `mock-source` ("Demo Workspace") with table `customers`, and a permission rule
 that allows read + write and requires confirmation for `append`, `update`, `delete`,
 and `bulk_update`.

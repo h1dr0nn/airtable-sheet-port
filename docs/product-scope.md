@@ -36,11 +36,15 @@ receiving provider tokens or bypassing user policy.
 
 ## MVP Status
 
-The MVP is runnable end to end against the mock connector:
+The MVP is runnable end to end against the mock connector, with the whole broker
+implemented in Rust (a shared core crate wrapped by the Tauri desktop app and the MCP
+sidecar):
 
-- Desktop app with Dashboard, Data Sources, Tables, Permissions, Changes, and Audit Log
-  screens, live-wired to the Rust backend via typed Tauri IPC (`docs/ipc.md`).
-- Local MCP sidecar with 9 strict table-oriented tools (stdio transport).
+- Desktop app with Dashboard, Data Sources, Tables, Permissions, Changes, Audit Log,
+  and Settings (light/dark/system theme) screens, live-wired to the Rust backend via
+  typed Tauri IPC (`docs/ipc.md`).
+- Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 9 strict table-oriented tools
+  (stdio transport).
 - Shared SQLite database (WAL) used by both processes: sources, permission rules,
   pending changes, audit events, mock data, and the sidecar heartbeat.
 - Enforced approval flow: previews create pending changes; `commit_change` refuses
@@ -48,8 +52,8 @@ The MVP is runnable end to end against the mock connector:
   permissions are re-checked at commit time.
 - SQLite-backed mock connector shared by the desktop UI and the sidecar; committed
   changes persist and appear in both.
-- Google Sheets and additional provider connector packages exist as skeletons with
-  explicit integration TODOs; a keyring stub reports token presence.
+- Google Sheets and additional provider connectors exist as Rust stubs with explicit
+  integration TODOs; a keyring stub reports token presence.
 
 ## Future Roadmap
 
@@ -75,8 +79,9 @@ The MVP is runnable end to end against the mock connector:
 
 ## Current Limitations
 
-- Only the mock connector is functional; Google Sheets and additional provider packages
-  are skeletons.
+- Only the mock connector is functional; the Google Sheets and additional provider
+  connectors are stubs that return "not implemented" errors.
 - No real OAuth yet; the keyring integration is a stub that no flow writes to.
 - No delete flow.
 - The shared SQLite database is unencrypted at rest.
+- The desktop app does not manage the sidecar lifecycle; MCP clients spawn it.

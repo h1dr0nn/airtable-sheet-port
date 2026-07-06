@@ -7,13 +7,29 @@ confused by untrusted spreadsheet content. The app reduces blast radius by expos
 typed local tools instead of provider credentials or broad execution primitives, and by
 forcing every write through a persisted preview -> approve -> commit pipeline.
 
+## Single-Language Trust Surface
+
+The entire broker path is Rust: the Tauri desktop backend, the MCP sidecar
+(`crates/sheet-port-mcp`), and the shared core (`crates/sheet-port-core`) that
+implements every check described below. Consequences:
+
+- No npm packages execute inside the broker. The Node/npm supply chain is limited to
+  the React frontend (UI rendering only), which never touches tokens or the database
+  directly - it talks to the Rust backend through the typed commands in `docs/ipc.md`.
+- Tokens never leave Rust. The keychain vault (`vault.rs`), the permission engine, and
+  the connectors live in one crate, compiled into both processes.
+- SQLite is compiled in (rusqlite `bundled`), so the broker does not depend on a
+  system SQLite either.
+- Enforcement logic exists exactly once: the desktop app and the sidecar cannot drift
+  apart, because both call the same `sheet-port-core` functions.
+
 ## Confirmation Enforcement (Cross-Process)
 
 Confirmation is enforced, not advisory. The desktop app and the MCP sidecar share one
 SQLite database (see `docs/ipc.md`, the canonical contract), and the sidecar reads fresh
 state on every call, so a desktop decision applies immediately without any direct IPC.
 
-Mechanism:
+Mechanism (implemented in `crates/sheet-port-core/src/changes.rs`):
 
 1. `preview_update_records` / `append_records` insert a `pending_changes` row with
    `requires_confirmation` snapshotted from the matching permission rule
@@ -31,20 +47,20 @@ Mechanism:
 All status transitions are atomic guarded UPDATEs, so concurrent actors cannot race a
 change into an invalid state or apply it twice:
 
-- Desktop approve/reject (Rust): `UPDATE pending_changes SET status = ?, decided_at = ?,
+- Desktop approve/reject: `UPDATE pending_changes SET status = ?, decided_at = ?,
   decided_by = 'user' WHERE id = ? AND status = 'pending'`; zero affected rows is
   reported as an error with the actual current status.
-- Sidecar policy approval (Node): the same guarded `pending -> approved` transition with
+- Sidecar policy approval: the same guarded `pending -> approved` transition with
   `decided_by = 'policy'`.
 - Commit finalization: `UPDATE ... SET status = 'committed' WHERE id = ? AND
   status = 'approved'`; a missed guard aborts the commit with an error.
 
 ## Permission Re-Check at Commit
 
-Permission rules may change between preview and commit. `ChangeService.commit` re-reads
-the rules (they are never cached) and re-evaluates the exact action that was evaluated
-at preview time: an update payload with more than `BULK_UPDATE_THRESHOLD` (20) patches
-is re-checked as `bulk_update`, not plain `update`. Revoking `write` in the desktop app
+Permission rules may change between preview and commit. The commit path re-reads the
+rules (they are never cached) and re-evaluates the exact action that was evaluated at
+preview time: an update payload with more than `BULK_UPDATE_THRESHOLD` (20) patches is
+re-checked as `bulk_update`, not plain `update`. Revoking `write` in the desktop app
 therefore blocks commits of already-previewed changes.
 
 ## Read Gate on Preview Diffs
@@ -56,7 +72,8 @@ cannot be used to exfiltrate table contents through previews.
 ## Token Handling
 
 - Secrets live in the OS keychain under service `sheet-port` (users `google_sheets` and
-  `provider`). The current implementation is a stub: no flow writes tokens yet.
+  `provider`), accessed through the `keyring` crate. The current implementation is a
+  stub: no flow writes tokens yet.
 - The `token_status` Tauri command returns only booleans (entry exists / does not
   exist). Secrets never cross Tauri IPC and are never exposed to agents or the frontend.
 - Keychain errors are logged to stderr and reported as "absent" rather than leaking
@@ -82,8 +99,10 @@ checked, logged, and shaped through narrow schemas.
 ## Local MCP Attack Surface
 
 The MCP server runs locally with stdio transport. If HTTP/SSE is ever added it must
-bind only to `127.0.0.1`. Tool input schemas are strict, bounded, and provider-neutral
-(zod: limits 1-500, query max 200 chars, at most 100 patches/records per change).
+bind only to `127.0.0.1`. Tool input schemas are strict, bounded, and provider-neutral,
+enforced in `crates/sheet-port-mcp/src/args.rs`: page limits 1-500, query max 200
+chars, at most 100 patches/records per change. Out-of-range input surfaces as a clear
+tool error, never as a raw schema failure.
 
 ## Tool Allowlist
 
@@ -123,8 +142,9 @@ survive restarts of either process.
 ## Current Limitations
 
 - No real OAuth yet: the keyring integration is a stub and no connector consumes tokens.
-- No delete flow: delete changes are typed but rejected by `ChangeService`.
-- Only the mock connector is functional; Google Sheets and the additional provider are
-  skeletons.
+- No delete flow: delete changes are typed but rejected by the commit path.
+- Only the mock connector is functional; the Google Sheets and provider connectors are
+  stubs.
 - The SQLite database is unencrypted at rest; any local process running as the same OS
   user can read or modify it (including permission rules and pending changes).
+- The desktop app does not manage the sidecar lifecycle; agents' MCP clients spawn it.

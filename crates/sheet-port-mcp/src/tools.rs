@@ -1,5 +1,4 @@
 //! The 9 broker tools (docs/mcp-tools.md), behavior-identical to the
-//! TypeScript sidecar in apps/mcp-server/src/tools.ts: same permission
 //! checks in the same order, same audit actions and metadata keys, and the
 //! same JSON output shapes. Each function returns the pretty-printed JSON
 //! text of the tool result; errors bubble as `CoreError` and the transport

@@ -1,5 +1,4 @@
 //! Connector abstraction and the registry that routes calls by source kind.
-//! Mirrors `ConnectorRegistry` from the TypeScript reference: registering a
 //! second connector for the same kind replaces the first.
 
 mod google_sheets;

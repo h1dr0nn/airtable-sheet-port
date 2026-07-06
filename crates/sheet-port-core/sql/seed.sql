@@ -1,8 +1,6 @@
 -- Idempotent first-run seed data. Guarded by meta key 'seeded'; every statement
 -- also uses INSERT OR IGNORE so re-running is harmless. Executed by whichever
 -- process (desktop app or MCP sidecar) opens the database first.
--- KEEP IN SYNC: packages/storage/src/sql.ts embeds a verbatim copy of this file
--- (SEED_SQL); any edit here must be mirrored there.
 
 INSERT OR IGNORE INTO sources (id, kind, name, status) VALUES
   ('mock-source', 'mock', 'Demo Workspace', 'connected'),
