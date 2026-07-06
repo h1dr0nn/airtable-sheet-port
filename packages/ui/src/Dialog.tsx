@@ -18,11 +18,19 @@ export const DialogContent = forwardRef<
   ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay/50 motion-safe:animate-fade-in" />
+    <DialogPrimitive.Overlay
+      // Sits below the 40px titlebar (see --z-titlebar) so window controls stay
+      // clickable while a dialog is open.
+      style={{ zIndex: "var(--z-modal-overlay)" }}
+      className="fixed inset-0 bg-overlay/50 motion-safe:animate-fade-in"
+    />
     <DialogPrimitive.Content
       ref={ref}
+      // Anchored below the titlebar rather than viewport-centered so it never
+      // overlaps the custom bar; horizontally centered as before.
+      style={{ zIndex: "var(--z-modal)", top: "calc(40px + 10vh)" }}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2",
+        "fixed left-1/2 w-full max-w-md -translate-x-1/2",
         "rounded-card border border-edge bg-raised p-5 shadow-pop",
         "focus:outline-none motion-safe:animate-fade-in",
         className

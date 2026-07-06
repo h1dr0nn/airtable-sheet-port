@@ -11,9 +11,13 @@ export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 
 const PANEL_CLASS = [
-  "z-50 min-w-[176px] rounded-lg border border-edge bg-raised p-1",
+  "min-w-[176px] rounded-lg border border-edge bg-raised p-1",
   "font-sans shadow-pop motion-safe:animate-fade-in"
 ].join(" ");
+
+// Menus ride the dropdown layer (see --z-dropdown) so they escape dialogs and
+// the titlebar. Applied via inline style since Tailwind can't read the var here.
+const PANEL_Z_INDEX = { zIndex: "var(--z-dropdown)" } as const;
 
 const ITEM_CLASS = [
   "flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5",
@@ -25,11 +29,12 @@ const ITEM_CLASS = [
 export const DropdownMenuContent = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.Content>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
+>(({ className, sideOffset = 4, style, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
+      style={{ ...PANEL_Z_INDEX, ...style }}
       className={cn(PANEL_CLASS, className)}
       {...props}
     />
@@ -63,11 +68,12 @@ DropdownMenuSubTrigger.displayName = "DropdownMenuSubTrigger";
 export const DropdownMenuSubContent = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, sideOffset = 6, ...props }, ref) => (
+>(({ className, sideOffset = 6, style, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.SubContent
       ref={ref}
       sideOffset={sideOffset}
+      style={{ ...PANEL_Z_INDEX, ...style }}
       className={cn(PANEL_CLASS, className)}
       {...props}
     />

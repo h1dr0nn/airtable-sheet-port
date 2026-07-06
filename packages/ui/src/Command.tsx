@@ -37,11 +37,15 @@ export function CommandDialog({ open, onOpenChange, title, children }: CommandDi
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay/50 motion-safe:animate-fade-in" />
+        <DialogPrimitive.Overlay
+          style={{ zIndex: "var(--z-modal-overlay)" }}
+          className="fixed inset-0 bg-overlay/50 motion-safe:animate-fade-in"
+        />
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          style={{ zIndex: "var(--z-modal)" }}
           className={cn(
-            "fixed left-1/2 top-[25vh] z-50 w-full max-w-xl -translate-x-1/2 overflow-hidden",
+            "fixed left-1/2 top-[25vh] w-full max-w-xl -translate-x-1/2 overflow-hidden",
             "rounded-card border border-edge bg-raised p-0 shadow-pop",
             "focus:outline-none motion-safe:animate-fade-in"
           )}

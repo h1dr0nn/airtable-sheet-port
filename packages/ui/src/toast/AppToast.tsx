@@ -280,7 +280,8 @@ export function ToastViewport() {
 
   return createPortal(
     <div
-      className="pointer-events-none fixed bottom-0 right-0 z-[9999] p-4"
+      style={{ zIndex: "var(--z-toast)" }}
+      className="pointer-events-none fixed bottom-0 right-0 p-4"
       onMouseEnter={() => total > 0 && setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >

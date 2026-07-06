@@ -49,4 +49,10 @@ export {
   type ToastItem,
   type ToastVariant
 } from "./toast/toastStore.js";
-export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./Tooltip.js";
+export {
+  Tooltip,
+  TooltipContent,
+  TooltipHint,
+  TooltipProvider,
+  TooltipTrigger
+} from "./Tooltip.js";
