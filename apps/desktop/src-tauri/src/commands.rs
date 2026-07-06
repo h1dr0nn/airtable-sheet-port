@@ -273,7 +273,23 @@ pub async fn google_connect(state: Db<'_>) -> Result<GoogleConnectResult, String
             .map_err(|error| error.to_string())?
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| CLIENT_ID_MISSING_MESSAGE.to_string())?;
-        let email = google::connect(&conn, &client_id).map_err(|error| error.to_string())?;
+        let email = match google::connect(&conn, &client_id) {
+            Ok(email) => email,
+            Err(error) => {
+                let message = error.to_string();
+                // Best-effort: a dismissed toast must not be the only trace of
+                // a failed connect, so the audit log keeps the reason.
+                let _ = audit::record(
+                    &conn,
+                    AuditActor::User,
+                    "google_connect_failed",
+                    Some(google::GOOGLE_SOURCE_ID),
+                    None,
+                    Some(&json!({ "error": message })),
+                );
+                return Err(message);
+            }
+        };
         audit::record(
             &conn,
             AuditActor::User,

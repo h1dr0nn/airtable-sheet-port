@@ -52,20 +52,36 @@ pub fn connect(conn: &Connection, client_id: &str) -> Result<String, CoreError> 
 
     let flow = oauth::AuthFlow::start(client_id)?;
     open_in_browser(flow.consent_url())?;
-    let token_set = flow.wait_for_tokens()?;
-    let email = oauth::fetch_user_email(&token_set.access_token)?;
-    tokens::save(&token_set)?;
-    // The refresh flow needs the client id later even if the desktop app
-    // never stored it explicitly.
-    db::set_meta(conn, META_GOOGLE_CLIENT_ID, client_id)?;
-    sources::upsert(
-        conn,
-        GOOGLE_SOURCE_ID,
-        SourceKind::GoogleSheets,
-        &format!("Google Sheets ({email})"),
-        sources::SOURCE_STATUS_CONNECTED,
-    )?;
-    Ok(email)
+    let (token_set, responder) = flow.wait_for_tokens()?;
+
+    // The browser tab is still waiting on `responder`: only report success
+    // there once the account is fully connected, so the page never lies.
+    let finish = || -> Result<String, CoreError> {
+        let email = oauth::fetch_user_email(&token_set.access_token)?;
+        tokens::save(&token_set)?;
+        // The refresh flow needs the client id later even if the desktop app
+        // never stored it explicitly.
+        db::set_meta(conn, META_GOOGLE_CLIENT_ID, client_id)?;
+        sources::upsert(
+            conn,
+            GOOGLE_SOURCE_ID,
+            SourceKind::GoogleSheets,
+            &format!("Google Sheets ({email})"),
+            sources::SOURCE_STATUS_CONNECTED,
+        )?;
+        Ok(email)
+    };
+
+    match finish() {
+        Ok(email) => {
+            responder.succeed();
+            Ok(email)
+        }
+        Err(error) => {
+            responder.fail(&error.to_string());
+            Err(error)
+        }
+    }
 }
 
 /// Removes the keychain credential and the `google-sheets` source row.

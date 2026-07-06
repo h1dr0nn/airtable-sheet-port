@@ -96,15 +96,67 @@ impl AuthFlow {
     }
 
     /// Blocks until the browser redirects back (or the timeout hits), then
-    /// exchanges the authorization code for tokens.
-    pub(crate) fn wait_for_tokens(self) -> Result<TokenSet, CoreError> {
-        let code = wait_for_callback(&self.listener, &self.state)?;
-        let response = exchange_code(&self.client_id, &code, &self.verifier, &self.redirect_uri)?;
-        Ok(TokenSet {
-            access_token: response.access_token,
-            refresh_token: response.refresh_token,
-            expires_at: expiry_from_now(response.expires_in),
-        })
+    /// exchanges the authorization code for tokens. The browser tab is kept
+    /// waiting: the caller decides the final page via the returned responder,
+    /// so a failure after the redirect never shows a false success page.
+    pub(crate) fn wait_for_tokens(self) -> Result<(TokenSet, CallbackResponder), CoreError> {
+        let (code, stream) = wait_for_callback(&self.listener, &self.state)?;
+        let responder = CallbackResponder::new(stream);
+        let response =
+            match exchange_code(&self.client_id, &code, &self.verifier, &self.redirect_uri) {
+                Ok(response) => response,
+                Err(error) => {
+                    responder.fail(&error.to_string());
+                    return Err(error);
+                }
+            };
+        Ok((
+            TokenSet {
+                access_token: response.access_token,
+                refresh_token: response.refresh_token,
+                expires_at: expiry_from_now(response.expires_in),
+            },
+            responder,
+        ))
+    }
+}
+
+/// Holds the browser's callback connection until the connect flow finishes,
+/// then renders the real outcome. Dropping it unanswered shows a generic
+/// failure page instead of leaving the tab hanging.
+pub(crate) struct CallbackResponder {
+    stream: Option<TcpStream>,
+}
+
+impl CallbackResponder {
+    fn new(stream: TcpStream) -> Self {
+        Self {
+            stream: Some(stream),
+        }
+    }
+
+    pub(crate) fn succeed(mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            write_response(&mut stream, "200 OK", SUCCESS_HTML);
+        }
+    }
+
+    pub(crate) fn fail(mut self, message: &str) {
+        if let Some(mut stream) = self.stream.take() {
+            write_response(&mut stream, "200 OK", &error_html(message));
+        }
+    }
+}
+
+impl Drop for CallbackResponder {
+    fn drop(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            write_response(
+                &mut stream,
+                "200 OK",
+                &error_html("The connection attempt did not finish."),
+            );
+        }
     }
 }
 
@@ -151,8 +203,12 @@ pub(crate) fn build_consent_url(
 }
 
 /// Accept-loop with deadline: serves 404 to stray requests (favicon and the
-/// like) and returns the authorization code from the /callback redirect.
-fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<String, CoreError> {
+/// like) and returns the authorization code from the /callback redirect along
+/// with the still-open browser connection so the final page can be deferred.
+fn wait_for_callback(
+    listener: &TcpListener,
+    expected_state: &str,
+) -> Result<(String, TcpStream), CoreError> {
     listener.set_nonblocking(true).map_err(|error| {
         CoreError::Storage(format!(
             "Could not configure the callback listener: {error}"
@@ -162,8 +218,8 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                if let Some(code) = handle_request(stream, expected_state)? {
-                    return Ok(code);
+                if let Some(callback) = handle_request(stream, expected_state)? {
+                    return Ok(callback);
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -184,13 +240,14 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
     }
 }
 
-/// Handles one browser request. Ok(Some(code)) when the callback carried a
-/// valid authorization code; Ok(None) for unrelated requests (keep waiting);
-/// Err for a denied/invalid authorization.
+/// Handles one browser request. Ok(Some((code, stream))) when the callback
+/// carried a valid authorization code (the response is deferred to the
+/// caller); Ok(None) for unrelated requests (keep waiting); Err for a
+/// denied/invalid authorization.
 fn handle_request(
     mut stream: TcpStream,
     expected_state: &str,
-) -> Result<Option<String>, CoreError> {
+) -> Result<Option<(String, TcpStream)>, CoreError> {
     // The accepted socket may inherit non-blocking mode from the listener on
     // some platforms; reads below must block (with a timeout).
     if let Err(error) = stream
@@ -246,10 +303,7 @@ fn handle_request(
         ));
     }
     match code {
-        Some(code) if !code.is_empty() => {
-            write_response(&mut stream, "200 OK", SUCCESS_HTML);
-            Ok(Some(code))
-        }
+        Some(code) if !code.is_empty() => Ok(Some((code, stream))),
         _ => {
             write_response(
                 &mut stream,
