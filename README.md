@@ -123,6 +123,28 @@ Linux paths and the `SHEET_PORT_DB` override).
 | `pnpm --filter @sheet-port/desktop dev` | Frontend only at `http://127.0.0.1:8477` (demo fixtures) |
 | `pnpm --filter @sheet-port/desktop tauri:dev` | Full desktop app (Rust + React) |
 
+## Releases and Auto-Update
+
+The desktop app self-updates via `tauri-plugin-updater`: it checks a signed manifest on
+GitHub at launch and surfaces an "Update Available" prompt in the sidebar (and a manual
+"Check for Updates" control in Settings). Releases are cut by pushing a git tag:
+
+| Tag pattern | Result |
+|---|---|
+| `release-v<x.y.z>` | Stable release |
+| `develop-v<x.y.z>` | Prerelease build |
+
+```bash
+git tag release-v0.0.2
+git push origin release-v0.0.2
+```
+
+The `.github/workflows/build-release.yml` workflow builds the Windows/Linux/macOS
+(x64 + arm64) matrix, signs the bundles, publishes a GitHub Release, and commits the
+regenerated `updater.json` back to `main`. This requires the maintainer to set the
+`TAURI_SIGNING_PRIVATE_KEY` (and, if used, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
+repository secrets once. See `docs/development.md` for key generation and full details.
+
 ## Security Note
 
 Agents never receive provider OAuth tokens, API keys, raw provider API access, shell

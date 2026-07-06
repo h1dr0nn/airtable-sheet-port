@@ -126,6 +126,61 @@ stderr.
    Connectors must never receive tokens through MCP tool inputs.
 5. Add provider mapping notes to `docs/connectors.md`.
 
+## Releases and Auto-Update
+
+The desktop app self-updates through `tauri-plugin-updater`. On launch it silently
+checks a static manifest on GitHub; when a newer signed version exists, the sidebar
+bottom cluster morphs into an "Update Available" prompt, and Settings gains a manual
+"Check for Updates" control. The updater endpoint is pinned in
+`apps/desktop/src-tauri/tauri.conf.json`:
+
+```
+https://raw.githubusercontent.com/h1dr0nn/airtable-sheet-port/main/updater.json
+```
+
+### One-time setup (maintainer)
+
+The signing key is generated once and stored as a repository secret. Only the public
+key lives in the repo (`tauri.conf.json` `plugins.updater.pubkey`).
+
+```bash
+pnpm --filter @sheet-port/desktop exec tauri signer generate -w sheet-port.key
+```
+
+Then in the GitHub repository settings add two Actions secrets:
+
+| Secret | Value |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | Full contents of `sheet-port.key` (the workflow strips the `untrusted comment:` header line automatically) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The passphrase you set when generating the key (empty if none) |
+
+Keep `sheet-port.key` out of git.
+
+### Cutting a release
+
+Releases are driven by git tags. The `.github/workflows/build-release.yml` workflow
+builds a Windows/Linux/macOS (x64 + arm64) matrix, signs each updater bundle, publishes
+a GitHub Release, and commits the regenerated `updater.json` back to `main`
+(with `[skip ci]`).
+
+| Tag pattern | Result |
+|---|---|
+| `release-v<x.y.z>` | Stable release (published, not prerelease) |
+| `develop-v<x.y.z>` | Prerelease build |
+
+The `<x.y.z>` suffix is injected into `apps/desktop/package.json` and
+`apps/desktop/src-tauri/tauri.conf.json` before building, so bump nothing by hand.
+
+```bash
+git tag release-v0.0.2
+git push origin release-v0.0.2
+```
+
+`updater.json` at the repo root is a seed manifest committed so the endpoint resolves
+before the first release; the workflow overwrites its `version`, `pub_date`, and
+`platforms` (six keys: `windows-x86_64` + `-nsis`, `linux-x86_64` + `-appimage`,
+`darwin-x86_64`, `darwin-aarch64`) on every release.
+
 ## Current Limitations
 
 - No SQLite schema migration mechanism yet (only the idempotent initial schema plus a

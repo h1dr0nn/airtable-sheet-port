@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,5 +35,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://raw.githubusercontent.com/h1dr0nn/airtable-sheet-port/main/updater.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEMjUxRkMzNTJGRUMxNkMKUldSc3dmNVN3eDhselpsZ2hTT0RabHFESXpORmhTRjdLWHZkTVZBdVd4Y3B0V0lsU2laczFPRDEK"
+    }
   }
 }

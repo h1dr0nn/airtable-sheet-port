@@ -14,6 +14,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Self-update: checks updater.json on GitHub and installs signed release bundles.
+tauri-plugin-updater = "2"
+# Relaunch after an update installs; the updater plugin does not restart on its own.
+tauri-plugin-process = "2"
 # All broker logic (DB, permissions, changes, audit, connectors, keychain)
 # lives in the shared core crate; this app is only the Tauri shell.
 sheet-port-core = { path = "../../../crates/sheet-port-core" }
