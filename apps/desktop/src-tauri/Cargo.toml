@@ -13,11 +13,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 # Self-update: checks updater.json on GitHub and installs signed release bundles.
 tauri-plugin-updater = "2"
 # Relaunch after an update installs; the updater plugin does not restart on its own.
 tauri-plugin-process = "2"
+# Persist and restore the main window position/size/maximized state across restarts.
+tauri-plugin-window-state = "2"
+# Focus the existing window instead of launching a second copy of the app.
+tauri-plugin-single-instance = "2"
+# Optional launch-at-login toggle exposed in Settings.
+tauri-plugin-autostart = "2"
 # All broker logic (DB, permissions, changes, audit, connectors, keychain)
 # lives in the shared core crate; this app is only the Tauri shell.
 sheet-port-core = { path = "../../../crates/sheet-port-core" }

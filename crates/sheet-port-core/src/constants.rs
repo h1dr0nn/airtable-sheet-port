@@ -108,6 +108,21 @@ pub const MCP_PORT_MAX: u16 = 65535;
 /// servers, and so `unregister_client` can find exactly what to remove.
 pub const MCP_CLIENT_SERVER_NAME: &str = "airtable-sheet-port";
 
+/// Meta key selecting what happens when the user closes the main window.
+/// Absent means the default ("ask"). See docs/development.md "Run in
+/// background".
+pub const META_CLOSE_BEHAVIOR: &str = "close_behavior";
+
+/// Allowed `close_behavior` values; the first is the default when the key is
+/// absent or invalid. "ask" prompts each time, "tray" hides to the system
+/// tray, "quit" exits the app.
+pub const CLOSE_BEHAVIOR_ASK: &str = "ask";
+pub const CLOSE_BEHAVIOR_TRAY: &str = "tray";
+pub const CLOSE_BEHAVIOR_QUIT: &str = "quit";
+pub const CLOSE_BEHAVIOR_VALUES: [&str; 3] =
+    [CLOSE_BEHAVIOR_ASK, CLOSE_BEHAVIOR_TRAY, CLOSE_BEHAVIOR_QUIT];
+pub const CLOSE_BEHAVIOR_DEFAULT: &str = CLOSE_BEHAVIOR_ASK;
+
 /// The single MCP endpoint path the HTTP transport serves (mirrors
 /// `sheet-port-mcp` http::MCP_HTTP_PATH). Used to build the advertised
 /// `http://127.0.0.1:{port}{MCP_CLIENT_HTTP_PATH}` url when configuring a

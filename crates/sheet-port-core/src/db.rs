@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::constants::{
-    MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO,
-    META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE,
-    UI_FONT_FAMILY_DEFAULT, UI_FONT_FAMILY_VALUES, UI_FONT_SCALE_DEFAULT, UI_FONT_SCALE_VALUES,
+    CLOSE_BEHAVIOR_DEFAULT, CLOSE_BEHAVIOR_VALUES, MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN,
+    MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_CLOSE_BEHAVIOR, META_MCP_PORT,
+    META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE, UI_FONT_FAMILY_DEFAULT,
+    UI_FONT_FAMILY_VALUES, UI_FONT_SCALE_DEFAULT, UI_FONT_SCALE_VALUES,
 };
 use crate::error::{db_error, CoreError};
 
@@ -215,6 +216,24 @@ pub fn set_ui_font_family(conn: &Connection, value: &str) -> Result<(), CoreErro
     set_meta(conn, META_UI_FONT_FAMILY, validated)
 }
 
+/// The stored window close behavior ("ask" | "tray" | "quit"), or the default
+/// ("ask") when the key is absent or holds an out-of-contract value.
+pub fn get_close_behavior(conn: &Connection) -> Result<String, CoreError> {
+    read_enum_meta(
+        conn,
+        META_CLOSE_BEHAVIOR,
+        &CLOSE_BEHAVIOR_VALUES,
+        CLOSE_BEHAVIOR_DEFAULT,
+    )
+}
+
+/// Persists the window close behavior after validating it against the
+/// allow-list.
+pub fn set_close_behavior(conn: &Connection, value: &str) -> Result<(), CoreError> {
+    let validated = validate_enum(value, &CLOSE_BEHAVIOR_VALUES, "close_behavior")?;
+    set_meta(conn, META_CLOSE_BEHAVIOR, validated)
+}
+
 /// Reads a meta value that must be one of `allowed`, returning `default` when
 /// the key is absent or holds an out-of-contract value.
 fn read_enum_meta(
@@ -376,7 +395,8 @@ mod tests {
     use super::test_support::temp_db_path;
     use super::*;
     use crate::constants::{
-        MCP_PORT_DEFAULT, MCP_PORT_MIN, META_GOOGLE_CLIENT_ID, META_MCP_TRANSPORT,
+        MCP_PORT_DEFAULT, MCP_PORT_MIN, META_CLOSE_BEHAVIOR, META_GOOGLE_CLIENT_ID,
+        META_MCP_TRANSPORT,
     };
 
     fn count(conn: &Connection, table: &str) -> i64 {
@@ -566,6 +586,27 @@ INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALU
         set_ui_font_family(&conn, "system").expect("set system");
         assert_eq!(get_ui_font_family(&conn).expect("get"), "system");
         assert!(set_ui_font_family(&conn, "comic-sans").is_err());
+    }
+
+    #[test]
+    fn close_behavior_defaults_and_round_trips_valid_values() {
+        let conn = test_support::open_temp_db();
+        assert_eq!(get_close_behavior(&conn).expect("default"), "ask");
+
+        set_close_behavior(&conn, "tray").expect("set tray");
+        assert_eq!(get_close_behavior(&conn).expect("get"), "tray");
+        set_close_behavior(&conn, "quit").expect("set quit");
+        assert_eq!(get_close_behavior(&conn).expect("get"), "quit");
+    }
+
+    #[test]
+    fn close_behavior_rejects_unknown_values_and_ignores_stored_junk() {
+        let conn = test_support::open_temp_db();
+        assert!(set_close_behavior(&conn, "explode").is_err());
+        // A value written outside the validated setter still reads back as the
+        // default so the UI never gets an out-of-contract token.
+        set_meta(&conn, META_CLOSE_BEHAVIOR, "explode").expect("force junk");
+        assert_eq!(get_close_behavior(&conn).expect("get"), "ask");
     }
 
     #[test]

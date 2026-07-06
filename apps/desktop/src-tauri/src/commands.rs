@@ -12,8 +12,8 @@ use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
     HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
-    META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY,
-    META_UI_FONT_SCALE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
+    META_CLOSE_BEHAVIOR, META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT,
+    META_UI_FONT_FAMILY, META_UI_FONT_SCALE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
 use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
@@ -52,9 +52,10 @@ impl DbState {
 
 type Db<'a> = State<'a, DbState>;
 
-/// The desktop-managed MCP sidecar child process (HTTP transport only). At most
-/// one child is tracked at a time: `Some` while running, `None` when stopped.
-/// stdio clients spawn their own sidecar and are never tracked here.
+/// The desktop-managed MCP sidecar child process, started on the configured
+/// transport (stdio or http). At most one child is tracked at a time: `Some`
+/// while running, `None` when stopped. Agent-side stdio MCP clients spawn their
+/// own separate sidecar, which is never tracked here.
 #[derive(Default)]
 pub struct ManagedSidecar {
     pub child: Arc<Mutex<Option<std::process::Child>>>,
@@ -250,6 +251,10 @@ pub struct AppSettings {
     pub font_scale: String,
     /// UI font family: "classic" | "modern" | "system" (default "modern").
     pub font_family: String,
+    /// Window close behavior: "ask" | "tray" | "quit" (default "ask").
+    /// Autostart is intentionally NOT here; it lives in the OS launcher, so the
+    /// UI reads it via `get_autostart_enabled`.
+    pub close_behavior: String,
 }
 
 const SETTINGS_UPDATED_ACTION: &str = "settings_updated";
@@ -264,10 +269,12 @@ pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
         == Some(META_FLAG_ON);
     let font_scale = db::get_ui_font_scale(&conn).map_err(|error| error.to_string())?;
     let font_family = db::get_ui_font_family(&conn).map_err(|error| error.to_string())?;
+    let close_behavior = db::get_close_behavior(&conn).map_err(|error| error.to_string())?;
     Ok(AppSettings {
         auto_approve_writes,
         font_scale,
         font_family,
+        close_behavior,
     })
 }
 
@@ -325,6 +332,24 @@ pub fn set_auto_approve(state: Db<'_>, enabled: bool) -> Result<(), String> {
         None,
         None,
         Some(&json!({ "key": META_AUTO_APPROVE_WRITES, "enabled": enabled })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Sets the window close behavior ("ask" | "tray" | "quit"); rejects any other
+/// value. Audit event `settings_updated` with the persisted value.
+#[tauri::command]
+pub fn set_close_behavior(state: Db<'_>, behavior: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    db::set_close_behavior(&conn, &behavior).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_CLOSE_BEHAVIOR, "value": behavior })),
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -622,10 +647,13 @@ pub fn mcp_configure_all(state: Db<'_>) -> Result<Vec<ConfigureResult>, String> 
 }
 
 // ---------------------------------------------------------------------------
-// Desktop-managed MCP sidecar process control (HTTP transport).
-// stdio clients spawn their own sidecar, so only HTTP is managed here. The env
-// overrides force the child onto HTTP + the configured port regardless of the
-// stored meta transport (which the child would otherwise read at startup).
+// Desktop-managed MCP sidecar process control.
+// The desktop starts a managed child on the configured transport (stdio or
+// http) so "running" status works for both: the child keeps the heartbeat row
+// fresh regardless of transport. The env overrides pin the child onto exactly
+// the configured transport + port so it never drifts from the stored meta.
+// stdio MCP clients additionally spawn their OWN sidecar; that one is not
+// tracked here (only this desktop-managed child is).
 // ---------------------------------------------------------------------------
 
 /// Env var the sidecar reads to force its transport (mirrors the private const
@@ -646,10 +674,13 @@ pub struct SidecarStatus {
     pub pid: Option<u32>,
 }
 
-/// Starts the sidecar as a desktop-managed child on the HTTP transport, bound
-/// to the configured port. No-op error when a managed child is already running
-/// (only one is allowed). The resolved binary must exist; a missing release
-/// build is a clear error rather than a silent failure.
+/// Starts the sidecar as a desktop-managed child on the CONFIGURED transport
+/// (stdio or http), so "running" status works for both: the child keeps the
+/// heartbeat row fresh either way. The child is pinned onto exactly the stored
+/// transport + port via env overrides so it never drifts from the meta config.
+/// No-op error when a managed child is already running (only one is allowed).
+/// The resolved binary must exist; a missing release build is a clear error
+/// rather than a silent failure.
 #[tauri::command]
 pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarStatus, String> {
     let mut guard = sidecar
@@ -673,12 +704,12 @@ pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSt
         }
     }
 
-    let port = {
+    let config = {
         let conn = lock_conn(&state)?;
-        db::get_mcp_config(&conn)
-            .map_err(|error| error.to_string())?
-            .port
+        db::get_mcp_config(&conn).map_err(|error| error.to_string())?
     };
+    let transport = config.transport.as_str();
+    let port = config.port;
 
     let bin = resolve_sidecar_bin();
     if !bin.exists() {
@@ -689,7 +720,7 @@ pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSt
     }
 
     let child = std::process::Command::new(&bin)
-        .env(ENV_MCP_TRANSPORT, MCP_TRANSPORT_HTTP)
+        .env(ENV_MCP_TRANSPORT, transport)
         .env(ENV_MCP_PORT, port.to_string())
         .spawn()
         .map_err(|error| format!("Could not start the MCP server: {error}"))?;
@@ -705,7 +736,7 @@ pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSt
             MCP_SERVER_STARTED_ACTION,
             None,
             None,
-            Some(&json!({ "pid": pid, "port": port, "transport": MCP_TRANSPORT_HTTP })),
+            Some(&json!({ "pid": pid, "port": port, "transport": transport })),
         )
         .map_err(|error| error.to_string())?;
     }
@@ -888,6 +919,88 @@ pub fn google_disconnect(state: Db<'_>, source_id: String) -> Result<(), String>
         Some(&source_id),
         None,
         None,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Window / tray / background behavior (docs/development.md "Run in
+// background"). The close-behavior modal on the frontend applies the user's
+// choice through these commands; the tray keeps the app resident when hidden.
+// ---------------------------------------------------------------------------
+
+/// The main window label, matching `tauri.conf.json` app.windows[0]. Tray
+/// actions and the close-behavior commands resolve the window by this label.
+pub const MAIN_WINDOW_LABEL: &str = "main";
+
+/// Brings the main window back into view and gives it focus. Used by the tray
+/// "Show Window" item, tray left-click, and single-instance re-launch.
+pub fn show_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Hides the main window so the app keeps running in the tray. Called by the
+/// frontend when the user picks "Minimize to tray" in the close-behavior modal.
+#[tauri::command]
+pub fn window_hide_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window
+            .hide()
+            .map_err(|error| format!("Could not hide the window: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Exits the app. Called by the frontend when the user picks "Quit" in the
+/// close-behavior modal. The managed sidecar child is killed by the window
+/// Destroyed handler as the process tears down.
+#[tauri::command]
+pub fn window_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// Whether the app is registered to launch at login.
+#[tauri::command]
+pub fn get_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| format!("Could not read the autostart state: {error}"))
+}
+
+/// Enables or disables launch at login. Audit event `settings_updated`.
+#[tauri::command]
+pub fn set_autostart_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+    state: Db<'_>,
+) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if enabled {
+        manager
+            .enable()
+            .map_err(|error| format!("Could not enable autostart: {error}"))?;
+    } else {
+        manager
+            .disable()
+            .map_err(|error| format!("Could not disable autostart: {error}"))?;
+    }
+    let conn = lock_conn(&state)?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": "autostart_enabled", "enabled": enabled })),
     )
     .map_err(|error| error.to_string())?;
     Ok(())
