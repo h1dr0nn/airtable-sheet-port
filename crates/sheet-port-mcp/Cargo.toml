@@ -16,6 +16,10 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
+# Optional loopback HTTP transport. rmcp's streamable-http server is a tower
+# Service; hyper + hyper-util bind it to a TcpListener on 127.0.0.1 only.
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 
 [dev-dependencies]
 uuid = { workspace = true }

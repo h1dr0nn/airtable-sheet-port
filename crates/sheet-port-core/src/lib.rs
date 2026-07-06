@@ -14,6 +14,7 @@ pub mod db;
 pub mod error;
 pub mod google;
 pub mod heartbeat;
+pub mod mcp_clients;
 pub mod mock_data;
 pub mod permissions;
 pub mod sources;

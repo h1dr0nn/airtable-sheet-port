@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::constants::{
+    MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO,
+    META_MCP_PORT, META_MCP_TRANSPORT,
+};
 use crate::error::{db_error, CoreError};
 
 /// Absolute-file-path override used by tests and smoke scripts.
@@ -169,6 +173,87 @@ pub fn delete_meta(conn: &Connection, key: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// MCP sidecar transport config (shared by the sidecar and the desktop app).
+// See docs/architecture.md and docs/security.md. The values live in `meta` so
+// the running sidecar and the desktop settings never drift; the sidecar reads
+// them once at startup, so changes take effect on the next sidecar restart.
+// ---------------------------------------------------------------------------
+
+/// The MCP sidecar transport selected in settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpTransport {
+    /// stdio JSON-RPC (default). No port; the agent's MCP client spawns it.
+    Stdio,
+    /// Loopback HTTP (streamable-http), bound strictly to 127.0.0.1.
+    Http,
+}
+
+impl McpTransport {
+    /// The canonical meta string ("stdio" | "http").
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdio => MCP_TRANSPORT_STDIO,
+            Self::Http => MCP_TRANSPORT_HTTP,
+        }
+    }
+
+    /// Parses a meta value. Only "http" selects HTTP; anything else (including
+    /// an absent/unknown value) falls back to the safe stdio default.
+    pub fn from_meta_value(value: Option<&str>) -> Self {
+        match value {
+            Some(MCP_TRANSPORT_HTTP) => Self::Http,
+            _ => Self::Stdio,
+        }
+    }
+}
+
+/// Resolved MCP transport settings after defaults and clamping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpConfig {
+    pub transport: McpTransport,
+    /// The configured HTTP port, always within [MCP_PORT_MIN, MCP_PORT_MAX].
+    /// Meaningful only when `transport == Http`.
+    pub port: u16,
+}
+
+/// Clamps an out-of-range or unparseable port to the valid window, defaulting
+/// to `MCP_PORT_DEFAULT` when the string is absent or not a number. Never
+/// fails: the sidecar must always end up with a usable port.
+pub fn clamp_mcp_port(raw: Option<&str>) -> u16 {
+    match raw.and_then(|value| value.trim().parse::<u16>().ok()) {
+        Some(port) => port.clamp(MCP_PORT_MIN, MCP_PORT_MAX),
+        None => MCP_PORT_DEFAULT,
+    }
+}
+
+/// Reads the effective MCP transport config from `meta`, applying the stdio
+/// default and clamping the port. Used by the sidecar at startup and by the
+/// desktop `get_mcp_config` command.
+pub fn get_mcp_config(conn: &Connection) -> Result<McpConfig, CoreError> {
+    let transport = McpTransport::from_meta_value(get_meta(conn, META_MCP_TRANSPORT)?.as_deref());
+    let port = clamp_mcp_port(get_meta(conn, META_MCP_PORT)?.as_deref());
+    Ok(McpConfig { transport, port })
+}
+
+/// Persists the selected transport. Writing "stdio" stores the explicit
+/// default (rather than deleting the key) so the desktop can show the choice.
+pub fn set_mcp_transport(conn: &Connection, transport: McpTransport) -> Result<(), CoreError> {
+    set_meta(conn, META_MCP_TRANSPORT, transport.as_str())
+}
+
+/// Persists the HTTP port after validating the range. Rejects out-of-range
+/// values with a clear message instead of silently clamping, so the desktop
+/// surfaces the error to the user.
+pub fn set_mcp_port(conn: &Connection, port: u16) -> Result<(), CoreError> {
+    if !(MCP_PORT_MIN..=MCP_PORT_MAX).contains(&port) {
+        return Err(CoreError::InvalidInput(format!(
+            "port must be an integer between {MCP_PORT_MIN} and {MCP_PORT_MAX}"
+        )));
+    }
+    set_meta(conn, META_MCP_PORT, &port.to_string())
+}
+
 /// ISO-8601 UTC with milliseconds, matching SQLite's
 /// `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` used by the seed and JS
 /// `new Date().toISOString()`.
@@ -214,7 +299,9 @@ pub mod test_support {
 mod tests {
     use super::test_support::temp_db_path;
     use super::*;
-    use crate::constants::META_GOOGLE_CLIENT_ID;
+    use crate::constants::{
+        MCP_PORT_DEFAULT, MCP_PORT_MIN, META_GOOGLE_CLIENT_ID, META_MCP_TRANSPORT,
+    };
 
     fn count(conn: &Connection, table: &str) -> i64 {
         conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -369,6 +456,62 @@ INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALU
         assert_eq!(
             get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"),
             Some("client-2".to_string())
+        );
+    }
+
+    #[test]
+    fn mcp_config_defaults_to_stdio_and_default_port() {
+        let conn = test_support::open_temp_db();
+        let config = get_mcp_config(&conn).expect("config");
+        assert_eq!(config.transport, McpTransport::Stdio);
+        assert_eq!(config.port, MCP_PORT_DEFAULT);
+    }
+
+    #[test]
+    fn set_mcp_transport_round_trips_http_and_stdio() {
+        let conn = test_support::open_temp_db();
+        set_mcp_transport(&conn, McpTransport::Http).expect("set http");
+        assert_eq!(
+            get_mcp_config(&conn).expect("config").transport,
+            McpTransport::Http
+        );
+        set_mcp_transport(&conn, McpTransport::Stdio).expect("set stdio");
+        assert_eq!(
+            get_mcp_config(&conn).expect("config").transport,
+            McpTransport::Stdio
+        );
+    }
+
+    #[test]
+    fn set_mcp_port_persists_valid_and_rejects_out_of_range() {
+        let conn = test_support::open_temp_db();
+        set_mcp_port(&conn, 5000).expect("valid port");
+        assert_eq!(get_mcp_config(&conn).expect("config").port, 5000);
+        assert!(set_mcp_port(&conn, MCP_PORT_MIN - 1).is_err(), "below min");
+        // MCP_PORT_MAX is u16::MAX so an above-max literal cannot be typed; the
+        // clamp path covers stored junk instead (see clamp_mcp_port test).
+        assert_eq!(get_mcp_config(&conn).expect("config").port, 5000);
+    }
+
+    #[test]
+    fn clamp_mcp_port_handles_absent_and_invalid_values() {
+        assert_eq!(clamp_mcp_port(None), MCP_PORT_DEFAULT);
+        assert_eq!(clamp_mcp_port(Some("not-a-number")), MCP_PORT_DEFAULT);
+        assert_eq!(
+            clamp_mcp_port(Some("80")),
+            MCP_PORT_MIN,
+            "below min clamps up"
+        );
+        assert_eq!(clamp_mcp_port(Some("4319")), 4319);
+    }
+
+    #[test]
+    fn unknown_transport_meta_value_falls_back_to_stdio() {
+        let conn = test_support::open_temp_db();
+        set_meta(&conn, META_MCP_TRANSPORT, "carrier-pigeon").expect("set");
+        assert_eq!(
+            get_mcp_config(&conn).expect("config").transport,
+            McpTransport::Stdio
         );
     }
 

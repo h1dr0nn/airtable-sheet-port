@@ -154,6 +154,41 @@ Resets app-managed preferences to their defaults: deletes the
 client id/secret, permission rules, sources, pending changes, or the audit log.
 Audit event (`actor='user'`, `action='settings_reset'`).
 
+## MCP transport
+
+The MCP sidecar transport and port live in the shared `meta` table so the
+sidecar and the desktop app never drift. The sidecar reads them ONCE at startup,
+so changing either only takes effect after the sidecar restarts - these commands
+just persist config. See `docs/architecture.md` and `docs/security.md`.
+
+### `get_mcp_config() -> McpConfigView`
+
+```ts
+type McpConfigView = {
+  transport: "stdio" | "http"; // meta key 'mcp_transport', default 'stdio'
+  port: number;                // meta key 'mcp_port', default 4319, range 1024-65535
+  running: boolean;            // fresh heartbeat exists right now
+  boundPort: number | null;    // configured port when running AND http, else null
+};
+```
+
+`boundPort` is the configured port reported back only while an HTTP sidecar is
+running; the desktop cannot observe the sidecar's actual socket across the DB, so
+it equals the bound port unless the config changed without a restart. Null for
+stdio or when not running.
+
+### `set_mcp_transport(transport: "stdio" | "http") -> void`
+
+Persists `mcp_transport`. Rejects any value other than `stdio` / `http`. Audit
+event (`actor='user'`, `action='settings_updated'`, metadata
+`{key:'mcp_transport', transport}`).
+
+### `set_mcp_port(port: number) -> void`
+
+Persists `mcp_port` after validating `1024 <= port <= 65535`; out-of-range values
+are rejected with a clear error. Audit event (`actor='user'`,
+`action='settings_updated'`, metadata `{key:'mcp_port', port}`).
+
 ## Google Sheets account
 
 ### `get_google_config() -> GoogleConfig`

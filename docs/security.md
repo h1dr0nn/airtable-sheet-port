@@ -120,11 +120,32 @@ checked, logged, and shaped through narrow schemas.
 
 ## Local MCP Attack Surface
 
-The MCP server runs locally with stdio transport. If HTTP/SSE is ever added it must
-bind only to `127.0.0.1`. Tool input schemas are strict, bounded, and provider-neutral,
-enforced in `crates/sheet-port-mcp/src/args.rs`: page limits 1-500, query max 200
-chars, at most 100 patches/records per change. Out-of-range input surfaces as a clear
-tool error, never as a raw schema failure.
+The MCP server runs locally. The default transport is stdio (spawned by the agent's MCP
+client), which exposes no network surface at all.
+
+An optional loopback HTTP transport (rmcp streamable-http) can be selected in settings.
+When enabled it binds STRICTLY to `127.0.0.1:{port}` and is never exposed externally:
+
+- The listener address is built from `Ipv4Addr::LOCALHOST` in
+  `crates/sheet-port-mcp/src/http.rs`; there is no code path that binds `0.0.0.0` or a
+  routable interface. This is a hard rule.
+- The transport keeps rmcp's default loopback-only `allowed_hosts`
+  (`localhost`, `127.0.0.1`, `::1`), which also defends against DNS-rebinding attacks
+  from a browser on the same machine.
+- The port is validated to `1024-65535` (`set_mcp_port`); privileged ports are rejected.
+  A port already in use makes the sidecar log the conflict to stderr and exit non-zero
+  rather than falling back to an unexpected address.
+- stdio remains the default and needs no port. Switching transports requires a sidecar
+  restart to take effect.
+
+The same permission checks, preview -> approve -> commit enforcement, audit logging, and
+heartbeat apply identically on both transports - only the wire transport differs, not the
+broker guarantees.
+
+Tool input schemas are strict, bounded, and provider-neutral, enforced in
+`crates/sheet-port-mcp/src/args.rs`: page limits 1-500, query max 200 chars, at most 100
+patches/records per change. Out-of-range input surfaces as a clear tool error, never as a
+raw schema failure.
 
 ## Tool Allowlist
 

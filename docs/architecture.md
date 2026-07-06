@@ -8,8 +8,10 @@ and one core crate:
 - The Tauri desktop app (`apps/desktop`): a thin Rust shell (`src-tauri`) plus a React
   frontend. It owns permission editing, change approval, the audit log UX, token
   status, and app settings (theme).
-- The Rust MCP sidecar (`crates/sheet-port-mcp`): a stdio MCP server exposing 9 typed
-  tools to agents. It enforces permissions and the preview -> approve -> commit flow.
+- The Rust MCP sidecar (`crates/sheet-port-mcp`): an MCP server exposing 9 typed tools
+  to agents. It enforces permissions and the preview -> approve -> commit flow. It serves
+  either the default stdio transport or an optional loopback HTTP transport (see
+  "MCP Transports" below).
 
 Both processes are wrappers over `crates/sheet-port-core`, which owns every broker
 behavior: shared SQLite access, permission rules, the pending-change lifecycle, audit,
@@ -28,7 +30,7 @@ flowchart LR
   DB[("SQLite (WAL)<br/>sheet-port.db")]
 
   subgraph Sidecar["Rust process (MCP sidecar)"]
-    MCP["crates/sheet-port-mcp<br/>rmcp stdio server<br/>9 typed tools"]
+    MCP["crates/sheet-port-mcp<br/>rmcp server (stdio or 127.0.0.1 http)<br/>9 typed tools"]
   end
 
   subgraph Core["crates/sheet-port-core (shared library)"]
@@ -40,7 +42,7 @@ flowchart LR
     React["React UI<br/>Vite frontend"]
   end
 
-  Agent -->|stdio JSON-RPC| MCP
+  Agent -->|stdio JSON-RPC or 127.0.0.1 http| MCP
   MCP --> Logic
   Rust --> Logic
   Logic --> DB
@@ -125,7 +127,8 @@ A stdio MCP server built on `rmcp` that registers exactly these tools
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Entry point: opens the shared DB, serves stdio, runs the heartbeat task, cleans up on shutdown. stdout belongs to the MCP transport; diagnostics go to stderr. |
+| `main.rs` | Entry point: opens the shared DB, resolves the transport config, serves stdio or HTTP, runs the heartbeat task, cleans up on shutdown. For stdio, stdout belongs to the MCP transport; diagnostics go to stderr on both transports. |
+| `http.rs` | Optional loopback HTTP transport: binds `127.0.0.1:{port}` and serves rmcp's streamable-http `tower` service over hyper. Same `SheetPortServer` and broker state as stdio. |
 | `server.rs` | rmcp glue: the `#[tool]` registrations, read-only annotations, and mapping `CoreError` onto MCP tool errors (`isError: true` with the plain message). |
 | `tools.rs` | The 9 tool implementations: permission checks, connector routing through the registry, audit events, pretty-printed JSON outputs. |
 | `args.rs` | Input models (JSON schemas via `schemars`) and bounds validation (list sizes 1-100, page limits 1-500, query 1-200 chars). |
@@ -133,6 +136,29 @@ A stdio MCP server built on `rmcp` that registers exactly these tools
 
 It does not expose shell execution, JavaScript execution, provider tokens, or raw
 provider APIs.
+
+### MCP Transports
+
+The sidecar reads its transport and port ONCE at startup from the shared `meta` table
+(keys `mcp_transport` and `mcp_port`), or from the `SHEET_PORT_MCP_TRANSPORT` /
+`SHEET_PORT_MCP_PORT` env overrides used by tests. Changing the setting therefore
+requires a sidecar restart to take effect; the desktop `set_mcp_transport` /
+`set_mcp_port` commands only persist config.
+
+| Transport | Default | Wire | Binding |
+|---|---|---|---|
+| `stdio` | yes | JSON-RPC over stdin/stdout, spawned by the agent's MCP client | none (no port) |
+| `http` | no | rmcp streamable-http (`tower` service over hyper) | `127.0.0.1:{port}` only (default 4319, range 1024-65535) |
+
+Both transports serve the identical `SheetPortServer`, share the same `BrokerState`, and
+run the same heartbeat - only the wire differs. The HTTP transport binds loopback
+exclusively (never `0.0.0.0`) and keeps rmcp's loopback-only `allowed_hosts` default; a
+port already in use makes the sidecar log to stderr and exit non-zero. See
+`docs/security.md` for the full rationale.
+
+The desktop `get_mcp_config` command reports the persisted `transport`/`port` plus a live
+`running` flag (from the heartbeat) and `boundPort` (the configured port while an HTTP
+sidecar is running, else null); see `docs/ipc.md`.
 
 ## Desktop App
 

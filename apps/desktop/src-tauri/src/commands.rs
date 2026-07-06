@@ -11,16 +11,19 @@ use serde::Serialize;
 use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
-    META_AUTO_APPROVE_WRITES, META_FLAG_ON, META_GOOGLE_CLIENT_ID, READ_LIMIT_DEFAULT,
+    HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
+    META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT, READ_LIMIT_DEFAULT,
     READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
+use sheet_port_core::db::McpTransport;
+use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
 use sheet_port_core::rusqlite::Connection;
 use sheet_port_core::types::{
     AppStatus, AuditActor, AuditEvent, DataSource, PendingChange, PermissionRuleRow, ReadOptions,
     SavePermissionRule, TablePage, TableRef, TableSchema, TokenStatus,
 };
 use sheet_port_core::{
-    audit, changes, db, google, heartbeat, permissions, sources, vault, CoreError,
+    audit, changes, db, google, heartbeat, mcp_clients, permissions, sources, vault, CoreError,
 };
 use tauri::State;
 
@@ -268,6 +271,275 @@ pub fn reset_settings(state: Db<'_>) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// MCP transport config (docs/architecture.md, docs/security.md)
+// ---------------------------------------------------------------------------
+
+/// MCP sidecar transport settings plus live status. `transport`/`port` are the
+/// persisted config; `running`/`boundPort` reflect the current sidecar. The
+/// sidecar reads config once at startup, so a change only takes effect after it
+/// restarts - the UI should say so.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConfigView {
+    /// "stdio" | "http".
+    pub transport: String,
+    /// Configured HTTP port (only meaningful when transport is "http").
+    pub port: u16,
+    /// Whether a fresh sidecar heartbeat exists right now.
+    pub running: bool,
+    /// The port the running sidecar is reachable on. Only set when the sidecar
+    /// is running AND the configured transport is "http"; the desktop cannot
+    /// observe the sidecar's actual bound port across the DB, so it reports the
+    /// configured port (which equals the bound port unless the config changed
+    /// without a restart). Null for stdio or when not running.
+    pub bound_port: Option<u16>,
+}
+
+/// Maps the "http" | anything-else meta string onto the canonical value.
+fn transport_meta_string(transport: McpTransport) -> String {
+    transport.as_str().to_string()
+}
+
+#[tauri::command]
+pub fn get_mcp_config(state: Db<'_>) -> Result<McpConfigView, String> {
+    let conn = lock_conn(&state)?;
+    let config = db::get_mcp_config(&conn).map_err(|error| error.to_string())?;
+    let running = heartbeat::status(&conn, HEARTBEAT_STALE_MS)
+        .map_err(|error| error.to_string())?
+        .running;
+    // boundPort is only meaningful for a running HTTP sidecar.
+    let bound_port = match (config.transport, running) {
+        (McpTransport::Http, true) => Some(config.port),
+        _ => None,
+    };
+    Ok(McpConfigView {
+        transport: transport_meta_string(config.transport),
+        port: config.port,
+        running,
+        bound_port,
+    })
+}
+
+/// Persists the transport choice. Accepts only "stdio" | "http". Changing it
+/// requires a sidecar restart to take effect (the command only writes config).
+#[tauri::command]
+pub fn set_mcp_transport(state: Db<'_>, transport: String) -> Result<(), String> {
+    let parsed = match transport.as_str() {
+        MCP_TRANSPORT_STDIO => McpTransport::Stdio,
+        MCP_TRANSPORT_HTTP => McpTransport::Http,
+        other => {
+            return Err(format!(
+                "transport must be \"{MCP_TRANSPORT_STDIO}\" or \"{MCP_TRANSPORT_HTTP}\", got \"{other}\""
+            ))
+        }
+    };
+    let conn = lock_conn(&state)?;
+    db::set_mcp_transport(&conn, parsed).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_MCP_TRANSPORT, "transport": parsed.as_str() })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Persists the HTTP port after range validation (1024-65535). Changing it
+/// requires a sidecar restart to take effect.
+#[tauri::command]
+pub fn set_mcp_port(state: Db<'_>, port: u16) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    db::set_mcp_port(&conn, port).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_MCP_PORT, "port": port })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// MCP client auto-configuration (docs/development.md "MCP client config")
+// ---------------------------------------------------------------------------
+
+const MCP_CLIENT_CONFIGURED_ACTION: &str = "mcp_client_configured";
+const MCP_CLIENT_UNREGISTERED_ACTION: &str = "mcp_client_unregistered";
+
+/// The sidecar binary file name (with the platform executable extension).
+#[cfg(target_os = "windows")]
+const MCP_SIDECAR_BIN: &str = "sheet-port-mcp.exe";
+#[cfg(not(target_os = "windows"))]
+const MCP_SIDECAR_BIN: &str = "sheet-port-mcp";
+
+/// Resolves the sheet-port-mcp binary the clients should launch. Prefers a
+/// sibling of the running desktop executable (the bundled layout), then falls
+/// back to the workspace `target/release/<bin>` used during development. The
+/// path is returned even when the file does not exist yet so we can still
+/// write config pointing at where the release build will land.
+fn resolve_sidecar_bin() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join(MCP_SIDECAR_BIN);
+            if sibling.exists() {
+                return sibling;
+            }
+            // Dev fallback: apps/desktop/src-tauri/target/<profile>/<exe> ->
+            // walk up to the workspace root and into target/release.
+            if let Some(workspace_release) = dev_workspace_release(dir) {
+                return workspace_release;
+            }
+            // Last resort: advertise the expected sibling path anyway.
+            return sibling;
+        }
+    }
+    PathBuf::from(MCP_SIDECAR_BIN)
+}
+
+/// From a Tauri `target/<profile>` executable directory, finds the workspace
+/// root's `target/release/<bin>`. Returns None when the layout does not match
+/// (e.g. a bundled install), so the caller uses the sibling path instead.
+fn dev_workspace_release(exe_dir: &std::path::Path) -> Option<PathBuf> {
+    // exe_dir = .../apps/desktop/src-tauri/target/<profile>
+    let target_dir = exe_dir.parent()?; // .../target
+    if target_dir.file_name()?.to_str()? != "target" {
+        return None;
+    }
+    let candidate = target_dir.join("release").join(MCP_SIDECAR_BIN);
+    candidate.exists().then_some(candidate)
+}
+
+/// Builds the [`ServerSpec`] for the configured transport: an http url when the
+/// transport is "http", otherwise a stdio launch of the resolved sidecar
+/// binary. Returns the spec plus the sidecar path (for auditing) and whether
+/// that binary exists yet.
+fn server_spec_for_config(conn: &Connection) -> Result<(ServerSpec, PathBuf, bool), String> {
+    let config = db::get_mcp_config(conn).map_err(|error| error.to_string())?;
+    let bin = resolve_sidecar_bin();
+    let exists = bin.exists();
+    let spec = match config.transport {
+        McpTransport::Http => ServerSpec::http_for_port(config.port),
+        McpTransport::Stdio => ServerSpec::Stdio {
+            command: bin.to_string_lossy().into_owned(),
+            args: Vec::new(),
+        },
+    };
+    Ok((spec, bin, exists))
+}
+
+/// One client's post-configure result: the id, the config file written, and
+/// whether the sidecar binary the entry points at exists yet.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureResult {
+    pub id: String,
+    pub config_path: String,
+    /// False when the release sidecar is not built yet; the entry still points
+    /// at the expected path so the UI can prompt the user to build it.
+    pub binary_exists: bool,
+}
+
+#[tauri::command]
+pub fn mcp_detect_clients(state: Db<'_>) -> Result<Vec<DetectedClient>, String> {
+    // No DB access needed, but keep the state arg for a uniform command shape.
+    let _ = state;
+    Ok(mcp_clients::detect_clients())
+}
+
+/// Writes our server entry into a single client's config, transport-aware.
+#[tauri::command]
+pub fn mcp_configure_client(state: Db<'_>, id: String) -> Result<ConfigureResult, String> {
+    let conn = lock_conn(&state)?;
+    let (spec, bin, binary_exists) = server_spec_for_config(&conn)?;
+    let path = mcp_clients::configure_client(&id, &spec).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        MCP_CLIENT_CONFIGURED_ACTION,
+        None,
+        None,
+        Some(&json!({
+            "client": id,
+            "configPath": path.to_string_lossy(),
+            "binary": bin.to_string_lossy(),
+            "binaryExists": binary_exists,
+        })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(ConfigureResult {
+        id,
+        config_path: path.to_string_lossy().into_owned(),
+        binary_exists,
+    })
+}
+
+/// Removes only our server entry from a single client's config.
+#[tauri::command]
+pub fn mcp_unregister_client(state: Db<'_>, id: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    let removed = mcp_clients::unregister_client(&id).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        MCP_CLIENT_UNREGISTERED_ACTION,
+        None,
+        None,
+        Some(&json!({
+            "client": id,
+            "configPath": removed.as_ref().map(|path| path.to_string_lossy()),
+        })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Configures every detected, installed, detectable client in one call. Skips
+/// clients that are not installed or not detectable; returns the results for
+/// the ones actually written. A per-client failure aborts and surfaces its
+/// error rather than leaving a partial-with-no-signal state.
+#[tauri::command]
+pub fn mcp_configure_all(state: Db<'_>) -> Result<Vec<ConfigureResult>, String> {
+    let conn = lock_conn(&state)?;
+    let (spec, bin, binary_exists) = server_spec_for_config(&conn)?;
+    let targets: Vec<String> = mcp_clients::detect_clients()
+        .into_iter()
+        .filter(|client| client.installed && client.detectable)
+        .map(|client| client.id)
+        .collect();
+
+    let mut results = Vec::with_capacity(targets.len());
+    for id in targets {
+        let path = mcp_clients::configure_client(&id, &spec).map_err(|error| error.to_string())?;
+        audit::record(
+            &conn,
+            AuditActor::User,
+            MCP_CLIENT_CONFIGURED_ACTION,
+            None,
+            None,
+            Some(&json!({
+                "client": id,
+                "configPath": path.to_string_lossy(),
+                "binary": bin.to_string_lossy(),
+                "binaryExists": binary_exists,
+            })),
+        )
+        .map_err(|error| error.to_string())?;
+        results.push(ConfigureResult {
+            id,
+            config_path: path.to_string_lossy().into_owned(),
+            binary_exists,
+        });
+    }
+    Ok(results)
 }
 
 // ---------------------------------------------------------------------------

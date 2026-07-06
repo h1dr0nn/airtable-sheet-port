@@ -44,3 +44,40 @@ pub const META_AUTO_APPROVE_WRITES: &str = "auto_approve_writes";
 
 /// Meta value that turns a boolean opt-in setting on.
 pub const META_FLAG_ON: &str = "1";
+
+/// Meta key selecting the MCP sidecar transport. Absent or "stdio" keeps the
+/// default stdio transport; "http" serves the same tools over a loopback HTTP
+/// endpoint. See docs/architecture.md and docs/security.md.
+pub const META_MCP_TRANSPORT: &str = "mcp_transport";
+
+/// Meta value for the default stdio transport (also the implicit default when
+/// META_MCP_TRANSPORT is absent).
+pub const MCP_TRANSPORT_STDIO: &str = "stdio";
+
+/// Meta value selecting the loopback HTTP transport.
+pub const MCP_TRANSPORT_HTTP: &str = "http";
+
+/// Meta key for the port the HTTP transport binds on 127.0.0.1. Only read when
+/// the transport is "http". Stored as a decimal string.
+pub const META_MCP_PORT: &str = "mcp_port";
+
+/// Default HTTP transport port when META_MCP_PORT is absent or invalid.
+pub const MCP_PORT_DEFAULT: u16 = 4319;
+
+/// Lowest port the HTTP transport accepts. Below 1024 are privileged ports.
+pub const MCP_PORT_MIN: u16 = 1024;
+
+/// Highest port the HTTP transport accepts (top of the u16 range).
+pub const MCP_PORT_MAX: u16 = 65535;
+
+/// The server-entry name this app writes into every MCP client's config
+/// (the key inside their `mcpServers` object). Stable so re-configuring a
+/// client overwrites our own entry and never touches the user's other
+/// servers, and so `unregister_client` can find exactly what to remove.
+pub const MCP_CLIENT_SERVER_NAME: &str = "airtable-sheet-port";
+
+/// The single MCP endpoint path the HTTP transport serves (mirrors
+/// `sheet-port-mcp` http::MCP_HTTP_PATH). Used to build the advertised
+/// `http://127.0.0.1:{port}{MCP_CLIENT_HTTP_PATH}` url when configuring a
+/// client for the HTTP transport.
+pub const MCP_CLIENT_HTTP_PATH: &str = "/mcp";

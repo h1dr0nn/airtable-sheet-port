@@ -91,6 +91,47 @@ For Claude Desktop use `examples/claude-desktop-config.json`; it points at the r
 binary, so build it first. stdout belongs to the MCP transport; diagnostics go to
 stderr.
 
+## MCP Client Auto-Configuration
+
+Instead of hand-editing each agent's config, the desktop app can register the
+`sheet-port-mcp` sidecar directly into installed MCP clients. The registry and the
+merge/preserve logic live in `crates/sheet-port-core/src/mcp_clients.rs`; the Tauri
+shell exposes them through four commands (see `docs/ipc.md` shapes):
+
+- `mcp_detect_clients()` - lists every known client with `installed` (config directory
+  exists), `configured` (our entry present), and `detectable` (we can locate its config
+  on this OS).
+- `mcp_configure_client(id)` - merges an entry named `airtable-sheet-port` into that
+  client's server map, preserving every other server. Transport-aware: writes a
+  `{command,args}` stdio entry pointing at the resolved release sidecar, or a
+  `{type:"sse",url}` http entry (`http://127.0.0.1:{port}/mcp`) when the HTTP transport
+  is selected. If the release binary is not built yet the entry still points at the
+  expected path and the result reports `binaryExists: false`.
+- `mcp_unregister_client(id)` - removes only our entry, leaving all other servers intact.
+- `mcp_configure_all()` - configures every detected, installed, detectable client.
+
+Every configure/unregister writes an audit event (`actor = user`,
+`action = mcp_client_configured` / `mcp_client_unregistered`, `metadata.client = <id>`).
+Writes create parent directories, keep the file otherwise byte-for-byte, and refuse to
+touch a config file that is present but not valid JSON.
+
+### Supported clients
+
+| Client | Config file | Shape |
+| --- | --- | --- |
+| Claude Desktop | `%APPDATA%/Claude/claude_desktop_config.json` (Win), `~/Library/Application Support/Claude/...` (macOS), `~/.config/Claude/...` (Linux) | `mcpServers` |
+| Claude Code | `~/.claude.json` | `mcpServers` |
+| Cursor | `~/.cursor/mcp.json` | `mcpServers` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| Cline (VS Code) | VS Code `User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | `mcpServers` |
+| VS Code (Copilot) | not yet supported (`detectable = false`) | `servers` |
+
+VS Code Copilot is intentionally left `detectable = false`: its workspace form
+(`.vscode/mcp.json`) needs a concrete project root the desktop app does not have, and it
+uses a different `servers` key. Enabling it requires a project-root-aware path and a new
+config shape - see the `TODO(mcp-clients)` in `mcp_clients.rs`. Cline's path covers the
+stable VS Code build only (not Insiders / VSCodium / other forks).
+
 ## How to Add a New MCP Tool
 
 1. Define the input model in `crates/sheet-port-mcp/src/args.rs`: a `Deserialize` +
