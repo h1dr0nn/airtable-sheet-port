@@ -10,6 +10,7 @@
     "build": "pnpm -r build",
     "typecheck": "tsc -b --pretty false",
     "lint": "pnpm -r lint",
+    "test": "pnpm -r --if-present test && pnpm --filter @sheet-port/mcp-server test:e2e",
     "format": "prettier --write ."
   },
   "devDependencies": {
