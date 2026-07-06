@@ -15,6 +15,32 @@ import { isTauri } from "../lib/ipc.js";
  * `available: false`, so the UI can render the same components in the demo build.
  */
 
+/**
+ * The seed updater.json ships with empty platforms, so check() throws
+ * "None of the fallback platforms were found". A misconfigured or
+ * platform-less manifest is not a real failure for the user - it just means
+ * there is nothing to install - so we treat these as "up to date" instead of
+ * surfacing a red error. Only genuine network/signature failures remain errors.
+ */
+function isNoUpdateManifestError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("fallback platforms") ||
+    normalized.includes("platform") ||
+    normalized.includes("manifest")
+  );
+}
+
+/**
+ * Outcome of a single check(), returned synchronously to the caller so it can
+ * react without waiting for a re-render (React state updates are async). The
+ * launch check ignores this; the manual button branches on it.
+ */
+export type UpdateCheckResult =
+  | { status: "available"; version: string | null; notes: string | null }
+  | { status: "up-to-date" }
+  | { status: "error"; message: string };
+
 export type UpdateState = {
   /** A check() call is in flight. */
   checking: boolean;
@@ -30,9 +56,10 @@ export type UpdateState = {
   error: string | null;
   /**
    * Runs an update check. Silent by default (no side effects beyond state);
-   * callers decide whether to surface "no update" feedback.
+   * callers decide whether to surface "no update" feedback. Returns the outcome
+   * synchronously so callers need not wait for the async state to settle.
    */
-  check: () => Promise<void>;
+  check: () => Promise<UpdateCheckResult>;
   /** Downloads and installs the pending update, then relaunches the app. */
   install: () => Promise<void>;
 };
@@ -48,13 +75,13 @@ export function useUpdate(): UpdateState {
   // Hold the Update handle between check() and install() without re-rendering.
   const updateRef = useRef<Update | null>(null);
 
-  const runCheck = useCallback(async () => {
+  const runCheck = useCallback(async (): Promise<UpdateCheckResult> => {
     if (!isTauri) {
       // Browser demo: nothing to update.
       setAvailable(false);
       setVersion(null);
       setNotes(null);
-      return;
+      return { status: "up-to-date" };
     }
     setChecking(true);
     setError(null);
@@ -65,13 +92,25 @@ export function useUpdate(): UpdateState {
         setAvailable(true);
         setVersion(update.version);
         setNotes(update.body ?? null);
-      } else {
+        return { status: "available", version: update.version, notes: update.body ?? null };
+      }
+      setAvailable(false);
+      setVersion(null);
+      setNotes(null);
+      return { status: "up-to-date" };
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      if (isNoUpdateManifestError(message)) {
+        // A platform-less/misconfigured manifest means "nothing to install",
+        // not a failure to report. Present it as up to date.
         setAvailable(false);
         setVersion(null);
         setNotes(null);
+        setError(null);
+        return { status: "up-to-date" };
       }
-    } catch (err: unknown) {
-      setError(getErrorMessage(err));
+      setError(message);
+      return { status: "error", message };
     } finally {
       setChecking(false);
     }

@@ -11,9 +11,18 @@ export function useGoogleConfig() {
   });
 }
 
+/** Every connected Google account (sourceId + email). */
+export function useGoogleAccounts() {
+  return useQuery({
+    queryKey: queryKeys.googleAccounts,
+    queryFn: () => ipc.googleListAccounts()
+  });
+}
+
 /** Connect/disconnect changes sources, tables, tokens, and audit history. */
 function invalidateGoogleState(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.googleConfig });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.googleAccounts });
   void queryClient.invalidateQueries({ queryKey: queryKeys.sources });
   void queryClient.invalidateQueries({ queryKey: queryKeys.tokenStatus });
   void queryClient.invalidateQueries({ queryKey: queryKeys.tablesRoot });
@@ -82,7 +91,7 @@ export function useGoogleDisconnect() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () => ipc.googleDisconnect(),
+    mutationFn: (sourceId: string) => ipc.googleDisconnect(sourceId),
     onError: (error: unknown) => {
       toast.error("Google Sheets disconnect failed", { description: getErrorMessage(error) });
     },

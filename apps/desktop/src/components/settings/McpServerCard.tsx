@@ -13,7 +13,14 @@ import {
   TooltipContent,
   TooltipTrigger
 } from "@sheet-port/ui";
-import { useMcpConfig, useSetMcpPort, useSetMcpTransport } from "../../hooks/useMcp.js";
+import { Loader2 } from "lucide-react";
+import {
+  useMcpConfig,
+  useSetMcpPort,
+  useSetMcpTransport,
+  useStartMcpServer,
+  useStopMcpServer
+} from "../../hooks/useMcp.js";
 import type { McpTransport } from "../../lib/ipc.js";
 import {
   MCP_PORT_MAX,
@@ -117,6 +124,53 @@ function PortField({ savedPort }: PortFieldProps) {
   );
 }
 
+/** Start/Stop control for the desktop-managed HTTP sidecar. Stdio clients
+ * spawn their own sidecar, so this only applies to the Local HTTP transport. */
+function ServerControl({ isRunning }: { isRunning: boolean }) {
+  const start = useStartMcpServer();
+  const stop = useStopMcpServer();
+  const isBusy = start.isPending || stop.isPending;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-edge pt-4">
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium text-ink">Server Process</p>
+        <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">
+          Runs the shared HTTP endpoint as a desktop-managed process.
+        </p>
+      </div>
+      {isRunning ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isBusy}
+          onClick={() => stop.mutate()}
+        >
+          {stop.isPending ? (
+            <>
+              <Loader2 size={14} aria-hidden className="animate-spin" />
+              Stopping...
+            </>
+          ) : (
+            "Stop"
+          )}
+        </Button>
+      ) : (
+        <Button size="sm" disabled={isBusy} onClick={() => start.mutate()}>
+          {start.isPending ? (
+            <>
+              <Loader2 size={14} aria-hidden className="animate-spin" />
+              Starting...
+            </>
+          ) : (
+            "Start"
+          )}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** MCP sidecar status plus transport/port controls. Changing either only takes
  * effect after the sidecar restarts, so the card says so explicitly. */
 export function McpServerCard() {
@@ -163,6 +217,16 @@ export function McpServerCard() {
             </div>
 
             {transport === "http" ? <PortField savedPort={port} /> : null}
+
+            {transport === "http" ? (
+              <ServerControl isRunning={isRunning} />
+            ) : (
+              <p className="border-t border-edge pt-4 text-[12px] leading-4 text-ink-muted">
+                Stdio clients launch the sidecar themselves, so there is nothing
+                to start here. Copy the launch command below into your client
+                config.
+              </p>
+            )}
 
             <div className="space-y-1.5 border-t border-edge pt-4">
               <p className="text-[12px] font-medium text-ink-muted">

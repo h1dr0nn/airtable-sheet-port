@@ -4,6 +4,7 @@ import { CommandPalette } from "./components/CommandPalette.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
+import { useFonts } from "./hooks/useFonts.js";
 import { useSidebarCollapsed } from "./hooks/useSidebarCollapsed.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useUpdate } from "./hooks/useUpdate.js";
@@ -30,6 +31,8 @@ export function App() {
   // Arms the theme store early so system-scheme changes apply app-wide,
   // even before the Settings screen is ever opened.
   useTheme();
+  // Applies the persisted font-size/family preferences to the document root.
+  useFonts();
   const [screen, setScreen] = useState<ScreenId>("dashboard");
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const { collapsed, toggle: toggleSidebar } = useSidebarCollapsed();
@@ -55,7 +58,7 @@ export function App() {
       <div className="flex min-h-0 flex-1">
         <Sidebar active={screen} onNavigate={setScreen} update={update} collapsed={collapsed} />
         <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-6xl px-8 py-8">
+          <div className="app-scale mx-auto max-w-6xl px-8 py-8">
             <AnimatedScreen screenKey={screen}>
               <ErrorBoundary resetKey={screen}>
                 <Screen onNavigate={setScreen} />

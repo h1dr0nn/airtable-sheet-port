@@ -9,6 +9,9 @@ import type {
 import type {
   AppSettings,
   AppStatus,
+  FontFamily,
+  FontScale,
+  GoogleAccount,
   GoogleConfig,
   GoogleConnectResult,
   IpcApi,
@@ -18,6 +21,7 @@ import type {
   McpTransport,
   PermissionRuleRow,
   SavePermissionRule,
+  SidecarStatus,
   TablePage,
   TokenStatus
 } from "./ipc.js";
@@ -71,6 +75,15 @@ const GOOGLE_SOURCE_ID = "google-sheets";
 const DEMO_GOOGLE_EMAIL = "demo.user@gmail.com";
 // Pre-filled so the Connect button is immediately clickable in the preview.
 const DEMO_GOOGLE_CLIENT_ID = "000000000000-demo.apps.googleusercontent.com";
+
+// Default UI font preferences; mirror core::db defaults (normal + modern).
+const DEFAULT_FONT_SCALE: FontScale = "normal";
+const DEFAULT_FONT_FAMILY: FontFamily = "modern";
+
+/** Builds the "google-sheets:{accountKey}" source id from an email address. */
+function sourceIdForEmail(email: string): string {
+  return `${GOOGLE_SOURCE_ID}:${email.toLowerCase()}`;
+}
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const delay = () => wait(DEMO_LATENCY_MS);
@@ -130,10 +143,20 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     options.googleClientId === undefined ? DEMO_GOOGLE_CLIENT_ID : options.googleClientId;
   // Mirrors the OS keychain: only presence is observable, never the value.
   let hasGoogleClientSecret = false;
-  let googleEmail: string | null = null;
+  // Connected accounts, keyed by source id. Starts empty like a fresh backend;
+  // each googleConnect adds one, googleDisconnect removes one by source id.
+  let googleAccounts: GoogleAccount[] = [];
+  // Rotates the fake email so a second connect models a distinct account.
+  let demoConnectCount = 0;
 
   // App-managed preference mirror; off by default, cleared on reset.
   let autoApproveWrites = false;
+  // UI font preferences; mirror the backend defaults, cleared on reset.
+  let fontScale: FontScale = DEFAULT_FONT_SCALE;
+  let fontFamily: FontFamily = DEFAULT_FONT_FAMILY;
+
+  // Desktop-managed HTTP sidecar: not running until mcp_server_start.
+  let managedSidecarPid: number | null = null;
 
   // MCP sidecar config mirror; the demo sidecar is treated as always running.
   let mcpTransport: McpTransport = DEFAULT_MCP_TRANSPORT;
@@ -170,7 +193,10 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     auditEvents = [...auditEvents, { ...event, id: makeAuditId(), timestamp: nowIso() }];
   };
 
-  const isGoogleConnected = () => googleEmail !== null;
+  const isGoogleConnected = () => googleAccounts.length > 0;
+  // The first connected account owns the demo tables/records so the Tables and
+  // Changes screens stay explorable regardless of which account was added.
+  const primarySourceId = () => googleAccounts[0]?.sourceId ?? null;
 
   const decideChange = (changeId: string, status: "approved" | "rejected"): PendingChange => {
     const existing = changes.find((change) => change.id === changeId);
@@ -317,9 +343,12 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       await delay();
       return {
         clientId: googleClientId,
-        connectedEmail: googleEmail,
         hasClientSecret: hasGoogleClientSecret
       };
+    },
+    async googleListAccounts(): Promise<GoogleAccount[]> {
+      await delay();
+      return googleAccounts.map((account) => ({ ...account }));
     },
     async setGoogleClientId(clientId: string): Promise<void> {
       await delay();
@@ -341,21 +370,31 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       // Stands in for the real browser consent round-trip.
       await wait(GOOGLE_CONNECT_DELAY_MS);
       const wasConnected = isGoogleConnected();
-      googleEmail = DEMO_GOOGLE_EMAIL;
-      sources = [
-        ...sources.filter((source) => source.id !== GOOGLE_SOURCE_ID),
-        {
-          id: GOOGLE_SOURCE_ID,
-          kind: "google_sheets",
-          name: `Google Sheets (${DEMO_GOOGLE_EMAIL})`,
-          status: "connected"
-        }
-      ];
+      // First account owns the demo tables under the bare source id (mirrors the
+      // legacy "default" account); later accounts get a distinct email + id.
+      const email = wasConnected
+        ? `demo.user+${demoConnectCount + 1}@gmail.com`
+        : DEMO_GOOGLE_EMAIL;
+      demoConnectCount += 1;
+      const sourceId = wasConnected ? sourceIdForEmail(email) : GOOGLE_SOURCE_ID;
+      // Re-linking the same account is idempotent, like the real backend.
+      if (!googleAccounts.some((account) => account.sourceId === sourceId)) {
+        googleAccounts = [...googleAccounts, { sourceId, email }];
+        sources = [
+          ...sources.filter((source) => source.id !== sourceId),
+          {
+            id: sourceId,
+            kind: "google_sheets",
+            name: `Google Sheets (${email})`,
+            status: "connected"
+          }
+        ];
+      }
       pushAudit({
         actor: "user",
         action: "google_connected",
-        sourceId: GOOGLE_SOURCE_ID,
-        metadata: { email: DEMO_GOOGLE_EMAIL }
+        sourceId,
+        metadata: { email }
       });
       if (!wasConnected && !changes.some((change) => change.sourceId === GOOGLE_SOURCE_ID)) {
         const seeded = buildSeededChange();
@@ -368,18 +407,19 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
           metadata: { changeId: seeded.id, records: 1 }
         });
       }
-      return { email: DEMO_GOOGLE_EMAIL };
+      return { email };
     },
-    async googleDisconnect(): Promise<void> {
+    async googleDisconnect(sourceId: string): Promise<void> {
       await delay();
-      // Idempotent, like core::google::disconnect.
-      googleEmail = null;
-      sources = sources.filter((source) => source.id !== GOOGLE_SOURCE_ID);
-      pushAudit({ actor: "user", action: "google_disconnected", sourceId: GOOGLE_SOURCE_ID });
+      // Idempotent, like core::google::disconnect: removing an absent account is
+      // a no-op rather than an error.
+      googleAccounts = googleAccounts.filter((account) => account.sourceId !== sourceId);
+      sources = sources.filter((source) => source.id !== sourceId);
+      pushAudit({ actor: "user", action: "google_disconnected", sourceId });
     },
     async getSettings(): Promise<AppSettings> {
       await delay();
-      return { autoApproveWrites };
+      return { autoApproveWrites, fontScale, fontFamily };
     },
     async setAutoApprove(enabled: boolean): Promise<void> {
       await delay();
@@ -390,20 +430,42 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         metadata: { key: "auto_approve_writes", enabled }
       });
     },
+    async setFontScale(scale: FontScale): Promise<void> {
+      await delay();
+      fontScale = scale;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "ui_font_scale", scale }
+      });
+    },
+    async setFontFamily(family: FontFamily): Promise<void> {
+      await delay();
+      fontFamily = family;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "ui_font_family", family }
+      });
+    },
     async resetSettings(): Promise<void> {
       await delay();
-      // Prefs-only: mirrors reset_settings deleting the auto-approve meta key.
+      // Prefs-only: mirrors reset_settings clearing the app-managed meta keys.
       autoApproveWrites = false;
+      fontScale = DEFAULT_FONT_SCALE;
+      fontFamily = DEFAULT_FONT_FAMILY;
       pushAudit({ actor: "user", action: "settings_reset" });
     },
     async getMcpConfig(): Promise<McpConfigView> {
       await delay();
-      // The demo sidecar is always "running"; boundPort is only meaningful for http.
+      // stdio: clients spawn the sidecar themselves, so it reads as running.
+      // http: only the desktop-managed child counts, toggled by start/stop.
+      const running = mcpTransport === "http" ? managedSidecarPid !== null : true;
       return {
         transport: mcpTransport,
         port: mcpPort,
-        running: true,
-        boundPort: mcpTransport === "http" ? mcpPort : null
+        running,
+        boundPort: mcpTransport === "http" && running ? mcpPort : null
       };
     },
     async setMcpTransport(transport: McpTransport): Promise<void> {
@@ -457,6 +519,34 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         client.state === "unconfigured" ? { ...client, state: "configured" } : client
       );
       pushAudit({ actor: "user", action: "mcp_clients_configured_all" });
+    },
+    async mcpServerStart(): Promise<SidecarStatus> {
+      await delay();
+      // Mirrors the backend guard: only one managed child may run at a time.
+      if (managedSidecarPid !== null) {
+        throw new Error("The MCP server is already running");
+      }
+      managedSidecarPid = DEMO_MCP_PID;
+      pushAudit({
+        actor: "user",
+        action: "mcp_server_started",
+        metadata: { pid: managedSidecarPid, port: mcpPort, transport: "http" }
+      });
+      return { running: true, pid: managedSidecarPid };
+    },
+    async mcpServerStop(): Promise<SidecarStatus> {
+      await delay();
+      // Idempotent, like the backend: stopping when nothing runs is fine.
+      const stoppedPid = managedSidecarPid;
+      managedSidecarPid = null;
+      if (stoppedPid !== null) {
+        pushAudit({
+          actor: "user",
+          action: "mcp_server_stopped",
+          metadata: { pid: stoppedPid }
+        });
+      }
+      return { running: false, pid: null };
     }
   };
 }

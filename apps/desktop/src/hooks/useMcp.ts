@@ -95,6 +95,42 @@ export function useUnregisterMcpClient() {
   });
 }
 
+/** Starts the desktop-managed HTTP sidecar, then refreshes the running state. */
+export function useStartMcpServer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => ipc.mcpServerStart(),
+    onError: (error: unknown) => {
+      toast.error("MCP server not started", { description: getErrorMessage(error) });
+    },
+    onSuccess: () => {
+      toast.success("MCP server started");
+    },
+    onSettled: () => {
+      invalidateMcpConfig(queryClient);
+    }
+  });
+}
+
+/** Stops the desktop-managed sidecar, then refreshes the running state. */
+export function useStopMcpServer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => ipc.mcpServerStop(),
+    onError: (error: unknown) => {
+      toast.error("MCP server not stopped", { description: getErrorMessage(error) });
+    },
+    onSuccess: () => {
+      toast.success("MCP server stopped");
+    },
+    onSettled: () => {
+      invalidateMcpConfig(queryClient);
+    }
+  });
+}
+
 export function useConfigureAllMcpClients() {
   const queryClient = useQueryClient();
 

@@ -11,7 +11,8 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::constants::{
     MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO,
-    META_MCP_PORT, META_MCP_TRANSPORT,
+    META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE,
+    UI_FONT_FAMILY_DEFAULT, UI_FONT_FAMILY_VALUES, UI_FONT_SCALE_DEFAULT, UI_FONT_SCALE_VALUES,
 };
 use crate::error::{db_error, CoreError};
 
@@ -171,6 +172,81 @@ pub fn delete_meta(conn: &Connection, key: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM meta WHERE key = ?1", [key])
         .map_err(|error| db_error("Could not delete meta value", error))?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Appearance preferences (docs/ipc.md "Settings"). Stored in `meta` so the
+// value survives restarts; the frontend applies the actual fonts. Both keys
+// are validated against a fixed allow-list so an unknown value can never be
+// persisted, and a missing key reads back as the documented default.
+// ---------------------------------------------------------------------------
+
+/// The stored UI font scale, or the default when the key is absent. An
+/// unexpected stored value also falls back to the default so the UI never gets
+/// an out-of-contract token.
+pub fn get_ui_font_scale(conn: &Connection) -> Result<String, CoreError> {
+    read_enum_meta(
+        conn,
+        META_UI_FONT_SCALE,
+        &UI_FONT_SCALE_VALUES,
+        UI_FONT_SCALE_DEFAULT,
+    )
+}
+
+/// Persists the UI font scale after validating it against the allow-list.
+pub fn set_ui_font_scale(conn: &Connection, value: &str) -> Result<(), CoreError> {
+    let validated = validate_enum(value, &UI_FONT_SCALE_VALUES, "ui_font_scale")?;
+    set_meta(conn, META_UI_FONT_SCALE, validated)
+}
+
+/// The stored UI font family, or the default when the key is absent.
+pub fn get_ui_font_family(conn: &Connection) -> Result<String, CoreError> {
+    read_enum_meta(
+        conn,
+        META_UI_FONT_FAMILY,
+        &UI_FONT_FAMILY_VALUES,
+        UI_FONT_FAMILY_DEFAULT,
+    )
+}
+
+/// Persists the UI font family after validating it against the allow-list.
+pub fn set_ui_font_family(conn: &Connection, value: &str) -> Result<(), CoreError> {
+    let validated = validate_enum(value, &UI_FONT_FAMILY_VALUES, "ui_font_family")?;
+    set_meta(conn, META_UI_FONT_FAMILY, validated)
+}
+
+/// Reads a meta value that must be one of `allowed`, returning `default` when
+/// the key is absent or holds an out-of-contract value.
+fn read_enum_meta(
+    conn: &Connection,
+    key: &str,
+    allowed: &[&str],
+    default: &str,
+) -> Result<String, CoreError> {
+    let stored = get_meta(conn, key)?;
+    Ok(match stored {
+        Some(value) if allowed.contains(&value.as_str()) => value,
+        _ => default.to_string(),
+    })
+}
+
+/// Validates a settings value against a fixed allow-list, echoing back the
+/// matching canonical `&'static str` (never the caller's owned string).
+fn validate_enum<'a>(
+    value: &str,
+    allowed: &'a [&'a str],
+    field: &str,
+) -> Result<&'a str, CoreError> {
+    allowed
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == value)
+        .ok_or_else(|| {
+            CoreError::InvalidInput(format!(
+                "{field} must be one of {}, got \"{value}\"",
+                allowed.join(", ")
+            ))
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +533,39 @@ INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALU
             get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"),
             Some("client-2".to_string())
         );
+    }
+
+    #[test]
+    fn ui_font_scale_defaults_and_round_trips_valid_values() {
+        let conn = test_support::open_temp_db();
+        assert_eq!(get_ui_font_scale(&conn).expect("default"), "normal");
+
+        set_ui_font_scale(&conn, "large").expect("set large");
+        assert_eq!(get_ui_font_scale(&conn).expect("get"), "large");
+        set_ui_font_scale(&conn, "small").expect("set small");
+        assert_eq!(get_ui_font_scale(&conn).expect("get"), "small");
+    }
+
+    #[test]
+    fn ui_font_scale_rejects_unknown_values_and_ignores_stored_junk() {
+        let conn = test_support::open_temp_db();
+        assert!(set_ui_font_scale(&conn, "huge").is_err());
+        // A value written outside the validated setter still reads back as the
+        // default so the UI never gets an out-of-contract token.
+        set_meta(&conn, META_UI_FONT_SCALE, "huge").expect("force junk");
+        assert_eq!(get_ui_font_scale(&conn).expect("get"), "normal");
+    }
+
+    #[test]
+    fn ui_font_family_defaults_and_round_trips_valid_values() {
+        let conn = test_support::open_temp_db();
+        assert_eq!(get_ui_font_family(&conn).expect("default"), "modern");
+
+        set_ui_font_family(&conn, "classic").expect("set classic");
+        assert_eq!(get_ui_font_family(&conn).expect("get"), "classic");
+        set_ui_font_family(&conn, "system").expect("set system");
+        assert_eq!(get_ui_font_family(&conn).expect("get"), "system");
+        assert!(set_ui_font_family(&conn, "comic-sans").is_err());
     }
 
     #[test]

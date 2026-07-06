@@ -38,14 +38,18 @@ export function CommandDialog({ open, onOpenChange, title, children }: CommandDi
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          style={{ zIndex: "var(--z-modal-overlay)" }}
-          className="fixed inset-0 bg-overlay/50 motion-safe:animate-fade-in"
+          // Covers below the titlebar only so the opaque bar stays clickable
+          // while the palette is open (see --titlebar-h / --z-titlebar).
+          style={{ zIndex: "var(--z-modal-overlay)", top: "var(--titlebar-h)" }}
+          className="fixed inset-x-0 bottom-0 bg-overlay/50 motion-safe:animate-fade-in"
         />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          style={{ zIndex: "var(--z-modal)" }}
+          // Floats near the top of the below-titlebar region; the extra offset
+          // keeps it clear of the bar instead of tucking under it.
+          style={{ zIndex: "var(--z-modal)", top: "calc(var(--titlebar-h) + 8vh)" }}
           className={cn(
-            "fixed left-1/2 top-[25vh] w-full max-w-xl -translate-x-1/2 overflow-hidden",
+            "fixed left-1/2 w-full max-w-xl -translate-x-1/2 overflow-hidden",
             "rounded-card border border-edge bg-raised p-0 shadow-pop",
             "focus:outline-none motion-safe:animate-scale-in"
           )}

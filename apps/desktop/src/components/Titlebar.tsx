@@ -205,14 +205,14 @@ export function Titlebar({
       data-tauri-drag-region
       // Positioned above the modal layer so the custom bar and its window
       // controls stay clickable while a dialog is open (see --z-titlebar).
-      // Transparent background so the modal overlay (which sits BELOW the
-      // titlebar) dims straight through the bar instead of leaving a bright
-      // opaque strip; the control buttons stay on top and clickable. Matches
-      // the adb-compass titlebar pattern.
+      // Opaque background: the modal overlay starts BELOW the titlebar
+      // (top: var(--titlebar-h)), so the bar is never dimmed and reads as a
+      // solid strip. flex-nowrap keeps the fixed h-10 height at any window
+      // width; the drag region below absorbs the shrink.
       style={{ zIndex: "var(--z-titlebar)" }}
-      className="relative flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-transparent"
+      className="relative flex h-10 shrink-0 select-none flex-nowrap items-stretch border-b border-edge bg-bg"
     >
-      <div className="flex h-full items-stretch">
+      <div className="flex h-full shrink-0 items-stretch whitespace-nowrap">
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -275,11 +275,16 @@ export function Titlebar({
         </Tooltip>
       </div>
 
+      {/* Draggable middle: flex-1 min-w-0 so it soaks up all remaining width and
+       * shrinks first, keeping the control clusters from wrapping to a second
+       * row at narrow window widths. */}
+      <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
+
       {/* Right cluster: activity button (always) then window controls (Tauri
        * only), with extra spacing so activity reads as its own control. The
        * relative wrapper anchors the right-aligned dropdown under the bell and
        * is treated as "inside" so toggling via the button never double-fires. */}
-      <div className="flex h-full items-stretch">
+      <div className="flex h-full shrink-0 items-stretch whitespace-nowrap">
         <div className={cn("relative flex h-full items-stretch", isTauri && CONTROL_CLUSTER_GAP)}>
           <Tooltip>
             <TooltipTrigger asChild>

@@ -12,8 +12,8 @@ use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
     HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
-    META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT, READ_LIMIT_DEFAULT,
-    READ_LIMIT_MAX, READ_LIMIT_MIN,
+    META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY,
+    META_UI_FONT_SCALE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
 use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
@@ -51,6 +51,16 @@ impl DbState {
 }
 
 type Db<'a> = State<'a, DbState>;
+
+/// The desktop-managed MCP sidecar child process (HTTP transport only). At most
+/// one child is tracked at a time: `Some` while running, `None` when stopped.
+/// stdio clients spawn their own sidecar and are never tracked here.
+#[derive(Default)]
+pub struct ManagedSidecar {
+    pub child: Arc<Mutex<Option<std::process::Child>>>,
+}
+
+type Sidecar<'a> = State<'a, ManagedSidecar>;
 
 fn lock_conn<'a>(state: &'a Db<'_>) -> Result<std::sync::MutexGuard<'a, Connection>, String> {
     state
@@ -198,8 +208,9 @@ pub fn list_audit_events(
 }
 
 #[tauri::command]
-pub fn token_status() -> Result<TokenStatus, String> {
-    Ok(vault::token_status())
+pub fn token_status(state: Db<'_>) -> Result<TokenStatus, String> {
+    let conn = lock_conn(&state)?;
+    vault::token_status(&conn).map_err(|error| error.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +225,10 @@ pub struct AppSettings {
     /// Auto-approve agent writes, bypassing the confirmation gate at commit
     /// time. Off (meta key absent or not "1") by default.
     pub auto_approve_writes: bool,
+    /// UI font scale: "small" | "normal" | "large" (default "normal").
+    pub font_scale: String,
+    /// UI font family: "classic" | "modern" | "system" (default "modern").
+    pub font_family: String,
 }
 
 const SETTINGS_UPDATED_ACTION: &str = "settings_updated";
@@ -226,9 +241,49 @@ pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
         .map_err(|error| error.to_string())?
         .as_deref()
         == Some(META_FLAG_ON);
+    let font_scale = db::get_ui_font_scale(&conn).map_err(|error| error.to_string())?;
+    let font_family = db::get_ui_font_family(&conn).map_err(|error| error.to_string())?;
     Ok(AppSettings {
         auto_approve_writes,
+        font_scale,
+        font_family,
     })
+}
+
+/// Sets the UI font scale ("small" | "normal" | "large"); rejects any other
+/// value. Audit event `settings_updated` with the persisted value.
+#[tauri::command]
+pub fn set_font_scale(state: Db<'_>, scale: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    db::set_ui_font_scale(&conn, &scale).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_UI_FONT_SCALE, "value": scale })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Sets the UI font family ("classic" | "modern" | "system"); rejects any other
+/// value. Audit event `settings_updated` with the persisted value.
+#[tauri::command]
+pub fn set_font_family(state: Db<'_>, family: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    db::set_ui_font_family(&conn, &family).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_UI_FONT_FAMILY, "value": family })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Enables or disables auto-approve. Enabling writes meta "1"; disabling
@@ -255,12 +310,15 @@ pub fn set_auto_approve(state: Db<'_>, enabled: bool) -> Result<(), String> {
 }
 
 /// Resets app-managed preferences to their defaults. Prefs-only: deletes the
-/// auto-approve key and does NOT touch Google tokens, the client id/secret,
-/// permission rules, sources, changes, or the audit log itself.
+/// auto-approve and appearance (font scale/family) keys and does NOT touch
+/// Google tokens, the client id/secret, permission rules, sources, changes, or
+/// the audit log itself.
 #[tauri::command]
 pub fn reset_settings(state: Db<'_>) -> Result<(), String> {
     let conn = lock_conn(&state)?;
     db::delete_meta(&conn, META_AUTO_APPROVE_WRITES).map_err(|error| error.to_string())?;
+    db::delete_meta(&conn, META_UI_FONT_SCALE).map_err(|error| error.to_string())?;
+    db::delete_meta(&conn, META_UI_FONT_FAMILY).map_err(|error| error.to_string())?;
     audit::record(
         &conn,
         AuditActor::User,
@@ -543,14 +601,148 @@ pub fn mcp_configure_all(state: Db<'_>) -> Result<Vec<ConfigureResult>, String> 
 }
 
 // ---------------------------------------------------------------------------
+// Desktop-managed MCP sidecar process control (HTTP transport).
+// stdio clients spawn their own sidecar, so only HTTP is managed here. The env
+// overrides force the child onto HTTP + the configured port regardless of the
+// stored meta transport (which the child would otherwise read at startup).
+// ---------------------------------------------------------------------------
+
+/// Env var the sidecar reads to force its transport (mirrors the private const
+/// in `crates/sheet-port-mcp/src/main.rs`). Kept in sync via docs/ipc.md.
+const ENV_MCP_TRANSPORT: &str = "SHEET_PORT_MCP_TRANSPORT";
+/// Env var the sidecar reads to force its HTTP port.
+const ENV_MCP_PORT: &str = "SHEET_PORT_MCP_PORT";
+
+const MCP_SERVER_STARTED_ACTION: &str = "mcp_server_started";
+const MCP_SERVER_STOPPED_ACTION: &str = "mcp_server_stopped";
+
+/// The result of a start/stop request: whether a managed child is running now
+/// and its PID when one is.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarStatus {
+    pub running: bool,
+    pub pid: Option<u32>,
+}
+
+/// Starts the sidecar as a desktop-managed child on the HTTP transport, bound
+/// to the configured port. No-op error when a managed child is already running
+/// (only one is allowed). The resolved binary must exist; a missing release
+/// build is a clear error rather than a silent failure.
+#[tauri::command]
+pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarStatus, String> {
+    let mut guard = sidecar
+        .child
+        .lock()
+        .map_err(|_| "Managed sidecar state is unavailable (poisoned lock)".to_string())?;
+
+    // Reap an already-exited child so a crashed process is not mistaken for a
+    // running one, then guard against a genuinely live child.
+    if let Some(existing) = guard.as_mut() {
+        match existing.try_wait() {
+            Ok(Some(_)) => {
+                *guard = None;
+            }
+            Ok(None) => {
+                return Err("The MCP server is already running".to_string());
+            }
+            Err(error) => {
+                return Err(format!("Could not check the MCP server state: {error}"));
+            }
+        }
+    }
+
+    let port = {
+        let conn = lock_conn(&state)?;
+        db::get_mcp_config(&conn)
+            .map_err(|error| error.to_string())?
+            .port
+    };
+
+    let bin = resolve_sidecar_bin();
+    if !bin.exists() {
+        return Err(format!(
+            "The MCP server binary was not found at {}. Build the release sidecar first",
+            bin.display()
+        ));
+    }
+
+    let child = std::process::Command::new(&bin)
+        .env(ENV_MCP_TRANSPORT, MCP_TRANSPORT_HTTP)
+        .env(ENV_MCP_PORT, port.to_string())
+        .spawn()
+        .map_err(|error| format!("Could not start the MCP server: {error}"))?;
+    let pid = child.id();
+    *guard = Some(child);
+
+    // Audit outside the child lock is fine; the DB lock is independent.
+    {
+        let conn = lock_conn(&state)?;
+        audit::record(
+            &conn,
+            AuditActor::User,
+            MCP_SERVER_STARTED_ACTION,
+            None,
+            None,
+            Some(&json!({ "pid": pid, "port": port, "transport": MCP_TRANSPORT_HTTP })),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(SidecarStatus {
+        running: true,
+        pid: Some(pid),
+    })
+}
+
+/// Stops the desktop-managed sidecar child if one is running. Idempotent: no
+/// managed child is not an error (the UI can call it safely).
+#[tauri::command]
+pub fn mcp_server_stop(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarStatus, String> {
+    let mut guard = sidecar
+        .child
+        .lock()
+        .map_err(|_| "Managed sidecar state is unavailable (poisoned lock)".to_string())?;
+
+    let stopped_pid = match guard.take() {
+        Some(mut child) => {
+            let pid = child.id();
+            // Best-effort terminate + reap so the OS process does not linger.
+            let _ = child.kill();
+            let _ = child.wait();
+            Some(pid)
+        }
+        None => None,
+    };
+
+    if let Some(pid) = stopped_pid {
+        let conn = lock_conn(&state)?;
+        audit::record(
+            &conn,
+            AuditActor::User,
+            MCP_SERVER_STOPPED_ACTION,
+            None,
+            None,
+            Some(&json!({ "pid": pid })),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(SidecarStatus {
+        running: false,
+        pid: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Google account linking (docs/ipc.md "Google Sheets account" section)
 // ---------------------------------------------------------------------------
 
+/// Shared, single-OAuth-app Google configuration. Connected accounts are NOT
+/// here; the UI reads them from `google_list_accounts` so it can show the full
+/// multi-account list.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleConfig {
     pub client_id: Option<String>,
-    pub connected_email: Option<String>,
     /// The secret itself never crosses IPC; the UI only needs presence.
     pub has_client_secret: bool,
 }
@@ -560,30 +752,22 @@ pub struct GoogleConnectResult {
     pub email: String,
 }
 
-/// "Google Sheets (user@example.com)" -> "user@example.com"; any other
-/// shape falls back to the raw source name so the UI still shows something.
-fn email_from_source_name(name: &str) -> String {
-    name.rfind('(')
-        .and_then(|start| name[start + 1..].strip_suffix(')'))
-        .map(str::to_string)
-        .unwrap_or_else(|| name.to_string())
-}
-
 #[tauri::command]
 pub fn get_google_config(state: Db<'_>) -> Result<GoogleConfig, String> {
     let conn = lock_conn(&state)?;
     let client_id =
         db::get_meta(&conn, META_GOOGLE_CLIENT_ID).map_err(|error| error.to_string())?;
-    let connected_email = sources::list(&conn)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .find(|source| source.id == google::GOOGLE_SOURCE_ID)
-        .map(|source| email_from_source_name(&source.name));
     Ok(GoogleConfig {
         client_id,
-        connected_email,
         has_client_secret: google::has_client_secret().unwrap_or(false),
     })
+}
+
+/// Every connected Google account (sourceId + email), ordered by source id.
+#[tauri::command]
+pub fn google_list_accounts(state: Db<'_>) -> Result<Vec<google::GoogleAccount>, String> {
+    let conn = lock_conn(&state)?;
+    google::list_accounts(&conn).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -641,7 +825,7 @@ pub async fn google_connect(state: Db<'_>) -> Result<GoogleConnectResult, String
             &conn,
             AuditActor::User,
             "google_connected",
-            Some(google::GOOGLE_SOURCE_ID),
+            Some(&google::source_id_for_email(&email)),
             None,
             Some(&json!({ "email": email })),
         )
@@ -670,15 +854,17 @@ pub fn set_google_client_secret(state: Db<'_>, client_secret: String) -> Result<
     Ok(())
 }
 
+/// Removes one connected Google account by its "google-sheets:{accountKey}"
+/// source id (its keychain credential + source row). Idempotent.
 #[tauri::command]
-pub fn google_disconnect(state: Db<'_>) -> Result<(), String> {
+pub fn google_disconnect(state: Db<'_>, source_id: String) -> Result<(), String> {
     let conn = lock_conn(&state)?;
-    google::disconnect(&conn).map_err(|error| error.to_string())?;
+    google::disconnect(&conn, &source_id).map_err(|error| error.to_string())?;
     audit::record(
         &conn,
         AuditActor::User,
         "google_disconnected",
-        Some(google::GOOGLE_SOURCE_ID),
+        Some(&source_id),
         None,
         None,
     )

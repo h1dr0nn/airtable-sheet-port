@@ -74,22 +74,26 @@ impl TableConnector for GoogleSheetsConnector {
         SourceKind::GoogleSheets
     }
 
-    /// The `google-sheets` source row, only while a token is present in the
-    /// OS keychain. No network call: presence is a local check.
+    /// One row per connected Google account. No network call: the connected
+    /// accounts are the keyed "google-sheets:{accountKey}" source rows, kept in
+    /// lockstep with the keychain by the connect/disconnect flow.
     fn list_sources(&self, conn: &Connection) -> Result<Vec<DataSource>, CoreError> {
-        if !google::has_token() {
-            return Ok(Vec::new());
-        }
+        let connected: std::collections::HashSet<String> = google::list_accounts(conn)?
+            .into_iter()
+            .map(|account| account.source_id)
+            .collect();
         Ok(sources::list(conn)?
             .into_iter()
-            .filter(|source| source.kind == SourceKind::GoogleSheets)
+            .filter(|source| {
+                source.kind == SourceKind::GoogleSheets && connected.contains(&source.id)
+            })
             .collect())
     }
 
     /// Spreadsheets visible to the account via Drive `files.list`; each file
     /// is exposed as one table (its first visible sheet).
     fn list_tables(&self, conn: &Connection, source_id: &str) -> Result<Vec<TableRef>, CoreError> {
-        let token = google::access_token(conn)?;
+        let token = google::access_token(conn, source_id)?;
         let query = format!("mimeType='{SPREADSHEET_MIME_TYPE}' and trashed=false");
         let url = url::Url::parse_with_params(
             DRIVE_FILES_ENDPOINT,
@@ -128,7 +132,7 @@ impl TableConnector for GoogleSheetsConnector {
         source_id: &str,
         table_id: &str,
     ) -> Result<TableSchema, CoreError> {
-        let token = google::access_token(conn)?;
+        let token = google::access_token(conn, source_id)?;
         let title = fetch_spreadsheet_title(&token, table_id)?;
         let rows = fetch_values(
             &token,
@@ -148,11 +152,11 @@ impl TableConnector for GoogleSheetsConnector {
     fn read_table(
         &self,
         conn: &Connection,
-        _source_id: &str,
+        source_id: &str,
         table_id: &str,
         options: ReadOptions,
     ) -> Result<Vec<TableRecord>, CoreError> {
-        let token = google::access_token(conn)?;
+        let token = google::access_token(conn, source_id)?;
         let header = self.fetch_header(&token, table_id)?;
         if header.is_empty() {
             return Ok(Vec::new());
@@ -198,14 +202,14 @@ impl TableConnector for GoogleSheetsConnector {
     fn append_records(
         &self,
         conn: &Connection,
-        _source_id: &str,
+        source_id: &str,
         table_id: &str,
         records: &[JsonMap],
     ) -> Result<Vec<TableRecord>, CoreError> {
         if records.is_empty() {
             return Ok(Vec::new());
         }
-        let token = google::access_token(conn)?;
+        let token = google::access_token(conn, source_id)?;
         let header = self.fetch_header(&token, table_id)?;
         if header.is_empty() {
             return Err(CoreError::InvalidInput(format!(
@@ -246,14 +250,14 @@ impl TableConnector for GoogleSheetsConnector {
     fn update_records(
         &self,
         conn: &Connection,
-        _source_id: &str,
+        source_id: &str,
         table_id: &str,
         patches: &[RecordPatch],
     ) -> Result<Vec<TableRecord>, CoreError> {
         if patches.is_empty() {
             return Ok(Vec::new());
         }
-        let token = google::access_token(conn)?;
+        let token = google::access_token(conn, source_id)?;
         let header = self.fetch_header(&token, table_id)?;
         if header.is_empty() {
             return Err(CoreError::InvalidInput(format!(

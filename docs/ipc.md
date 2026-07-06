@@ -118,12 +118,16 @@ Newest first. Default limit 100, max 500.
 
 ```ts
 type TokenStatus = {
-  googleSheets: boolean; // OS keychain entry exists (service "sheet-port", user "google_sheets")
-  provider: boolean;     // ... user "provider"
+  googleSheets: boolean; // at least one Google account is connected (a keyed
+                         // 'google-sheets:{accountKey}' source row exists)
+  provider: boolean;     // OS keychain entry exists (service "sheet-port", user "provider")
 };
 ```
 
-Keyring stub only; no tokens are ever returned to the frontend or agents.
+`googleSheets` reflects whether any Google account is connected. The OS keychain
+cannot be enumerated, so account presence is derived from the `sources` table,
+which the connect/disconnect flow keeps in lockstep with the keychain entries.
+No tokens are ever returned to the frontend or agents.
 
 ## Settings (app-managed preferences)
 
@@ -135,9 +139,14 @@ this contract and are not reset by `reset_settings`.
 
 ```ts
 type AppSettings = {
-  autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1'
+  autoApproveWrites: boolean;                 // meta key 'auto_approve_writes' === '1'
+  fontScale: "small" | "normal" | "large";    // meta key 'ui_font_scale', default 'normal'
+  fontFamily: "classic" | "modern" | "system"; // meta key 'ui_font_family', default 'modern'
 };
 ```
+
+`fontScale` / `fontFamily` are appearance preferences the frontend applies to
+the UI. Absent (or out-of-contract) meta values read back as their defaults.
 
 ### `set_auto_approve(enabled: boolean) -> void`
 
@@ -147,12 +156,25 @@ it reads back as the absent default. When on, the commit path treats a
 confirmation gate (see `docs/security.md`). Audit event (`actor='user'`,
 `action='settings_updated'`, metadata `{key:'auto_approve_writes', enabled}`).
 
+### `set_font_scale(scale: "small" | "normal" | "large") -> void`
+
+Persists `ui_font_scale`. Rejects any other value with a clear error. Audit
+event (`actor='user'`, `action='settings_updated'`, metadata
+`{key:'ui_font_scale', value}`).
+
+### `set_font_family(family: "classic" | "modern" | "system") -> void`
+
+Persists `ui_font_family`. Rejects any other value. Audit event
+(`actor='user'`, `action='settings_updated'`, metadata
+`{key:'ui_font_family', value}`).
+
 ### `reset_settings() -> void`
 
 Resets app-managed preferences to their defaults: deletes the
-`auto_approve_writes` meta key. Prefs-only - does NOT touch Google tokens, the
-client id/secret, permission rules, sources, pending changes, or the audit log.
-Audit event (`actor='user'`, `action='settings_reset'`).
+`auto_approve_writes`, `ui_font_scale`, and `ui_font_family` meta keys.
+Prefs-only - does NOT touch Google tokens, the client id/secret, permission
+rules, sources, pending changes, or the audit log. Audit event
+(`actor='user'`, `action='settings_reset'`).
 
 ## MCP transport
 
@@ -189,17 +211,80 @@ Persists `mcp_port` after validating `1024 <= port <= 65535`; out-of-range value
 are rejected with a clear error. Audit event (`actor='user'`,
 `action='settings_updated'`, metadata `{key:'mcp_port', port}`).
 
-## Google Sheets account
+## MCP server process control (HTTP transport)
+
+For the HTTP transport the desktop app can manage the sidecar as a child
+process. For the stdio transport there is nothing to start: the agent's MCP
+client spawns the sidecar itself, so these commands are HTTP-only.
+
+The child is spawned from the resolved `sheet-port-mcp` binary with the
+environment overrides `SHEET_PORT_MCP_TRANSPORT=http` and
+`SHEET_PORT_MCP_PORT={configured port}`, forcing it onto HTTP + the configured
+port regardless of the stored `mcp_transport`. Exactly one managed child is
+tracked at a time. On app exit the child is killed so no orphan sidecar lingers.
+The heartbeat that `get_mcp_config` reports (`running`/`boundPort`) reflects any
+fresh sidecar, including one started this way.
+
+### `mcp_server_start() -> SidecarStatus`
+
+```ts
+type SidecarStatus = {
+  running: boolean;
+  pid: number | null;
+};
+```
+
+Spawns the managed sidecar child on the HTTP transport bound to the configured
+port. Starting when a managed child is already running is a clear error (only
+one is allowed); an already-exited previous child is reaped first. Errors when
+the resolved binary does not exist yet (build the release sidecar first). Audit
+event (`actor='user'`, `action='mcp_server_started'`, metadata
+`{pid, port, transport:'http'}`).
+
+### `mcp_server_stop() -> SidecarStatus`
+
+Kills the managed sidecar child if one is running. Idempotent: no managed child
+is not an error. Audit event (`actor='user'`, `action='mcp_server_stopped'`,
+metadata `{pid}`) is written only when a child was actually stopped.
+
+## Google Sheets account (multi-account)
+
+Multiple Google accounts can be connected at once. Each connected account is
+its own source row with id `google-sheets:{accountKey}` (accountKey = the
+sanitized email), kind `google_sheets`, name `Google Sheets ({email})`, plus
+its own OS keychain entry `google_sheets:{accountKey}` holding that account's
+tokens. The OAuth client id (`meta.google_client_id`) and client secret
+(keychain `google_client_secret`) are SHARED across all accounts - there is a
+single OAuth app.
+
+Backward compatibility: on startup, a pre-multi-account single connection (bare
+`google-sheets` source row + legacy `google_sheets` keychain entry) is migrated
+into the keyed scheme (accountKey derived from the stored email, or `default`).
+The migration is idempotent and best-effort.
 
 ### `get_google_config() -> GoogleConfig`
 
 ```ts
 type GoogleConfig = {
-  clientId: string | null;       // meta key 'google_client_id'
-  connectedEmail: string | null; // parsed from the 'google-sheets' sources row name,
-                                 // null when the row is absent
+  clientId: string | null;   // meta key 'google_client_id' (shared)
+  hasClientSecret: boolean;  // keychain 'google_client_secret' present (shared)
 };
 ```
+
+Shared config only. The connected accounts are read separately from
+`google_list_accounts` so the UI can render the full list.
+
+### `google_list_accounts() -> GoogleAccount[]`
+
+```ts
+type GoogleAccount = {
+  sourceId: string; // 'google-sheets:{accountKey}'
+  email: string;
+};
+```
+
+Every connected Google account, ordered by source id. Derived from the keyed
+`google_sheets` source rows.
 
 ### `set_google_client_id(clientId: string) -> void`
 
@@ -208,21 +293,32 @@ Empty -> `Err("Google client ID must not be empty")`. Audit event
 (`actor='user'`, `action='settings_updated'`, metadata `{key}` only - the id
 value is never audited).
 
+### `set_google_client_secret(clientSecret: string) -> void`
+
+Stores the shared OAuth client secret in the OS keychain (empty clears it).
+Audit event (`actor='user'`, `action='settings_updated'`, metadata
+`{key:'google_client_secret'}`).
+
 ### `google_connect() -> { email: string }`
 
-Runs the full interactive OAuth flow (system browser consent + loopback
+Connects a NEW account (or updates an existing one when the same email is used
+again). Runs the full interactive OAuth flow (system browser consent + loopback
 redirect + PKCE token exchange) using the stored client id; missing id ->
 `Err("Google client ID is not configured. Set it in the desktop app settings")`.
-Blocks until the user finishes or the flow times out, so it is an async
-command executed on a blocking task with its OWN SQLite connection (the
-shared one stays free for status polling). On success the token lands in the
-OS keychain, the `google-sheets` sources row is upserted, and an audit event
-`google_connected` (actor user, metadata `{email}`) is written.
+Blocks until the user finishes or the flow times out, so it is an async command
+executed on a blocking task with its OWN SQLite connection (the shared one stays
+free for status polling). On success the account key is derived from the
+signed-in email, that account's tokens land in the OS keychain, its
+`google-sheets:{accountKey}` sources row is upserted, and an audit event
+`google_connected` (actor user, source = the account's source id, metadata
+`{email}`) is written.
 
-### `google_disconnect() -> void`
+### `google_disconnect(sourceId: string) -> void`
 
-Deletes the keychain credential and the `google-sheets` sources row
-(idempotent). Audit event `google_disconnected` (actor user).
+Removes ONE account: its keychain credential and its
+`google-sheets:{accountKey}` sources row (idempotent). Rejects a `sourceId`
+that is not a keyed Google account. Audit event `google_disconnected` (actor
+user, source = `sourceId`).
 
 ## Confirmation enforcement (cross-process)
 

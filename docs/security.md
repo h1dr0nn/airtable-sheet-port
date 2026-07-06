@@ -93,13 +93,23 @@ cannot be used to exfiltrate table contents through previews.
 
 ## Token Handling
 
-- Secrets live in the OS keychain under service `sheet-port` (users `google_sheets` and
-  `provider`), accessed through the `keyring` crate. The current implementation is a
-  stub: no flow writes tokens yet.
-- The `token_status` Tauri command returns only booleans (entry exists / does not
-  exist). Secrets never cross Tauri IPC and are never exposed to agents or the frontend.
+- Secrets live in the OS keychain under service `sheet-port`, accessed through the
+  `keyring` crate. Google accounts are multi-tenant: each connected account stores its
+  tokens under user `google_sheets:{accountKey}` (accountKey = the sanitized email), and
+  the shared, single-OAuth-app client secret lives under user `google_client_secret`.
+  The `provider` connector reserves user `provider`.
+- Raw tokens never leave the `google` module. Connectors obtain a short-lived access
+  token per account via the crate-private `google::access_token(conn, sourceId)`, which
+  refreshes through that account's own refresh token when expired.
+- The `token_status` Tauri command returns only booleans; `googleSheets` reflects
+  whether any account is connected (derived from the keyed source rows, since the
+  keychain cannot be enumerated). Secrets never cross Tauri IPC and are never exposed to
+  agents or the frontend.
 - Keychain errors are logged to stderr and reported as "absent" rather than leaking
   error details to the UI.
+- Backward compatibility: a pre-multi-account single connection is migrated into the
+  keyed scheme once on startup (idempotent, best-effort); the legacy `google_sheets`
+  keychain entry is cleared after the tokens move to their keyed entry.
 
 If agents received provider credentials they could bypass policy, audit, preview, and
 confirmation entirely. Keeping tokens behind the local broker means every action can be
@@ -137,6 +147,11 @@ When enabled it binds STRICTLY to `127.0.0.1:{port}` and is never exposed extern
   rather than falling back to an unexpected address.
 - stdio remains the default and needs no port. Switching transports requires a sidecar
   restart to take effect.
+- For the HTTP transport the desktop app can manage the sidecar as a child process
+  (`mcp_server_start` / `mcp_server_stop`, see `docs/ipc.md`): it spawns the resolved
+  `sheet-port-mcp` binary with `SHEET_PORT_MCP_TRANSPORT=http` and the configured port,
+  tracks a single child, and kills it on app exit so no orphan server lingers. stdio
+  clients spawn their own sidecar and are never managed this way.
 
 The same permission checks, preview -> approve -> commit enforcement, audit logging, and
 heartbeat apply identically on both transports - only the wire transport differs, not the
@@ -184,10 +199,10 @@ survive restarts of either process.
 
 ## Current Limitations
 
-- No real OAuth yet: the keyring integration is a stub and no connector consumes tokens.
 - No delete flow: delete changes are typed but rejected by the commit path.
-- Only the mock connector is functional; the Google Sheets and provider connectors are
-  stubs.
+- The provider connector is still a stub; the Google Sheets and mock connectors are
+  functional.
 - The SQLite database is unencrypted at rest; any local process running as the same OS
   user can read or modify it (including permission rules and pending changes).
-- The desktop app does not manage the sidecar lifecycle; agents' MCP clients spawn it.
+- For the stdio transport the desktop app does not manage the sidecar lifecycle; the
+  agent's MCP client spawns it. Only the optional HTTP sidecar can be desktop-managed.

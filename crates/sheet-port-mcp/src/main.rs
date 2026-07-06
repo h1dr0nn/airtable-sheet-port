@@ -51,6 +51,11 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (conn, db_path) = db::open_default()?;
+    // One-time migration of a pre-multi-account Google connection into the
+    // keyed scheme. Best-effort: a keychain hiccup must not block serving.
+    if let Err(error) = sheet_port_core::google::migrate_legacy_account(&conn) {
+        log(&format!("Google account migration failed: {error}"));
+    }
     let state = Arc::new(BrokerState::new(conn));
     // i64 matches the mcp_heartbeat.pid column affinity.
     let pid = i64::from(std::process::id());

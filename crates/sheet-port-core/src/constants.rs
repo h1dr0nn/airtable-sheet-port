@@ -45,6 +45,38 @@ pub const META_AUTO_APPROVE_WRITES: &str = "auto_approve_writes";
 /// Meta value that turns a boolean opt-in setting on.
 pub const META_FLAG_ON: &str = "1";
 
+/// Meta key for the UI font scale appearance preference. Absent means the
+/// default ("normal"). See docs/ipc.md "Settings".
+pub const META_UI_FONT_SCALE: &str = "ui_font_scale";
+
+/// Allowed `ui_font_scale` values; the first is the default when the key is
+/// absent or invalid.
+pub const UI_FONT_SCALE_SMALL: &str = "small";
+pub const UI_FONT_SCALE_NORMAL: &str = "normal";
+pub const UI_FONT_SCALE_LARGE: &str = "large";
+pub const UI_FONT_SCALE_VALUES: [&str; 3] = [
+    UI_FONT_SCALE_NORMAL,
+    UI_FONT_SCALE_SMALL,
+    UI_FONT_SCALE_LARGE,
+];
+pub const UI_FONT_SCALE_DEFAULT: &str = UI_FONT_SCALE_NORMAL;
+
+/// Meta key for the UI font family appearance preference. Absent means the
+/// default ("modern"). See docs/ipc.md "Settings".
+pub const META_UI_FONT_FAMILY: &str = "ui_font_family";
+
+/// Allowed `ui_font_family` values; the first is the default when the key is
+/// absent or invalid.
+pub const UI_FONT_FAMILY_CLASSIC: &str = "classic";
+pub const UI_FONT_FAMILY_MODERN: &str = "modern";
+pub const UI_FONT_FAMILY_SYSTEM: &str = "system";
+pub const UI_FONT_FAMILY_VALUES: [&str; 3] = [
+    UI_FONT_FAMILY_MODERN,
+    UI_FONT_FAMILY_CLASSIC,
+    UI_FONT_FAMILY_SYSTEM,
+];
+pub const UI_FONT_FAMILY_DEFAULT: &str = UI_FONT_FAMILY_MODERN;
+
 /// Meta key selecting the MCP sidecar transport. Absent or "stdio" keeps the
 /// default stdio transport; "http" serves the same tools over a loopback HTTP
 /// endpoint. See docs/architecture.md and docs/security.md.

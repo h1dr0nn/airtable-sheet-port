@@ -1,7 +1,9 @@
-//! Keyring-backed Google token storage. One JSON credential
-//! `{accessToken, refreshToken, expiresAt}` lives under service "sheet-port",
-//! user "google_sheets" (the same entry `vault::token_status` reports on).
-//! Raw tokens never leave the google module.
+//! Keyring-backed Google token storage, keyed per connected account. Each
+//! account's JSON credential `{accessToken, refreshToken, expiresAt}` lives
+//! under service "sheet-port", user "google_sheets:{accountKey}" (the entry
+//! `vault::entry_exists` reports on). The shared, single-OAuth-app client
+//! secret stays under user "google_client_secret". Raw tokens never leave the
+//! google module.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +16,9 @@ use crate::vault::{
 /// Refresh this long before the actual expiry so in-flight requests never
 /// race the deadline.
 const EXPIRY_MARGIN_MS: i64 = 60_000;
+
+/// Separator between the keyring user prefix and an account key.
+pub(crate) const ACCOUNT_KEY_SEPARATOR: char = ':';
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,26 +45,32 @@ pub(crate) fn expiry_from_now(expires_in_secs: i64) -> String {
     db::iso_after(expires_in_secs.saturating_mul(1000))
 }
 
-fn entry() -> Result<keyring::Entry, CoreError> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER_GOOGLE_SHEETS).map_err(|error| {
+/// The keyring user name that stores one account's tokens:
+/// "google_sheets:{accountKey}".
+pub(crate) fn keyring_user_for(account_key: &str) -> String {
+    format!("{KEYRING_USER_GOOGLE_SHEETS}{ACCOUNT_KEY_SEPARATOR}{account_key}")
+}
+
+fn entry(account_key: &str) -> Result<keyring::Entry, CoreError> {
+    keyring::Entry::new(KEYRING_SERVICE, &keyring_user_for(account_key)).map_err(|error| {
         CoreError::Storage(format!(
             "Could not open the OS keychain entry for Google Sheets: {error}"
         ))
     })
 }
 
-pub(crate) fn save(tokens: &TokenSet) -> Result<(), CoreError> {
+pub(crate) fn save(account_key: &str, tokens: &TokenSet) -> Result<(), CoreError> {
     let json = serde_json::to_string(tokens)
         .map_err(|error| CoreError::Storage(format!("Could not encode Google tokens: {error}")))?;
-    entry()?.set_password(&json).map_err(|error| {
+    entry(account_key)?.set_password(&json).map_err(|error| {
         CoreError::Storage(format!(
             "Could not store Google tokens in the OS keychain: {error}"
         ))
     })
 }
 
-pub(crate) fn load() -> Result<Option<TokenSet>, CoreError> {
-    match entry()?.get_password() {
+pub(crate) fn load(account_key: &str) -> Result<Option<TokenSet>, CoreError> {
+    match entry(account_key)?.get_password() {
         Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|error| {
             CoreError::Storage(format!(
                 "Stored Google token entry is not valid JSON: {error}"
@@ -72,19 +83,15 @@ pub(crate) fn load() -> Result<Option<TokenSet>, CoreError> {
     }
 }
 
-/// Removes the stored credential; a missing entry is not an error so
+/// Removes one account's stored credential; a missing entry is not an error so
 /// disconnect stays idempotent.
-pub(crate) fn delete() -> Result<(), CoreError> {
-    match entry()?.delete_credential() {
+pub(crate) fn delete(account_key: &str) -> Result<(), CoreError> {
+    match entry(account_key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(CoreError::Storage(format!(
             "Could not delete Google tokens from the OS keychain: {error}"
         ))),
     }
-}
-
-pub(crate) fn has_token() -> bool {
-    crate::vault::entry_exists(KEYRING_USER_GOOGLE_SHEETS)
 }
 
 fn secret_entry() -> Result<keyring::Entry, CoreError> {
@@ -96,7 +103,8 @@ fn secret_entry() -> Result<keyring::Entry, CoreError> {
 }
 
 /// Google requires the (non-confidential) desktop client secret on token
-/// exchange; it still lives in the keychain rather than the database.
+/// exchange; it still lives in the keychain rather than the database. It is
+/// shared across all accounts because there is a single OAuth app.
 pub(crate) fn save_client_secret(secret: &str) -> Result<(), CoreError> {
     secret_entry()?.set_password(secret).map_err(|error| {
         CoreError::Storage(format!(
@@ -120,6 +128,56 @@ pub(crate) fn delete_client_secret() -> Result<(), CoreError> {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(CoreError::Storage(format!(
             "Could not delete the Google client secret from the OS keychain: {error}"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy single-account entry (pre multi-account). Used only by the one-time
+// startup migration in the parent module. The old scheme stored a single
+// credential under user "google_sheets" (no account key suffix).
+// ---------------------------------------------------------------------------
+
+fn legacy_entry() -> Result<keyring::Entry, CoreError> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER_GOOGLE_SHEETS).map_err(|error| {
+        CoreError::Storage(format!(
+            "Could not open the legacy Google Sheets keychain entry: {error}"
+        ))
+    })
+}
+
+/// Reads the legacy single-account token, if one exists.
+pub(crate) fn load_legacy() -> Result<Option<TokenSet>, CoreError> {
+    match legacy_entry()?.get_password() {
+        Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|error| {
+            CoreError::Storage(format!(
+                "Legacy Google token entry is not valid JSON: {error}"
+            ))
+        }),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(CoreError::Storage(format!(
+            "Could not read the legacy Google tokens from the OS keychain: {error}"
+        ))),
+    }
+}
+
+/// Writes the legacy single-account credential. Test-only: production code
+/// never creates the legacy entry, but migration tests need to arrange one.
+#[cfg(test)]
+pub(crate) fn save_legacy_for_test(tokens: &TokenSet) {
+    let json = serde_json::to_string(tokens).expect("encode legacy tokens");
+    legacy_entry()
+        .expect("legacy entry")
+        .set_password(&json)
+        .expect("write legacy tokens");
+}
+
+/// Removes the legacy credential once migrated; idempotent.
+pub(crate) fn delete_legacy() -> Result<(), CoreError> {
+    match legacy_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(CoreError::Storage(format!(
+            "Could not delete the legacy Google tokens from the OS keychain: {error}"
         ))),
     }
 }
@@ -160,6 +218,15 @@ mod tests {
         let parsed: TokenSet = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.refresh_token, None);
         assert_eq!(parsed, tokens);
+    }
+
+    #[test]
+    fn keyring_user_for_appends_the_account_key() {
+        assert_eq!(
+            keyring_user_for("alice_example_com"),
+            "google_sheets:alice_example_com"
+        );
+        assert_eq!(keyring_user_for("default"), "google_sheets:default");
     }
 
     #[test]

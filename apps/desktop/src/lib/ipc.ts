@@ -54,8 +54,13 @@ export type TokenStatus = {
 
 export type GoogleConfig = {
   clientId: string | null;       // OAuth desktop client id from Settings, null until saved
-  connectedEmail: string | null; // linked Google account, null when disconnected
   hasClientSecret: boolean;      // secret presence only; the value never crosses IPC
+};
+
+/** One connected Google account, as returned by google_list_accounts. */
+export type GoogleAccount = {
+  sourceId: string; // "google-sheets:{accountKey}" source row id
+  email: string;
 };
 
 export type McpTransport = "stdio" | "http";
@@ -106,8 +111,19 @@ export type GoogleConnectResult = {
   email: string;
 };
 
+export type FontScale = "small" | "normal" | "large";
+export type FontFamily = "classic" | "modern" | "system";
+
 export type AppSettings = {
   autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1', off by default
+  fontScale: FontScale;       // meta key 'ui_font_scale', 'normal' by default
+  fontFamily: FontFamily;     // meta key 'ui_font_family', 'modern' by default
+};
+
+/** Managed-sidecar status returned by mcp_server_start / mcp_server_stop. */
+export type SidecarStatus = {
+  running: boolean;
+  pid: number | null;
 };
 
 /** Every Tauri command from docs/ipc.md, typed. */
@@ -131,15 +147,22 @@ export interface IpcApi {
   listAuditEvents(limit: number | null, offset: number | null): Promise<AuditEvent[]>;
   tokenStatus(): Promise<TokenStatus>;
   getGoogleConfig(): Promise<GoogleConfig>;
+  /** Every connected Google account (sourceId + email), ordered by source id. */
+  googleListAccounts(): Promise<GoogleAccount[]>;
   setGoogleClientId(clientId: string): Promise<void>;
   /** Stores the OAuth client secret in the OS keychain; empty string clears it. */
   setGoogleClientSecret(clientSecret: string): Promise<void>;
   /** Long-running: resolves after the user finishes the browser consent flow. */
   googleConnect(): Promise<GoogleConnectResult>;
-  googleDisconnect(): Promise<void>;
+  /** Removes one connected account by its source id. Idempotent. */
+  googleDisconnect(sourceId: string): Promise<void>;
   getSettings(): Promise<AppSettings>;
   /** Enabling bypasses the human confirmation gate; disabling restores it. */
   setAutoApprove(enabled: boolean): Promise<void>;
+  /** Persists the UI font-size scale preference. */
+  setFontScale(scale: FontScale): Promise<void>;
+  /** Persists the UI font-family preference. */
+  setFontFamily(family: FontFamily): Promise<void>;
   /** Prefs-only reset: does not touch credentials, permission rules, or data. */
   resetSettings(): Promise<void>;
   /** Persisted transport/port plus the live sidecar heartbeat state. */
@@ -156,6 +179,10 @@ export interface IpcApi {
   mcpUnregisterClient(id: string): Promise<void>;
   /** Configures every currently detected (installed) client at once. */
   mcpConfigureAll(): Promise<void>;
+  /** Starts the desktop-managed HTTP sidecar; errors if one already runs. */
+  mcpServerStart(): Promise<SidecarStatus>;
+  /** Stops the desktop-managed sidecar if one is running. Idempotent. */
+  mcpServerStop(): Promise<SidecarStatus>;
 }
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -178,13 +205,16 @@ const tauriIpc: IpcApi = {
     invoke<AuditEvent[]>("list_audit_events", { limit, offset }),
   tokenStatus: () => invoke<TokenStatus>("token_status"),
   getGoogleConfig: () => invoke<GoogleConfig>("get_google_config"),
+  googleListAccounts: () => invoke<GoogleAccount[]>("google_list_accounts"),
   setGoogleClientId: (clientId) => invoke<void>("set_google_client_id", { clientId }),
   setGoogleClientSecret: (clientSecret) =>
     invoke<void>("set_google_client_secret", { clientSecret }),
   googleConnect: () => invoke<GoogleConnectResult>("google_connect"),
-  googleDisconnect: () => invoke<void>("google_disconnect"),
+  googleDisconnect: (sourceId) => invoke<void>("google_disconnect", { sourceId }),
   getSettings: () => invoke<AppSettings>("get_settings"),
   setAutoApprove: (enabled) => invoke<void>("set_auto_approve", { enabled }),
+  setFontScale: (scale) => invoke<void>("set_font_scale", { scale }),
+  setFontFamily: (family) => invoke<void>("set_font_family", { family }),
   resetSettings: () => invoke<void>("reset_settings"),
   getMcpConfig: () => invoke<McpConfigView>("get_mcp_config"),
   setMcpTransport: (transport) => invoke<void>("set_mcp_transport", { transport }),
@@ -196,7 +226,9 @@ const tauriIpc: IpcApi = {
   },
   mcpConfigureClient: (id) => invoke<void>("mcp_configure_client", { id }),
   mcpUnregisterClient: (id) => invoke<void>("mcp_unregister_client", { id }),
-  mcpConfigureAll: () => invoke<void>("mcp_configure_all")
+  mcpConfigureAll: () => invoke<void>("mcp_configure_all"),
+  mcpServerStart: () => invoke<SidecarStatus>("mcp_server_start"),
+  mcpServerStop: () => invoke<SidecarStatus>("mcp_server_stop")
 };
 
 // Plain-browser dev preview falls back to clickable in-memory fixtures.

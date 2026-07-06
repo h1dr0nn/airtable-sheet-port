@@ -28,3 +28,10 @@ export const MCP_PORT_MAX = 65_535;
 
 /** Local HTTP endpoint clients connect to; {port} is the configured port. */
 export const buildMcpHttpUrl = (port: number): string => `http://127.0.0.1:${port}/mcp`;
+
+/**
+ * Root data attributes CSS reads to apply the live font preferences. Keep in
+ * sync with the selectors in styles.css.
+ */
+export const FONT_SCALE_ATTR = "data-font-scale";
+export const FONT_FAMILY_ATTR = "data-font-family";

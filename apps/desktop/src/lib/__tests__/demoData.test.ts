@@ -26,11 +26,12 @@ describe("demo IPC google flow", () => {
     expect((await settle(ipc.tokenStatus())).googleSheets).toBe(false);
 
     const config = await settle(ipc.getGoogleConfig());
-    expect(config.connectedEmail).toBeNull();
     // Pre-seeded so the browser preview's Connect button is clickable.
     expect(config.clientId).not.toBeNull();
     // Mirrors the real backend: no secret in the keychain until saved.
     expect(config.hasClientSecret).toBe(false);
+    // Accounts live in google_list_accounts now; a fresh instance has none.
+    expect(await settle(ipc.googleListAccounts())).toEqual([]);
   });
 
   it("setGoogleClientSecret stores presence and empty string clears it", async () => {
@@ -58,8 +59,9 @@ describe("demo IPC google flow", () => {
     });
     expect(sources[0]?.name).toContain(email);
 
-    const config = await settle(ipc.getGoogleConfig());
-    expect(config.connectedEmail).toBe(email);
+    const accounts = await settle(ipc.googleListAccounts());
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.email).toBe(email);
     expect((await settle(ipc.tokenStatus())).googleSheets).toBe(true);
 
     const tables = await settle(ipc.listTables("google-sheets"));
@@ -84,15 +86,54 @@ describe("demo IPC google flow", () => {
   it("disconnect removes the source and is idempotent", async () => {
     const ipc = createDemoIpc();
     await settle(ipc.googleConnect());
+    const [account] = await settle(ipc.googleListAccounts());
+    if (!account) {
+      throw new Error("expected a connected demo account");
+    }
 
-    await settle(ipc.googleDisconnect());
+    await settle(ipc.googleDisconnect(account.sourceId));
     expect(await settle(ipc.listSources())).toEqual([]);
-    expect((await settle(ipc.getGoogleConfig())).connectedEmail).toBeNull();
+    expect(await settle(ipc.googleListAccounts())).toEqual([]);
     expect((await settle(ipc.tokenStatus())).googleSheets).toBe(false);
     expect(await settle(ipc.listTables("google-sheets"))).toEqual([]);
 
     // Second disconnect mirrors core::google::disconnect (no error).
-    await expect(settle(ipc.googleDisconnect())).resolves.toBeUndefined();
+    await expect(settle(ipc.googleDisconnect(account.sourceId))).resolves.toBeUndefined();
+  });
+
+  it("connect adds a second distinct account and disconnect removes just one", async () => {
+    const ipc = createDemoIpc();
+
+    await settle(ipc.googleConnect());
+    await settle(ipc.googleConnect());
+    const accounts = await settle(ipc.googleListAccounts());
+    expect(accounts).toHaveLength(2);
+    const emails = new Set(accounts.map((account) => account.email));
+    expect(emails.size).toBe(2);
+
+    await settle(ipc.googleDisconnect(accounts[0]!.sourceId));
+    const remaining = await settle(ipc.googleListAccounts());
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.sourceId).toBe(accounts[1]?.sourceId);
+  });
+
+  it("font preferences default, persist, and reset with settings", async () => {
+    const ipc = createDemoIpc();
+
+    let settings = await settle(ipc.getSettings());
+    expect(settings.fontScale).toBe("normal");
+    expect(settings.fontFamily).toBe("modern");
+
+    await settle(ipc.setFontScale("large"));
+    await settle(ipc.setFontFamily("classic"));
+    settings = await settle(ipc.getSettings());
+    expect(settings.fontScale).toBe("large");
+    expect(settings.fontFamily).toBe("classic");
+
+    await settle(ipc.resetSettings());
+    settings = await settle(ipc.getSettings());
+    expect(settings.fontScale).toBe("normal");
+    expect(settings.fontFamily).toBe("modern");
   });
 
   it("setGoogleClientId trims the value and rejects blank input", async () => {
@@ -160,16 +201,37 @@ describe("demo IPC mcp flow", () => {
     expect(config.boundPort).toBeNull();
   });
 
-  it("switching to http exposes boundPort at the configured port", async () => {
+  it("http sidecar is offline until started, then start/stop toggle it", async () => {
     const ipc = createDemoIpc();
 
     await settle(ipc.setMcpTransport("http"));
     await settle(ipc.setMcpPort(5000));
 
-    const config = await settle(ipc.getMcpConfig());
+    // Managed HTTP child is not running until explicitly started.
+    let config = await settle(ipc.getMcpConfig());
     expect(config.transport).toBe("http");
     expect(config.port).toBe(5000);
+    expect(config.running).toBe(false);
+    expect(config.boundPort).toBeNull();
+
+    const started = await settle(ipc.mcpServerStart());
+    expect(started.running).toBe(true);
+    expect(started.pid).not.toBeNull();
+
+    config = await settle(ipc.getMcpConfig());
+    expect(config.running).toBe(true);
     expect(config.boundPort).toBe(5000);
+
+    // Starting again while running mirrors the backend guard.
+    const secondStart = expect(ipc.mcpServerStart()).rejects.toThrow("already running");
+    await vi.runAllTimersAsync();
+    await secondStart;
+
+    const stopped = await settle(ipc.mcpServerStop());
+    expect(stopped.running).toBe(false);
+    config = await settle(ipc.getMcpConfig());
+    expect(config.running).toBe(false);
+    expect(config.boundPort).toBeNull();
   });
 
   it("setMcpPort rejects out-of-range ports", async () => {

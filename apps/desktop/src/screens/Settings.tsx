@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Badge,
   Button,
@@ -8,28 +8,33 @@ import {
   CardTitle,
   Input,
   Skeleton,
-  Switch,
   Tooltip,
   TooltipContent,
   TooltipTrigger
 } from "@sheet-port/ui";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import {
+  useGoogleAccounts,
   useGoogleConfig,
-  useGoogleDisconnect,
   useSetGoogleClientId,
   useSetGoogleClientSecret
 } from "../hooks/useGoogleConfig.js";
 import { usePermissionRules } from "../hooks/usePermissions.js";
-import { useResetSettings, useSetAutoApprove, useSettings } from "../hooks/useSettings.js";
+import {
+  useResetSettings,
+  useSetFontFamily,
+  useSetFontScale,
+  useSettings
+} from "../hooks/useSettings.js";
 import { useSources } from "../hooks/useSources.js";
 import { useTheme } from "../hooks/useTheme.js";
-import { APP_AUTHOR } from "../lib/constants.js";
+import { APP_AUTHOR, APP_NAME } from "../lib/constants.js";
+import type { FontFamily, FontScale } from "../lib/ipc.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { GoogleJsonImport } from "../components/settings/GoogleJsonImport.js";
-import { UpdateSection } from "../components/settings/UpdateSection.js";
-import { RuleRow } from "../components/permissions/RuleRow.js";
+import { CheckForUpdatesButton } from "../components/settings/CheckForUpdatesButton.js";
+import { PermissionPresetRow } from "../components/permissions/PermissionPresetRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
 import { McpServerCard } from "../components/settings/McpServerCard.js";
@@ -38,6 +43,18 @@ import { McpClientsCard } from "../components/settings/McpClientsCard.js";
 const THEME_OPTIONS: ReadonlyArray<SegmentedOption<ThemeSetting>> = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
+  { value: "system", label: "System" }
+];
+
+const FONT_SCALE_OPTIONS: ReadonlyArray<SegmentedOption<FontScale>> = [
+  { value: "small", label: "Small" },
+  { value: "normal", label: "Normal" },
+  { value: "large", label: "Large" }
+];
+
+const FONT_FAMILY_OPTIONS: ReadonlyArray<SegmentedOption<FontFamily>> = [
+  { value: "classic", label: "Classic" },
+  { value: "modern", label: "Modern" },
   { value: "system", label: "System" }
 ];
 
@@ -78,8 +95,35 @@ function SaveButton({ canSave, isPending, onClick, disabledReason }: SaveButtonP
   );
 }
 
+/** One labelled Appearance row: title + description on the left, control right. */
+function AppearanceRow({
+  title,
+  description,
+  control
+}: {
+  title: string;
+  description: string;
+  control: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium text-ink">{title}</p>
+        <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">{description}</p>
+      </div>
+      {control}
+    </div>
+  );
+}
+
 function AppearanceCard() {
   const { setting, resolved, setSetting } = useTheme();
+  const { data: settings } = useSettings();
+  const setFontScale = useSetFontScale();
+  const setFontFamily = useSetFontFamily();
+
+  const fontScale = settings?.fontScale ?? "normal";
+  const fontFamily = settings?.fontFamily ?? "modern";
 
   return (
     <Card>
@@ -87,21 +131,53 @@ function AppearanceCard() {
         <CardTitle>Appearance</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          <div className="min-w-0">
-            <p className="text-[13px] font-medium text-ink">Theme</p>
-            <p className="mt-0.5 text-[12.5px] text-ink-muted">
-              {setting === "system"
-                ? `Follows your system preference (currently ${RESOLVED_LABELS[resolved]})`
-                : "Fixed for this device"}
-            </p>
+        <div className="divide-y divide-edge">
+          <div className="pb-4 first:pt-0">
+            <AppearanceRow
+              title="Theme"
+              description={
+                setting === "system"
+                  ? `Follows your system preference (currently ${RESOLVED_LABELS[resolved]})`
+                  : "Fixed for this device"
+              }
+              control={
+                <SegmentedControl
+                  options={THEME_OPTIONS}
+                  value={setting}
+                  onChange={setSetting}
+                  ariaLabel="Theme"
+                />
+              }
+            />
           </div>
-          <SegmentedControl
-            options={THEME_OPTIONS}
-            value={setting}
-            onChange={setSetting}
-            ariaLabel="Theme"
-          />
+          <div className="py-4">
+            <AppearanceRow
+              title="Font Size"
+              description="Scales the whole interface up or down."
+              control={
+                <SegmentedControl
+                  options={FONT_SCALE_OPTIONS}
+                  value={fontScale}
+                  onChange={(next) => setFontScale.mutate(next)}
+                  ariaLabel="Font Size"
+                />
+              }
+            />
+          </div>
+          <div className="pt-4 last:pb-0">
+            <AppearanceRow
+              title="Font"
+              description="Classic is a serif face, Modern is Inter, System uses your OS UI font."
+              control={
+                <SegmentedControl
+                  options={FONT_FAMILY_OPTIONS}
+                  value={fontFamily}
+                  onChange={(next) => setFontFamily.mutate(next)}
+                  ariaLabel="Font"
+                />
+              }
+            />
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -256,10 +332,9 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
 
 function GoogleSheetsCard() {
   const { data: config, isPending } = useGoogleConfig();
-  const disconnect = useGoogleDisconnect();
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const { data: accounts } = useGoogleAccounts();
 
-  const connectedEmail = config?.connectedEmail ?? null;
+  const accountCount = accounts?.length ?? 0;
 
   return (
     <Card>
@@ -277,50 +352,33 @@ function GoogleSheetsCard() {
 
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-edge pt-4">
               <div className="flex min-w-0 items-center gap-2">
-                <Badge variant={connectedEmail ? "success" : "muted"}>
-                  {connectedEmail ? "Connected" : "Not connected"}
+                <Badge variant={accountCount > 0 ? "success" : "muted"}>
+                  {accountCount > 0 ? "Connected" : "Not connected"}
                 </Badge>
-                {connectedEmail ? (
-                  <span className="truncate font-mono text-[12.5px] text-ink">{connectedEmail}</span>
-                ) : (
-                  <span className="text-[12.5px] text-ink-muted">
-                    Connect from the Data Sources screen
-                  </span>
-                )}
+                <span className="text-[12.5px] text-ink-muted">
+                  {accountCount > 0
+                    ? `${accountCount} account${accountCount === 1 ? "" : "s"} linked. Manage them in Data Sources.`
+                    : "Connect an account from the Data Sources screen"}
+                </span>
               </div>
-              {connectedEmail ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={disconnect.isPending}
-                  onClick={() => setIsConfirmOpen(true)}
-                >
-                  Disconnect
-                </Button>
-              ) : null}
             </div>
           </div>
         )}
       </CardContent>
-      <ConfirmDialog
-        open={isConfirmOpen}
-        onOpenChange={setIsConfirmOpen}
-        title="Disconnect Google Sheets?"
-        description="Agents lose access to this account's spreadsheets and the stored token is removed from the OS keychain. You can reconnect at any time."
-        confirmLabel="Disconnect"
-        isPending={disconnect.isPending}
-        onConfirm={() => disconnect.mutate(undefined, { onSettled: () => setIsConfirmOpen(false) })}
-      />
     </Card>
   );
 }
 
-/** One source-wide rule per connected source; agents are denied by default. */
+/** One preset-driven source-wide rule per connected source. Auto-approve is a
+ * global backend setting, so choosing Auto Approve / Bypass on any source turns
+ * it on app-wide; the hint below calls this out. */
 function PermissionsCard() {
   const { data: sources, isPending: isSourcesPending } = useSources();
   const { data: rules, isPending: isRulesPending } = usePermissionRules();
+  const { data: settings, isPending: isSettingsPending } = useSettings();
   const sourceList = sources ?? [];
   const ruleList = rules ?? [];
+  const autoApproveWrites = settings?.autoApproveWrites ?? false;
 
   return (
     <Card>
@@ -328,7 +386,7 @@ function PermissionsCard() {
         <CardTitle>Permissions</CardTitle>
       </CardHeader>
       <CardContent>
-        {isSourcesPending || isRulesPending ? (
+        {isSourcesPending || isRulesPending || isSettingsPending ? (
           <Skeleton className="h-24" />
         ) : sourceList.length === 0 ? (
           <p className="rounded-md border border-edge bg-surface px-3 py-6 text-center text-[12.5px] text-ink-muted">
@@ -337,13 +395,15 @@ function PermissionsCard() {
         ) : (
           <>
             <p className="mb-1 text-[12px] leading-4 text-ink-muted">
-              Source-wide access for agents; every source starts fully denied.
+              Pick an access preset per source. Auto Approve and Bypass turn on global
+              auto-approve, which applies to every connected source.
             </p>
             <div className="divide-y divide-edge">
               {sourceList.map((source) => (
-                <RuleRow
+                <PermissionPresetRow
                   key={source.id}
                   source={source}
+                  autoApproveWrites={autoApproveWrites}
                   rule={ruleList.find(
                     (rule) => rule.sourceId === source.id && rule.tableId === null
                   )}
@@ -364,12 +424,17 @@ function AboutCard() {
     <Card>
       <CardHeader>
         <CardTitle>About</CardTitle>
+        <CheckForUpdatesButton />
       </CardHeader>
       <CardContent className="py-1">
         {isPending || !status ? (
           <Skeleton className="my-3 h-16" />
         ) : (
           <dl className="divide-y divide-edge">
+            <div className="flex h-9 items-center justify-between gap-4">
+              <dt className="text-[13px] text-ink-muted">App Name</dt>
+              <dd className="text-[12.5px] font-medium text-ink">{APP_NAME}</dd>
+            </div>
             <div className="flex h-9 items-center justify-between gap-4">
               <dt className="text-[13px] text-ink-muted">Version</dt>
               <dd className="font-mono text-[12.5px] text-ink">{status.appVersion}</dd>
@@ -394,68 +459,6 @@ function AboutCard() {
           </dl>
         )}
       </CardContent>
-    </Card>
-  );
-}
-
-/** Auto-approve is a security tradeoff, so enabling it is gated behind a modal;
- * disabling is immediate. Defaults off. */
-function AgentPermissionsCard() {
-  const { data: settings, isPending } = useSettings();
-  const setAutoApprove = useSetAutoApprove();
-  const [isEnableConfirmOpen, setIsEnableConfirmOpen] = useState(false);
-
-  const autoApproveWrites = settings?.autoApproveWrites ?? false;
-
-  const handleToggle = (next: boolean) => {
-    if (next) {
-      // Turning ON is risky: confirm before bypassing the approval gate.
-      setIsEnableConfirmOpen(true);
-      return;
-    }
-    // Turning OFF restores the gate immediately, no confirmation needed.
-    setAutoApprove.mutate(false);
-  };
-
-  const confirmEnable = () => {
-    setAutoApprove.mutate(true, { onSettled: () => setIsEnableConfirmOpen(false) });
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Agent Permissions</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isPending || !settings ? (
-          <Skeleton className="h-16" />
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-            <div className="min-w-0">
-              <p className="text-[13px] font-medium text-ink">Auto-approve Agent Changes</p>
-              <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">
-                When on, agent writes commit without your approval and the confirmation gate is
-                bypassed. Leave off to review every change first.
-              </p>
-            </div>
-            <Switch
-              aria-label="Auto-approve Agent Changes"
-              checked={autoApproveWrites}
-              disabled={setAutoApprove.isPending}
-              onCheckedChange={handleToggle}
-            />
-          </div>
-        )}
-      </CardContent>
-      <ConfirmDialog
-        open={isEnableConfirmOpen}
-        onOpenChange={setIsEnableConfirmOpen}
-        title="Auto-approve Agent Changes?"
-        description="Agent writes will commit WITHOUT your approval and the confirmation gate is bypassed. Only enable this if you fully trust the connected agents."
-        confirmLabel="Enable Auto-approve"
-        isPending={setAutoApprove.isPending}
-        onConfirm={confirmEnable}
-      />
     </Card>
   );
 }
@@ -490,7 +493,7 @@ function ResetCard() {
         open={isConfirmOpen}
         onOpenChange={setIsConfirmOpen}
         title="Reset to Default?"
-        description="Theme returns to System and Auto-approve Agent Changes turns Off. This does NOT remove your Google credentials, permission rules, or data."
+        description="Theme, font, and auto-approve return to their defaults. This does NOT remove your Google credentials, permission rules, or data."
         confirmLabel="Reset to Default"
         isPending={resetSettings.isPending}
         onConfirm={() => resetSettings.mutate(undefined, { onSettled: () => setIsConfirmOpen(false) })}
@@ -509,12 +512,10 @@ export function Settings() {
 
       <div className="space-y-4">
         <AppearanceCard />
-        <UpdateSection />
         <McpServerCard />
         <McpClientsCard />
         <GoogleSheetsCard />
         <PermissionsCard />
-        <AgentPermissionsCard />
         <AboutCard />
         <ResetCard />
       </div>

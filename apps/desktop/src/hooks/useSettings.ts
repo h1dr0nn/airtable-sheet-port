@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
-import { ipc } from "../lib/ipc.js";
+import { ipc, type FontFamily, type FontScale } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
 import { useTheme } from "./useTheme.js";
 
@@ -24,6 +24,36 @@ export function useSetAutoApprove() {
     },
     onSuccess: (_result, enabled) => {
       toast.success(enabled ? "Auto-approve enabled" : "Auto-approve disabled");
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+    }
+  });
+}
+
+/** Persists the UI font-size scale; useFonts applies it live on invalidation. */
+export function useSetFontScale() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (scale: FontScale) => ipc.setFontScale(scale),
+    onError: (error: unknown) => {
+      toast.error("Font size not updated", { description: getErrorMessage(error) });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+    }
+  });
+}
+
+/** Persists the UI font family; useFonts applies it live on invalidation. */
+export function useSetFontFamily() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (family: FontFamily) => ipc.setFontFamily(family),
+    onError: (error: unknown) => {
+      toast.error("Font not updated", { description: getErrorMessage(error) });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
