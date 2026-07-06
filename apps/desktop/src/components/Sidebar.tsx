@@ -18,7 +18,6 @@ import {
 import type { ReactNode } from "react";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import type { UpdateState } from "../hooks/useUpdate.js";
-import { APP_NAME } from "../lib/constants.js";
 import { NAV, type ScreenId } from "../lib/nav.js";
 
 const NAV_ICON_SIZE = 15;
@@ -82,20 +81,6 @@ export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps)
         collapsed ? SIDEBAR_COLLAPSED_CLASS : SIDEBAR_EXPANDED_CLASS
       )}
     >
-      {/* Wordmark: text only, the app identity lives here, not in the titlebar.
-       * Collapsed keeps the row height so the rail top aligns with the nav. */}
-      <div className={cn("pb-1 pt-4", collapsed ? "px-3" : "px-6")}>
-        <h1
-          className={cn(
-            "truncate text-[13px] font-semibold uppercase tracking-wide text-ink",
-            "motion-safe:transition-opacity motion-safe:duration-[var(--dur-fast)]",
-            collapsed && "opacity-0"
-          )}
-          aria-hidden={collapsed}
-        >
-          {APP_NAME}
-        </h1>
-      </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4" aria-label="Main navigation">
         {NAV.map((item) => {
           const isActive = active === item.id;
