@@ -51,7 +51,9 @@ export default {
         pop: "var(--shadow-pop)"
       },
       fontFamily: {
-        sans: ["Inter Variable", "Inter", "-apple-system", "Segoe UI", "sans-serif"],
+        // Resolves to the live --font-ui stack so the Appearance "Font" setting
+        // (classic/modern/system) actually swaps the UI font everywhere.
+        sans: ["var(--font-ui)"],
         mono: ["JetBrains Mono", "Cascadia Mono", "Consolas", "monospace"]
       },
       keyframes: {
