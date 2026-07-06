@@ -228,6 +228,58 @@ fn commit_auto_approves_by_policy_when_no_confirmation_needed() {
 }
 
 #[test]
+fn commit_auto_approves_confirmation_change_when_setting_on() {
+    let conn = demo_db();
+    let registry = registry();
+    crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, META_FLAG_ON).expect("enable");
+    let change = create_append_change(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("Delta"))])],
+        true,
+    )
+    .expect("create");
+
+    let outcome = commit(&conn, &registry, &change.id).expect("commit bypasses gate");
+
+    assert_eq!(outcome.change.status, ChangeStatus::Committed);
+    assert_eq!(
+        outcome.change.decided_by,
+        Some(ChangeDecider::Policy),
+        "auto-approved writes are decided by policy, not the user"
+    );
+    assert_eq!(outcome.records.len(), 1);
+}
+
+#[test]
+fn commit_blocks_confirmation_change_when_setting_off() {
+    let conn = demo_db();
+    let registry = registry();
+    // Default is off; also assert an explicit "0" is treated as off.
+    crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, "0").expect("disable");
+    let change = create_append_change(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("Delta"))])],
+        true,
+    )
+    .expect("create");
+
+    let error = commit(&conn, &registry, &change.id).expect_err("must block");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Change {} requires user approval in the Airtable - Sheet Port desktop app before commit",
+            change.id
+        )
+    );
+    let still = get_change(&conn, &change.id).expect("get").expect("exists");
+    assert_eq!(still.status, ChangeStatus::Pending);
+}
+
+#[test]
 fn commit_rejects_change_rejected_in_desktop_app() {
     let conn = demo_db();
     let registry = registry();

@@ -36,3 +36,11 @@ pub const AUDIT_LIMIT_MAX: i64 = 500;
 /// desktop app settings (db::set_meta) and read by the Google connect and
 /// token-refresh flows.
 pub const META_GOOGLE_CLIENT_ID: &str = "google_client_id";
+
+/// Meta key for the auto-approve-writes opt-in. Absent (or any value other
+/// than "1") means off: agent writes still require human confirmation. Value
+/// "1" bypasses the confirmation gate at commit time (see docs/security.md).
+pub const META_AUTO_APPROVE_WRITES: &str = "auto_approve_writes";
+
+/// Meta value that turns a boolean opt-in setting on.
+pub const META_FLAG_ON: &str = "1";

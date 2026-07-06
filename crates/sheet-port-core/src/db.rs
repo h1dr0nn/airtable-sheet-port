@@ -160,6 +160,15 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<(), CoreErr
     Ok(())
 }
 
+/// Removes a settings value from the shared `meta` table. Idempotent: a
+/// missing key is not an error (used to reset a setting back to its absent
+/// default).
+pub fn delete_meta(conn: &Connection, key: &str) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM meta WHERE key = ?1", [key])
+        .map_err(|error| db_error("Could not delete meta value", error))?;
+    Ok(())
+}
+
 /// ISO-8601 UTC with milliseconds, matching SQLite's
 /// `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` used by the seed and JS
 /// `new Date().toISOString()`.

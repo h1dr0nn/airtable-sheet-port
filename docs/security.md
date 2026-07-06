@@ -55,6 +55,28 @@ change into an invalid state or apply it twice:
 - Commit finalization: `UPDATE ... SET status = 'committed' WHERE id = ? AND
   status = 'approved'`; a missed guard aborts the commit with an error.
 
+## Auto-Approve Opt-In (Weakens the Guarantee)
+
+Auto-approve is an explicit, off-by-default opt-in that bypasses the human
+confirmation gate for agent writes. It is stored in the shared `meta` table
+under `auto_approve_writes` and toggled from the desktop app
+(`set_auto_approve`, see `docs/ipc.md`).
+
+- Default off: the meta key is absent, and commit blocks every unapproved
+  `requires_confirmation` change exactly as described above. The broker's
+  human-in-the-loop guarantee holds.
+- When on (value `"1"`): the commit path reads the flag fresh (never cached)
+  and treats a `requires_confirmation` change as policy-approved
+  (`decided_by = 'policy'`) instead of refusing it. The change still passes the
+  permission re-check and is still audited and committed atomically - only the
+  human approval step is skipped.
+
+This deliberately weakens the confirmation guarantee: with auto-approve on, an
+over-permissioned or prompt-injected agent can commit writes without a person
+approving each one. It exists for trusted, low-risk workflows and is kept off
+by default for that reason. Turning it on is recorded in the audit log
+(`settings_updated`); `reset_settings` returns it to the default off state.
+
 ## Permission Re-Check at Commit
 
 Permission rules may change between preview and commit. The commit path re-reads the

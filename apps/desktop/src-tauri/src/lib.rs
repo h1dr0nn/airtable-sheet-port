@@ -3,6 +3,8 @@ mod commands;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Opens (or creates) the SQLite DB shared with the MCP server and
             // applies schema + seed; see docs/ipc.md for the shared-state model.
@@ -24,6 +26,9 @@ pub fn run() {
             commands::reject_change,
             commands::list_audit_events,
             commands::token_status,
+            commands::get_settings,
+            commands::set_auto_approve,
+            commands::reset_settings,
             commands::get_google_config,
             commands::set_google_client_id,
             commands::set_google_client_secret,

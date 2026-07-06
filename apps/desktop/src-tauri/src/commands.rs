@@ -11,7 +11,8 @@ use serde::Serialize;
 use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
-    META_GOOGLE_CLIENT_ID, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
+    META_AUTO_APPROVE_WRITES, META_FLAG_ON, META_GOOGLE_CLIENT_ID, READ_LIMIT_DEFAULT,
+    READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
 use sheet_port_core::rusqlite::Connection;
 use sheet_port_core::types::{
@@ -196,6 +197,77 @@ pub fn list_audit_events(
 #[tauri::command]
 pub fn token_status() -> Result<TokenStatus, String> {
     Ok(vault::token_status())
+}
+
+// ---------------------------------------------------------------------------
+// App-managed settings (docs/ipc.md "Settings" section)
+// ---------------------------------------------------------------------------
+
+/// App-managed preferences stored in the shared `meta` table. Frontend-only
+/// prefs (e.g. theme, kept in localStorage) are intentionally absent.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    /// Auto-approve agent writes, bypassing the confirmation gate at commit
+    /// time. Off (meta key absent or not "1") by default.
+    pub auto_approve_writes: bool,
+}
+
+const SETTINGS_UPDATED_ACTION: &str = "settings_updated";
+const SETTINGS_RESET_ACTION: &str = "settings_reset";
+
+#[tauri::command]
+pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
+    let conn = lock_conn(&state)?;
+    let auto_approve_writes = db::get_meta(&conn, META_AUTO_APPROVE_WRITES)
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        == Some(META_FLAG_ON);
+    Ok(AppSettings {
+        auto_approve_writes,
+    })
+}
+
+/// Enables or disables auto-approve. Enabling writes meta "1"; disabling
+/// deletes the key so it reads back as the absent default.
+#[tauri::command]
+pub fn set_auto_approve(state: Db<'_>, enabled: bool) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    if enabled {
+        db::set_meta(&conn, META_AUTO_APPROVE_WRITES, META_FLAG_ON)
+            .map_err(|error| error.to_string())?;
+    } else {
+        db::delete_meta(&conn, META_AUTO_APPROVE_WRITES).map_err(|error| error.to_string())?;
+    }
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_AUTO_APPROVE_WRITES, "enabled": enabled })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Resets app-managed preferences to their defaults. Prefs-only: deletes the
+/// auto-approve key and does NOT touch Google tokens, the client id/secret,
+/// permission rules, sources, changes, or the audit log itself.
+#[tauri::command]
+pub fn reset_settings(state: Db<'_>) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    db::delete_meta(&conn, META_AUTO_APPROVE_WRITES).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_RESET_ACTION,
+        None,
+        None,
+        None,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

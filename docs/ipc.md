@@ -125,6 +125,35 @@ type TokenStatus = {
 
 Keyring stub only; no tokens are ever returned to the frontend or agents.
 
+## Settings (app-managed preferences)
+
+App-managed preferences live in the shared `meta` table so both processes see
+them. Frontend-only prefs (e.g. theme, kept in `localStorage`) are NOT part of
+this contract and are not reset by `reset_settings`.
+
+### `get_settings() -> AppSettings`
+
+```ts
+type AppSettings = {
+  autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1'
+};
+```
+
+### `set_auto_approve(enabled: boolean) -> void`
+
+Enabling writes meta `auto_approve_writes = '1'`; disabling deletes the key so
+it reads back as the absent default. When on, the commit path treats a
+`requires_confirmation` change as policy-approved and bypasses the human
+confirmation gate (see `docs/security.md`). Audit event (`actor='user'`,
+`action='settings_updated'`, metadata `{key:'auto_approve_writes', enabled}`).
+
+### `reset_settings() -> void`
+
+Resets app-managed preferences to their defaults: deletes the
+`auto_approve_writes` meta key. Prefs-only - does NOT touch Google tokens, the
+client id/secret, permission rules, sources, pending changes, or the audit log.
+Audit event (`actor='user'`, `action='settings_reset'`).
+
 ## Google Sheets account
 
 ### `get_google_config() -> GoogleConfig`

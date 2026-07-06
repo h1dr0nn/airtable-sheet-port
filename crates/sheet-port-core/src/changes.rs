@@ -10,8 +10,10 @@ use serde_json::Value;
 
 use crate::audit;
 use crate::connectors::ConnectorRegistry;
-use crate::constants::{BULK_UPDATE_THRESHOLD, CHANGE_LIST_LIMIT};
-use crate::db::now_iso;
+use crate::constants::{
+    BULK_UPDATE_THRESHOLD, CHANGE_LIST_LIMIT, META_AUTO_APPROVE_WRITES, META_FLAG_ON,
+};
+use crate::db::{get_meta, now_iso};
 use crate::error::{db_error, parse_json, CoreError};
 use crate::permissions;
 use crate::types::{
@@ -433,7 +435,14 @@ pub fn commit(
             "Change {change_id} is already committed"
         )));
     }
-    if change.requires_confirmation && change.status != ChangeStatus::Approved {
+    // The confirmation gate normally blocks a requires_confirmation change that
+    // the user has not approved. The auto-approve opt-in (read fresh here, never
+    // cached) bypasses it: the change is treated as policy-approved instead.
+    // Default off keeps the human-in-the-loop guarantee (see docs/security.md).
+    if change.requires_confirmation
+        && change.status != ChangeStatus::Approved
+        && !auto_approve_enabled(conn)?
+    {
         return Err(CoreError::Conflict(format!(
             "Change {change_id} requires user approval in the Airtable - Sheet Port desktop app before commit"
         )));
@@ -452,8 +461,9 @@ pub fn commit(
     )?;
 
     if change.status == ChangeStatus::Pending {
-        // Only reachable when requires_confirmation is false: policy
-        // auto-approves.
+        // Reached when requires_confirmation is false, or when it is true but the
+        // auto-approve opt-in bypassed the gate above: either way policy
+        // auto-approves before the write.
         let transitioned = transition(
             conn,
             change_id,
@@ -504,6 +514,14 @@ fn execute(
             "Delete changes are not implemented in the MVP".to_string(),
         )),
     }
+}
+
+/// Reads the auto-approve-writes opt-in fresh from `meta`. On means a
+/// requires_confirmation change may commit without a desktop approval; the
+/// setting is intentionally read at commit time so a desktop toggle applies
+/// across processes without any direct IPC.
+fn auto_approve_enabled(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(get_meta(conn, META_AUTO_APPROVE_WRITES)?.as_deref() == Some(META_FLAG_ON))
 }
 
 /// Re-derives the evaluated action so commit re-checks the same policy the
