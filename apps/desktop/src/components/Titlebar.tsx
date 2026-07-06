@@ -195,8 +195,12 @@ export function Titlebar({ onNavigate, onOpenPalette }: TitlebarProps) {
       data-tauri-drag-region
       // Positioned above the modal layer so the custom bar and its window
       // controls stay clickable while a dialog is open (see --z-titlebar).
+      // Transparent background so the modal overlay (which sits BELOW the
+      // titlebar) dims straight through the bar instead of leaving a bright
+      // opaque strip; the control buttons stay on top and clickable. Matches
+      // the adb-compass titlebar pattern.
       style={{ zIndex: "var(--z-titlebar)" }}
-      className="relative flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-bg"
+      className="relative flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-transparent"
     >
       <div className="flex h-full items-stretch">
         <DropdownMenu>

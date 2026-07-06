@@ -7,6 +7,7 @@ import type {
   TableSchema
 } from "@sheet-port/shared";
 import type {
+  AppSettings,
   AppStatus,
   GoogleConfig,
   GoogleConnectResult,
@@ -98,6 +99,9 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   // Mirrors the OS keychain: only presence is observable, never the value.
   let hasGoogleClientSecret = false;
   let googleEmail: string | null = null;
+
+  // App-managed preference mirror; off by default, cleared on reset.
+  let autoApproveWrites = false;
 
   let sources: DataSource[] = [];
   let permissionRules: PermissionRuleRow[] = [];
@@ -321,6 +325,25 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       googleEmail = null;
       sources = sources.filter((source) => source.id !== GOOGLE_SOURCE_ID);
       pushAudit({ actor: "user", action: "google_disconnected", sourceId: GOOGLE_SOURCE_ID });
+    },
+    async getSettings(): Promise<AppSettings> {
+      await delay();
+      return { autoApproveWrites };
+    },
+    async setAutoApprove(enabled: boolean): Promise<void> {
+      await delay();
+      autoApproveWrites = enabled;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "auto_approve_writes", enabled }
+      });
+    },
+    async resetSettings(): Promise<void> {
+      await delay();
+      // Prefs-only: mirrors reset_settings deleting the auto-approve meta key.
+      autoApproveWrites = false;
+      pushAudit({ actor: "user", action: "settings_reset" });
     }
   };
 }

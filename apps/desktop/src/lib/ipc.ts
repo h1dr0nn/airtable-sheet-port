@@ -62,6 +62,10 @@ export type GoogleConnectResult = {
   email: string;
 };
 
+export type AppSettings = {
+  autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1', off by default
+};
+
 /** Every Tauri command from docs/ipc.md, typed. */
 export interface IpcApi {
   getAppStatus(): Promise<AppStatus>;
@@ -89,6 +93,11 @@ export interface IpcApi {
   /** Long-running: resolves after the user finishes the browser consent flow. */
   googleConnect(): Promise<GoogleConnectResult>;
   googleDisconnect(): Promise<void>;
+  getSettings(): Promise<AppSettings>;
+  /** Enabling bypasses the human confirmation gate; disabling restores it. */
+  setAutoApprove(enabled: boolean): Promise<void>;
+  /** Prefs-only reset: does not touch credentials, permission rules, or data. */
+  resetSettings(): Promise<void>;
 }
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -115,7 +124,10 @@ const tauriIpc: IpcApi = {
   setGoogleClientSecret: (clientSecret) =>
     invoke<void>("set_google_client_secret", { clientSecret }),
   googleConnect: () => invoke<GoogleConnectResult>("google_connect"),
-  googleDisconnect: () => invoke<void>("google_disconnect")
+  googleDisconnect: () => invoke<void>("google_disconnect"),
+  getSettings: () => invoke<AppSettings>("get_settings"),
+  setAutoApprove: (enabled) => invoke<void>("set_auto_approve", { enabled }),
+  resetSettings: () => invoke<void>("reset_settings")
 };
 
 // Plain-browser dev preview falls back to clickable in-memory fixtures.

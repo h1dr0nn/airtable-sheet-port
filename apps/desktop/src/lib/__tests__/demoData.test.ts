@@ -119,4 +119,23 @@ describe("demo IPC google flow", () => {
     await expect(ipc.googleConnect()).rejects.toThrow("Google client ID is not configured");
     expect(await settle(ipc.listSources())).toEqual([]);
   });
+
+  it("auto-approve is off by default, toggles, and resetSettings clears it", async () => {
+    const ipc = createDemoIpc();
+
+    // Mirrors the backend default: meta key absent reads back as off.
+    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(false);
+
+    await settle(ipc.setAutoApprove(true));
+    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(true);
+
+    await settle(ipc.resetSettings());
+    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(false);
+
+    const auditActions = (await settle(ipc.listAuditEvents(null, null))).map(
+      (event) => event.action
+    );
+    expect(auditActions).toContain("settings_updated");
+    expect(auditActions).toContain("settings_reset");
+  });
 });

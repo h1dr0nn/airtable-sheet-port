@@ -8,6 +8,7 @@ import {
   CardTitle,
   Input,
   Skeleton,
+  Switch,
   Tooltip,
   TooltipContent,
   TooltipTrigger
@@ -20,12 +21,18 @@ import {
   useSetGoogleClientSecret
 } from "../hooks/useGoogleConfig.js";
 import { usePermissionRules } from "../hooks/usePermissions.js";
+import { useResetSettings, useSetAutoApprove, useSettings } from "../hooks/useSettings.js";
 import { useSources } from "../hooks/useSources.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { APP_AUTHOR } from "../lib/constants.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { GoogleJsonImport } from "../components/settings/GoogleJsonImport.js";
+// TODO(update-section): The updater agent owns components/settings/UpdateSection.tsx.
+// Once it lands, replace UpdateSectionSlot below with:
+//   import { UpdateSection } from "../components/settings/UpdateSection.js";
+// and render <UpdateSection /> in place of the slot. Guarded here so this screen
+// still typechecks and builds while that component is absent.
 import { RuleRow } from "../components/permissions/RuleRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
@@ -373,6 +380,19 @@ function AboutCard() {
               <dt className="text-[13px] text-ink-muted">Created By</dt>
               <dd className="text-[12.5px] font-medium text-ink">{APP_AUTHOR}</dd>
             </div>
+            <div className="flex h-9 items-center justify-between gap-4">
+              <dt className="shrink-0 text-[13px] text-ink-muted">Database</dt>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <dd className="min-w-0 truncate font-mono text-[12.5px] text-ink-muted">
+                    {status.dbPath}
+                  </dd>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-md break-all font-mono">
+                  {status.dbPath}
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </dl>
         )}
       </CardContent>
@@ -380,28 +400,118 @@ function AboutCard() {
   );
 }
 
-function DatabaseCard() {
-  const { data: status, isPending } = useAppStatus();
+/** Temporary stand-in until the updater agent's UpdateSection lands. See the
+ * TODO(update-section) note near the imports for the swap-in instructions. */
+function UpdateSectionSlot() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Software Update</CardTitle>
+      </CardHeader>
+      <CardContent className="py-1">
+        <p className="text-[12.5px] text-ink-muted">Update controls load here.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Auto-approve is a security tradeoff, so enabling it is gated behind a modal;
+ * disabling is immediate. Defaults off. */
+function AgentPermissionsCard() {
+  const { data: settings, isPending } = useSettings();
+  const setAutoApprove = useSetAutoApprove();
+  const [isEnableConfirmOpen, setIsEnableConfirmOpen] = useState(false);
+
+  const autoApproveWrites = settings?.autoApproveWrites ?? false;
+
+  const handleToggle = (next: boolean) => {
+    if (next) {
+      // Turning ON is risky: confirm before bypassing the approval gate.
+      setIsEnableConfirmOpen(true);
+      return;
+    }
+    // Turning OFF restores the gate immediately, no confirmation needed.
+    setAutoApprove.mutate(false);
+  };
+
+  const confirmEnable = () => {
+    setAutoApprove.mutate(true, { onSettled: () => setIsEnableConfirmOpen(false) });
+  };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Database</CardTitle>
+        <CardTitle>Agent Permissions</CardTitle>
       </CardHeader>
-      <CardContent className="py-1">
-        {isPending || !status ? (
-          <Skeleton className="my-2 h-5" />
+      <CardContent>
+        {isPending || !settings ? (
+          <Skeleton className="h-16" />
         ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <p className="truncate font-mono text-[12.5px] text-ink-muted">{status.dbPath}</p>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-md break-all font-mono">
-              {status.dbPath}
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-ink">Auto-approve Agent Changes</p>
+              <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">
+                When on, agent writes commit without your approval and the confirmation gate is
+                bypassed. Leave off to review every change first.
+              </p>
+            </div>
+            <Switch
+              aria-label="Auto-approve Agent Changes"
+              checked={autoApproveWrites}
+              disabled={setAutoApprove.isPending}
+              onCheckedChange={handleToggle}
+            />
+          </div>
         )}
       </CardContent>
+      <ConfirmDialog
+        open={isEnableConfirmOpen}
+        onOpenChange={setIsEnableConfirmOpen}
+        title="Auto-approve Agent Changes?"
+        description="Agent writes will commit WITHOUT your approval and the confirmation gate is bypassed. Only enable this if you fully trust the connected agents."
+        confirmLabel="Enable Auto-approve"
+        isPending={setAutoApprove.isPending}
+        onConfirm={confirmEnable}
+      />
+    </Card>
+  );
+}
+
+/** Resets frontend prefs (theme) and app-managed prefs (auto-approve) only. */
+function ResetCard() {
+  const resetSettings = useResetSettings();
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Reset</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <p className="min-w-0 text-[12.5px] leading-4 text-ink-muted">
+            Restore preferences to their defaults. Your Google credentials, permission rules, and
+            data are not affected.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={resetSettings.isPending}
+            onClick={() => setIsConfirmOpen(true)}
+          >
+            Reset to Default
+          </Button>
+        </div>
+      </CardContent>
+      <ConfirmDialog
+        open={isConfirmOpen}
+        onOpenChange={setIsConfirmOpen}
+        title="Reset to Default?"
+        description="Theme returns to System and Auto-approve Agent Changes turns Off. This does NOT remove your Google credentials, permission rules, or data."
+        confirmLabel="Reset to Default"
+        isPending={resetSettings.isPending}
+        onConfirm={() => resetSettings.mutate(undefined, { onSettled: () => setIsConfirmOpen(false) })}
+      />
     </Card>
   );
 }
@@ -416,10 +526,12 @@ export function Settings() {
 
       <div className="space-y-4">
         <AppearanceCard />
+        <UpdateSectionSlot />
         <GoogleSheetsCard />
         <PermissionsCard />
+        <AgentPermissionsCard />
         <AboutCard />
-        <DatabaseCard />
+        <ResetCard />
       </div>
     </>
   );

@@ -12,5 +12,6 @@ export const queryKeys = {
   auditEvents: ["audit-events"] as const,
   auditEventsPaged: (pageSize: number) => ["audit-events", pageSize] as const,
   tokenStatus: ["token-status"] as const,
-  googleConfig: ["google-config"] as const
+  googleConfig: ["google-config"] as const,
+  settings: ["settings"] as const
 };
