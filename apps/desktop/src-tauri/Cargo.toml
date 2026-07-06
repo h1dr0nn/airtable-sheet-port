@@ -1,6 +1,6 @@
 [package]
 name = "sheet-port"
-version = "0.1.0"
+version = "0.0.1"
 description = "Airtable - Sheet Port: Safe local port for AI agents to access tables and spreadsheets."
 authors = ["Airtable - Sheet Port"]
 edition = "2021"

@@ -89,7 +89,7 @@ export function AuditLog() {
         </div>
       ) : events.length === 0 ? (
         <EmptyState
-          title="No activity yet"
+          title="No Activity Yet"
           description="Agent activity is recorded here as soon as it happens"
         />
       ) : (
@@ -109,7 +109,7 @@ export function AuditLog() {
                 disabled={isFetchingNextPage}
                 onClick={() => void fetchNextPage()}
               >
-                {isFetchingNextPage ? "Loading..." : "Load more"}
+                {isFetchingNextPage ? "Loading..." : "Load More"}
               </Button>
             </div>
           ) : null}

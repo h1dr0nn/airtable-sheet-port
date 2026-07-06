@@ -82,7 +82,7 @@ export function ChangeCard({ change }: { change: PendingChange }) {
           <Tooltip>
             <TooltipTrigger asChild>
               <span tabIndex={0}>
-                <Badge variant="warning">Needs confirmation</Badge>
+                <Badge variant="warning">Needs Confirmation</Badge>
               </span>
             </TooltipTrigger>
             <TooltipContent>Policy requires user confirmation before commit</TooltipContent>

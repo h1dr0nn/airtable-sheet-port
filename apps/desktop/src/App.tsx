@@ -1,5 +1,6 @@
 import { useState, type ComponentType } from "react";
 import { ToastViewport } from "@sheet-port/ui";
+import { CommandPalette } from "./components/CommandPalette.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
 import { useTheme } from "./hooks/useTheme.js";
@@ -29,11 +30,12 @@ export function App() {
   // even before the Settings screen is ever opened.
   useTheme();
   const [screen, setScreen] = useState<ScreenId>("dashboard");
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const Screen = SCREENS[screen];
 
   return (
     <div className="flex h-screen flex-col bg-bg font-sans text-ink">
-      <Titlebar onNavigate={setScreen} />
+      <Titlebar onNavigate={setScreen} onOpenPalette={() => setIsPaletteOpen(true)} />
       <div className="flex min-h-0 flex-1">
         <Sidebar active={screen} onNavigate={setScreen} />
         <main className="min-w-0 flex-1 overflow-y-auto">
@@ -42,6 +44,7 @@ export function App() {
           </div>
         </main>
       </div>
+      <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} onNavigate={setScreen} />
       <ToastViewport />
     </div>
   );

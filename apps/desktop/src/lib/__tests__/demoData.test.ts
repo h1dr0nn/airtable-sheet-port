@@ -29,6 +29,18 @@ describe("demo IPC google flow", () => {
     expect(config.connectedEmail).toBeNull();
     // Pre-seeded so the browser preview's Connect button is clickable.
     expect(config.clientId).not.toBeNull();
+    // Mirrors the real backend: no secret in the keychain until saved.
+    expect(config.hasClientSecret).toBe(false);
+  });
+
+  it("setGoogleClientSecret stores presence and empty string clears it", async () => {
+    const ipc = createDemoIpc();
+
+    await settle(ipc.setGoogleClientSecret("GOCSPX-demo-secret"));
+    expect((await settle(ipc.getGoogleConfig())).hasClientSecret).toBe(true);
+
+    await settle(ipc.setGoogleClientSecret(""));
+    expect((await settle(ipc.getGoogleConfig())).hasClientSecret).toBe(false);
   });
 
   it("connect adds a connected google-sheets source with tables and a seeded change", async () => {

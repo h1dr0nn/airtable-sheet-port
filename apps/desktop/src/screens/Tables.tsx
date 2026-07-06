@@ -72,11 +72,11 @@ export function Tables({ onNavigate }: { onNavigate: (screen: ScreenId) => void 
         <TableListSkeleton />
       ) : sourceList.length === 0 ? (
         <EmptyState
-          title="No data sources"
+          title="No Data Sources"
           description="Connect a data source to browse its tables here"
           action={
             <Button size="sm" onClick={() => onNavigate("sources")}>
-              Connect a data source
+              Connect a Data Source
             </Button>
           }
         />
@@ -84,7 +84,7 @@ export function Tables({ onNavigate }: { onNavigate: (screen: ScreenId) => void 
         <TableListSkeleton />
       ) : (tables ?? []).length === 0 ? (
         <EmptyState
-          title="No tables"
+          title="No Tables"
           description="This source has not exposed any tables yet"
         />
       ) : (
@@ -121,7 +121,7 @@ export function Tables({ onNavigate }: { onNavigate: (screen: ScreenId) => void 
             <Skeleton className="h-96 rounded-card" />
           ) : page.total === 0 ? (
             <EmptyState
-              title="No records"
+              title="No Records"
               description="This table is empty. Agent appends will show up here after commit"
             />
           ) : (

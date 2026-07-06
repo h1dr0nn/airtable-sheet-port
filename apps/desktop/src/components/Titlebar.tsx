@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
@@ -20,7 +20,6 @@ import { useTheme } from "../hooks/useTheme.js";
 import { isTauri } from "../lib/ipc.js";
 import { buildAppMenu, type MenuEntry } from "../lib/menu.js";
 import type { ScreenId } from "../lib/nav.js";
-import { QuickNav } from "./QuickNav.js";
 
 // Shared 46px hover zone so menu/search buttons read like the window controls.
 const TITLEBAR_BUTTON_CLASS = cn(
@@ -123,15 +122,16 @@ function WindowControls() {
 
 type TitlebarProps = {
   onNavigate: (screen: ScreenId) => void;
+  /** Opens the app-wide command palette (also bound to Ctrl/Cmd+K). */
+  onOpenPalette: () => void;
 };
 
-/** Custom titlebar: hamburger menu + quick-nav search on the left, window
- * controls on the right (Tauri only). The empty middle stays a drag region. */
-export function Titlebar({ onNavigate }: TitlebarProps) {
+/** Custom titlebar: hamburger menu + command-palette search on the left,
+ * window controls on the right (Tauri only). The middle stays a drag region. */
+export function Titlebar({ onNavigate, onOpenPalette }: TitlebarProps) {
   const queryClient = useQueryClient();
   const { setting, setSetting } = useTheme();
   const { data: status } = useAppStatus();
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   const copyVersion = () => {
     const version = status?.appVersion;
@@ -176,25 +176,17 @@ export function Titlebar({ onNavigate }: TitlebarProps) {
           <DropdownMenuContent align="start">{renderMenuEntries(menu)}</DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="relative flex h-full items-stretch">
-          <button
-            type="button"
-            aria-label="Search screens and tables"
-            aria-expanded={isSearchOpen}
-            onClick={() => setIsSearchOpen((open) => !open)}
-            className={TITLEBAR_BUTTON_CLASS}
-          >
-            <svg {...MENU_GLYPH_PROPS}>
-              <circle cx="5.25" cy="5.25" r="3.5" />
-              <path d="M8 8l2.5 2.5" />
-            </svg>
-          </button>
-          <QuickNav
-            open={isSearchOpen}
-            onClose={() => setIsSearchOpen(false)}
-            onNavigate={onNavigate}
-          />
-        </div>
+        <button
+          type="button"
+          aria-label="Open command palette"
+          onClick={onOpenPalette}
+          className={TITLEBAR_BUTTON_CLASS}
+        >
+          <svg {...MENU_GLYPH_PROPS}>
+            <circle cx="5.25" cy="5.25" r="3.5" />
+            <path d="M8 8l2.5 2.5" />
+          </svg>
+        </button>
       </div>
 
       {isTauri ? <WindowControls /> : null}

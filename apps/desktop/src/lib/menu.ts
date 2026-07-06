@@ -45,7 +45,7 @@ const THEME_LABELS: ReadonlyArray<{ value: ThemeSetting; label: string }> = [
 
 export function buildAppMenu(deps: AppMenuDeps): readonly MenuEntry[] {
   const fileItems: MenuEntry[] = [
-    { kind: "action", id: "reload-data", label: "Reload data", run: deps.reloadData }
+    { kind: "action", id: "reload-data", label: "Reload Data", run: deps.reloadData }
   ];
   if (deps.quit !== null) {
     const quit = deps.quit;
@@ -98,7 +98,7 @@ export function buildAppMenu(deps: AppMenuDeps): readonly MenuEntry[] {
           label: "About",
           run: () => deps.navigate("settings")
         },
-        { kind: "action", id: "copy-version", label: "Copy version", run: deps.copyVersion }
+        { kind: "action", id: "copy-version", label: "Copy Version", run: deps.copyVersion }
       ]
     }
   ];

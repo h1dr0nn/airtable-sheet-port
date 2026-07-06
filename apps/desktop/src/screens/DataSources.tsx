@@ -101,7 +101,7 @@ function GoogleSheetsCard({ source, onNavigate }: GoogleSheetsCardProps) {
   return (
     <SourceCardShell
       overline="google_sheets"
-      badge={<Badge variant="muted">Not connected</Badge>}
+      badge={<Badge variant="muted">Not Connected</Badge>}
       footer={
         <>
           <Button
@@ -128,7 +128,7 @@ function GoogleSheetsCard({ source, onNavigate }: GoogleSheetsCardProps) {
                 FOCUS_RING
               )}
             >
-              Set client ID in Settings
+              Set Client ID in Settings
             </button>
           ) : null}
         </>
@@ -148,7 +148,7 @@ function ProviderCard() {
   return (
     <SourceCardShell
       overline="provider"
-      badge={<Badge variant="muted">Coming soon</Badge>}
+      badge={<Badge variant="muted">Coming Soon</Badge>}
       footer={
         <>
           <Button variant="outline" size="sm" disabled>
@@ -158,7 +158,7 @@ function ProviderCard() {
         </>
       }
     >
-      <p className="text-[15px] font-semibold text-ink">Additional provider</p>
+      <p className="text-[15px] font-semibold text-ink">Additional Provider</p>
       <p className="mt-1 text-[13px] leading-5 text-ink-muted">
         A second table provider lands here once its connector ships
       </p>

@@ -90,7 +90,7 @@ export function RuleRow({ source, rule }: RuleRowProps) {
       </div>
 
       <div className="mt-3.5">
-        <p className="overline-label mb-2">Require confirmation for</p>
+        <p className="overline-label mb-2">Require Confirmation For</p>
         <ConfirmationChips
           value={rule?.requireConfirmationFor ?? []}
           disabled={save.isPending}

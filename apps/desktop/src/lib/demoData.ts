@@ -95,6 +95,8 @@ type DemoOptions = {
 export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   let googleClientId =
     options.googleClientId === undefined ? DEMO_GOOGLE_CLIENT_ID : options.googleClientId;
+  // Mirrors the OS keychain: only presence is observable, never the value.
+  let hasGoogleClientSecret = false;
   let googleEmail: string | null = null;
 
   let sources: DataSource[] = [];
@@ -142,7 +144,7 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   return {
     async getAppStatus(): Promise<AppStatus> {
       return {
-        appVersion: "0.1.0 (browser demo)",
+        appVersion: "0.0.1 (browser demo)",
         dbPath: "C:\\Users\\demo\\AppData\\Roaming\\sheet-port\\sheet-port.db",
         mcpRunning: true,
         mcpPid: DEMO_MCP_PID,
@@ -258,7 +260,11 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     },
     async getGoogleConfig(): Promise<GoogleConfig> {
       await delay();
-      return { clientId: googleClientId, connectedEmail: googleEmail };
+      return {
+        clientId: googleClientId,
+        connectedEmail: googleEmail,
+        hasClientSecret: hasGoogleClientSecret
+      };
     },
     async setGoogleClientId(clientId: string): Promise<void> {
       await delay();
@@ -267,6 +273,11 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         throw new Error("Google client ID must not be empty");
       }
       googleClientId = trimmed;
+    },
+    async setGoogleClientSecret(clientSecret: string): Promise<void> {
+      await delay();
+      // Mirrors core::google::set_client_secret: empty string clears the entry.
+      hasGoogleClientSecret = clientSecret !== "";
     },
     async googleConnect(): Promise<GoogleConnectResult> {
       if (googleClientId === null) {

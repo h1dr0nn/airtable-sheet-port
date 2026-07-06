@@ -20,6 +20,7 @@ export function Changes() {
   const [filter, setFilter] = useState<FilterValue>("all");
   const { data: changes, isPending } = useChanges(filter === "all" ? null : filter);
   const list = changes ?? [];
+  const filterLabel = FILTERS.find((option) => option.value === filter)?.label ?? filter;
 
   return (
     <>
@@ -43,7 +44,7 @@ export function Changes() {
         </div>
       ) : list.length === 0 ? (
         <EmptyState
-          title={filter === "all" ? "No changes yet" : `No ${filter} changes`}
+          title={filter === "all" ? "No Changes Yet" : `No ${filterLabel} Changes`}
           description="When an agent previews a write it appears here for review"
         />
       ) : (

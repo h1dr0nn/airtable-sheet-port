@@ -39,6 +39,28 @@ export function useSetGoogleClientId() {
   });
 }
 
+/** Stores the OAuth client secret in the keychain; empty string clears it. */
+export function useSetGoogleClientSecret() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (clientSecret: string) => ipc.setGoogleClientSecret(clientSecret),
+    onError: (error: unknown) => {
+      toast.error("Client secret not saved", { description: getErrorMessage(error) });
+    },
+    onSuccess: (_result, clientSecret) => {
+      if (clientSecret === "") {
+        toast.success("Google client secret cleared");
+      } else {
+        toast.success("Google client secret saved", { description: "Stored in the OS keychain" });
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.googleConfig });
+    }
+  });
+}
+
 export function useGoogleConnect() {
   const queryClient = useQueryClient();
 

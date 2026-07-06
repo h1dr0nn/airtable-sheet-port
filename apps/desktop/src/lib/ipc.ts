@@ -55,6 +55,7 @@ export type TokenStatus = {
 export type GoogleConfig = {
   clientId: string | null;       // OAuth desktop client id from Settings, null until saved
   connectedEmail: string | null; // linked Google account, null when disconnected
+  hasClientSecret: boolean;      // secret presence only; the value never crosses IPC
 };
 
 export type GoogleConnectResult = {
@@ -83,6 +84,8 @@ export interface IpcApi {
   tokenStatus(): Promise<TokenStatus>;
   getGoogleConfig(): Promise<GoogleConfig>;
   setGoogleClientId(clientId: string): Promise<void>;
+  /** Stores the OAuth client secret in the OS keychain; empty string clears it. */
+  setGoogleClientSecret(clientSecret: string): Promise<void>;
   /** Long-running: resolves after the user finishes the browser consent flow. */
   googleConnect(): Promise<GoogleConnectResult>;
   googleDisconnect(): Promise<void>;
@@ -109,6 +112,8 @@ const tauriIpc: IpcApi = {
   tokenStatus: () => invoke<TokenStatus>("token_status"),
   getGoogleConfig: () => invoke<GoogleConfig>("get_google_config"),
   setGoogleClientId: (clientId) => invoke<void>("set_google_client_id", { clientId }),
+  setGoogleClientSecret: (clientSecret) =>
+    invoke<void>("set_google_client_secret", { clientSecret }),
   googleConnect: () => invoke<GoogleConnectResult>("google_connect"),
   googleDisconnect: () => invoke<void>("google_disconnect")
 };

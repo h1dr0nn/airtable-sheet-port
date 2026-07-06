@@ -24,6 +24,15 @@ export function XIcon({ className }: IconProps) {
   );
 }
 
+export function SearchIcon({ className }: IconProps) {
+  return (
+    <svg {...baseProps(className)}>
+      <circle cx="7" cy="7" r="4.75" />
+      <path d="M10.5 10.5 14 14" />
+    </svg>
+  );
+}
+
 export function CheckIcon({ className }: IconProps) {
   return (
     <svg {...baseProps(className)}>

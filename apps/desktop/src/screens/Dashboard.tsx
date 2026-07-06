@@ -64,14 +64,14 @@ function McpStatCard() {
 
   if (isPending || !status) {
     return (
-      <StatCard label="MCP server">
+      <StatCard label="MCP Server">
         <Skeleton className="h-16" />
       </StatCard>
     );
   }
 
   return (
-    <StatCard label="MCP server">
+    <StatCard label="MCP Server">
       <div className="flex items-center gap-2">
         <StatusDot status={status.mcpRunning ? "live" : "idle"} />
         <span className="text-[15px] font-semibold text-ink">
@@ -95,7 +95,7 @@ function McpStatCard() {
           </p>
           <div className="mt-2 -ml-2">
             <CopyButton value={CLAUDE_DESKTOP_CONFIG_HINT} label="Copy Claude Desktop config">
-              Copy config
+              Copy Config
             </CopyButton>
           </div>
         </>
@@ -109,7 +109,7 @@ function PendingStatCard({ onNavigate }: { onNavigate: (screen: ScreenId) => voi
   const count = status?.pendingCount ?? 0;
 
   return (
-    <StatCard label="Pending approvals">
+    <StatCard label="Pending Approvals">
       {isPending || !status ? (
         <Skeleton className="h-16" />
       ) : (
@@ -126,7 +126,7 @@ function PendingStatCard({ onNavigate }: { onNavigate: (screen: ScreenId) => voi
             {count === 0 ? "Nothing waiting on you" : count === 1 ? "Change awaiting review" : "Changes awaiting review"}
           </p>
           <Button variant="secondary" size="sm" className="mt-3" onClick={() => onNavigate("changes")}>
-            Review changes
+            Review Changes
           </Button>
         </>
       )}
@@ -167,7 +167,7 @@ function TokenVaultStatCard() {
   ];
 
   return (
-    <StatCard label="Token vault">
+    <StatCard label="Token Vault">
       {isPending || !tokens ? (
         <Skeleton className="h-16" />
       ) : (
@@ -176,7 +176,7 @@ function TokenVaultStatCard() {
             <div key={row.label} className="flex items-center justify-between gap-3">
               <span className="text-[12.5px] text-ink">{row.label}</span>
               <Badge variant={row.stored ? "success" : "muted"}>
-                {row.stored ? "In keychain" : "Not stored"}
+                {row.stored ? "In Keychain" : "Not Stored"}
               </Badge>
             </div>
           ))}
@@ -199,13 +199,13 @@ function ConnectSourceCallout({ onNavigate }: { onNavigate: (screen: ScreenId) =
   return (
     <section className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-card border border-accent/30 bg-accent/[0.06] px-5 py-4">
       <div className="min-w-0">
-        <p className="text-[13px] font-semibold text-ink">No data sources connected</p>
+        <p className="text-[13px] font-semibold text-ink">No Data Sources Connected</p>
         <p className="mt-0.5 text-[12.5px] text-ink-muted">
           Connect a data source such as Google Sheets to give agents something to read.
         </p>
       </div>
       <Button size="sm" onClick={() => onNavigate("sources")}>
-        Connect a data source
+        Connect a Data Source
       </Button>
     </section>
   );
@@ -222,7 +222,7 @@ function RecentActivityCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent activity</CardTitle>
+        <CardTitle>Recent Activity</CardTitle>
       </CardHeader>
       <CardContent className="py-1">
         {isPending ? (
@@ -252,7 +252,7 @@ function RecentChangesCard({ onNavigate }: { onNavigate: (screen: ScreenId) => v
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent changes</CardTitle>
+        <CardTitle>Recent Changes</CardTitle>
         <button
           type="button"
           onClick={() => onNavigate("changes")}
@@ -261,7 +261,7 @@ function RecentChangesCard({ onNavigate }: { onNavigate: (screen: ScreenId) => v
             FOCUS_RING
           )}
         >
-          View all
+          View All
         </button>
       </CardHeader>
       <CardContent className="py-1">

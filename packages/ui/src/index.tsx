@@ -5,6 +5,16 @@ export { Button, type ButtonProps } from "./Button.js";
 export { Card, CardContent, CardHeader, CardTitle } from "./Card.js";
 export { Checkbox } from "./Checkbox.js";
 export {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator
+} from "./Command.js";
+export {
   Dialog,
   DialogClose,
   DialogContent,

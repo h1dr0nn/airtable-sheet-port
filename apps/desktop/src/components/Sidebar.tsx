@@ -36,10 +36,9 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-edge bg-bg">
-      {/* Wordmark: the app identity lives here, not in the titlebar. */}
-      <div className="flex items-center gap-2 px-6 pb-1 pt-4">
-        <span aria-hidden className="h-2 w-2 shrink-0 rounded-[3px] bg-accent" />
-        <h1 className="truncate text-[12.5px] font-semibold tracking-[-0.01em] text-ink">
+      {/* Wordmark: text only, the app identity lives here, not in the titlebar. */}
+      <div className="px-6 pb-1 pt-4">
+        <h1 className="truncate text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">
           {APP_NAME}
         </h1>
       </div>
@@ -91,7 +90,7 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
             FOCUS_RING
           )}
         >
-          Pending approvals
+          Pending Approvals
           <span
             className={cn(
               "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5",
@@ -104,7 +103,7 @@ export function Sidebar({ active, onNavigate }: SidebarProps) {
         </button>
         <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[12px]">
           <StatusDot status={mcpRunning ? "live" : "idle"} />
-          <span className="text-ink-muted">MCP server</span>
+          <span className="text-ink-muted">MCP Server</span>
           <span className={cn("ml-auto font-medium", mcpRunning ? "text-success" : "text-ink-muted")}>
             {mcpRunning ? "Running" : "Offline"}
           </span>

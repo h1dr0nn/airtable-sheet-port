@@ -13,7 +13,8 @@ import { useAppStatus } from "../hooks/useAppStatus.js";
 import {
   useGoogleConfig,
   useGoogleDisconnect,
-  useSetGoogleClientId
+  useSetGoogleClientId,
+  useSetGoogleClientSecret
 } from "../hooks/useGoogleConfig.js";
 import { usePermissionRules } from "../hooks/usePermissions.js";
 import { useSources } from "../hooks/useSources.js";
@@ -67,23 +68,152 @@ function AppearanceCard() {
   );
 }
 
-function GoogleSheetsCard() {
-  const { data: config, isPending } = useGoogleConfig();
+function ClientIdField({ storedClientId }: { storedClientId: string }) {
   const saveClientId = useSetGoogleClientId();
-  const disconnect = useGoogleDisconnect();
   // null draft = "not edited yet"; the input then mirrors the stored value.
   const [draft, setDraft] = useState<string | null>(null);
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
-  const storedClientId = config?.clientId ?? "";
   const value = draft ?? storedClientId;
   const trimmed = value.trim();
-  const canSave = trimmed !== "" && !saveClientId.isPending;
-  const connectedEmail = config?.connectedEmail ?? null;
+  // Dirty check: nothing to save when empty or unchanged.
+  const canSave = trimmed !== "" && trimmed !== storedClientId && !saveClientId.isPending;
 
   const save = () => {
     saveClientId.mutate(trimmed, { onSuccess: () => setDraft(null) });
   };
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[12px] font-medium text-ink-muted" htmlFor="google-client-id">
+        OAuth Client ID
+      </label>
+      <div className="flex items-center gap-2">
+        <Input
+          id="google-client-id"
+          className="font-mono text-[12.5px]"
+          value={value}
+          placeholder="1234567890-abc.apps.googleusercontent.com"
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button size="sm" disabled={!canSave} onClick={save}>
+          {saveClientId.isPending ? "Saving..." : "Save"}
+        </Button>
+      </div>
+      <p className="text-[12px] leading-4 text-ink-muted">
+        Desktop-app client ID from Google Cloud Console.
+      </p>
+    </div>
+  );
+}
+
+function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
+  const saveSecret = useSetGoogleClientSecret();
+  const [draft, setDraft] = useState("");
+  // Replace flow: a stored secret stays masked until the user opts to swap it.
+  const [isReplacing, setIsReplacing] = useState(false);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+
+  const showInput = !hasClientSecret || isReplacing;
+  const trimmed = draft.trim();
+  // Dirty check: presence only, the stored value can never be compared.
+  const canSave = trimmed !== "" && !saveSecret.isPending;
+
+  const save = () => {
+    saveSecret.mutate(trimmed, {
+      onSuccess: () => {
+        setDraft("");
+        setIsReplacing(false);
+      }
+    });
+  };
+
+  const clear = () => {
+    saveSecret.mutate("", {
+      onSettled: () => setIsClearConfirmOpen(false),
+      onSuccess: () => {
+        setDraft("");
+        setIsReplacing(false);
+      }
+    });
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[12px] font-medium text-ink-muted" htmlFor="google-client-secret">
+        OAuth Client Secret
+      </label>
+      {showInput ? (
+        <div className="flex items-center gap-2">
+          <Input
+            id="google-client-secret"
+            type="password"
+            className="font-mono text-[12.5px]"
+            value={draft}
+            placeholder="GOCSPX-..."
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <Button size="sm" disabled={!canSave} onClick={save}>
+            {saveSecret.isPending ? "Saving..." : "Save"}
+          </Button>
+          {isReplacing ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={saveSecret.isPending}
+              onClick={() => {
+                setDraft("");
+                setIsReplacing(false);
+              }}
+            >
+              Cancel
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex-1 truncate font-mono text-[12.5px] text-ink-muted">
+            •••••••• Stored in OS keychain
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setIsReplacing(true)}>
+            Replace
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={saveSecret.isPending}
+            onClick={() => setIsClearConfirmOpen(true)}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+      <p className="text-[12px] leading-4 text-ink-muted">
+        Google requires the Desktop-app client secret when exchanging the sign-in code; it never
+        leaves the keychain.
+      </p>
+      <ConfirmDialog
+        open={isClearConfirmOpen}
+        onOpenChange={setIsClearConfirmOpen}
+        title="Clear Client Secret?"
+        description="The client secret is removed from the OS keychain. Google sign-in will fail until a new secret is saved."
+        confirmLabel="Clear"
+        isPending={saveSecret.isPending}
+        onConfirm={clear}
+      />
+    </div>
+  );
+}
+
+function GoogleSheetsCard() {
+  const { data: config, isPending } = useGoogleConfig();
+  const disconnect = useGoogleDisconnect();
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
+  const connectedEmail = config?.connectedEmail ?? null;
 
   return (
     <Card>
@@ -95,28 +225,8 @@ function GoogleSheetsCard() {
           <Skeleton className="h-24" />
         ) : (
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-[12px] font-medium text-ink-muted" htmlFor="google-client-id">
-                OAuth client ID
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="google-client-id"
-                  className="font-mono text-[12.5px]"
-                  value={value}
-                  placeholder="1234567890-abc.apps.googleusercontent.com"
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(event) => setDraft(event.target.value)}
-                />
-                <Button size="sm" disabled={!canSave} onClick={save}>
-                  {saveClientId.isPending ? "Saving..." : "Save"}
-                </Button>
-              </div>
-              <p className="text-[12px] leading-4 text-ink-muted">
-                Desktop-app client ID from Google Cloud Console; no client secret is stored.
-              </p>
-            </div>
+            <ClientIdField storedClientId={config.clientId ?? ""} />
+            <ClientSecretField hasClientSecret={config.hasClientSecret} />
 
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-edge pt-4">
               <div className="flex min-w-0 items-center gap-2">
@@ -227,7 +337,7 @@ function AboutCard() {
               </dd>
             </div>
             <div className="flex h-9 items-center justify-between gap-4">
-              <dt className="text-[13px] text-ink-muted">Created by</dt>
+              <dt className="text-[13px] text-ink-muted">Created By</dt>
               <dd className="text-[12.5px] font-medium text-ink">{APP_AUTHOR}</dd>
             </div>
           </dl>
