@@ -1,7 +1,16 @@
 import type { AuditEvent } from "@sheet-port/shared";
 
+const DEFAULT_AUDIT_LIMIT = 100;
+
+/** Persistence abstraction implemented by @sheet-port/storage. */
+export interface AuditStorePort {
+  insert(event: AuditEvent): void;
+  /** Newest first. */
+  list(limit: number, offset: number): AuditEvent[];
+}
+
 export class AuditService {
-  private readonly events: AuditEvent[] = [];
+  constructor(private readonly store: AuditStorePort) {}
 
   record(event: Omit<AuditEvent, "id" | "timestamp">): AuditEvent {
     const auditEvent: AuditEvent = {
@@ -9,11 +18,11 @@ export class AuditService {
       id: `evt_${crypto.randomUUID()}`,
       timestamp: new Date().toISOString()
     };
-    this.events.unshift(auditEvent);
+    this.store.insert(auditEvent);
     return auditEvent;
   }
 
-  list(limit = 100): AuditEvent[] {
-    return this.events.slice(0, limit);
+  list(limit = DEFAULT_AUDIT_LIMIT, offset = 0): AuditEvent[] {
+    return this.store.list(limit, offset);
   }
 }

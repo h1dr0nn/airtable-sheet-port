@@ -1,7 +1,12 @@
 import type { DataSource, DataSourceKind, ReadTableOptions, RecordPatch, TableConnector, TableRecord, TableRef, TableSchema } from "@sheet-port/shared";
 
+/** Maps a source id to its connector kind; backed by the sources table in the sidecar. */
+export type ResolveSourceKind = (sourceId: string) => DataSourceKind | undefined;
+
 export class ConnectorRegistry {
   private readonly connectors = new Map<DataSourceKind, TableConnector>();
+
+  constructor(private readonly resolveKind: ResolveSourceKind) {}
 
   register(connector: TableConnector): void {
     this.connectors.set(connector.kind, connector);
@@ -37,11 +42,14 @@ export class ConnectorRegistry {
   }
 
   private forSource(sourceId: string): TableConnector {
-    for (const connector of this.connectors.values()) {
-      if (sourceId.startsWith(connector.kind) || sourceId === "mock-source") {
-        return connector;
-      }
+    const kind = this.resolveKind(sourceId);
+    if (!kind) {
+      throw new Error(`Unknown source ${sourceId}`);
     }
-    throw new Error(`No connector registered for source ${sourceId}`);
+    const connector = this.connectors.get(kind);
+    if (!connector) {
+      throw new Error(`No connector registered for source kind ${kind} (source ${sourceId})`);
+    }
+    return connector;
   }
 }

@@ -1,135 +1,70 @@
 import type { DataSource, ReadTableOptions, RecordPatch, TableConnector, TableRecord, TableRef, TableSchema } from "@sheet-port/shared";
+import type { MockDataStore, SourceStore } from "@sheet-port/storage";
 
-const source: DataSource = {
-  id: "mock-source",
-  kind: "mock",
-  name: "Demo Workspace"
-};
+/** Cap for text search results so agents never receive unbounded payloads. */
+const FIND_RECORDS_LIMIT = 100;
 
-const table: TableRef = {
-  sourceId: source.id,
-  tableId: "customers",
-  name: "Customers"
-};
-
-const schema: TableSchema = {
-  sourceId: source.id,
-  tableId: table.tableId,
-  name: table.name,
-  fields: [
-    { name: "Name", type: "string", required: true },
-    { name: "Email", type: "email" },
-    { name: "Status", type: "enum", enumValues: ["Active", "Paused", "Inactive"] },
-    { name: "Seats", type: "number" },
-    { name: "RenewalDate", type: "date" }
-  ]
-};
-
+/**
+ * Mock connector backed by the shared SQLite database, so the desktop UI and
+ * the MCP sidecar observe the same tables, records, and committed changes.
+ */
 export class MockConnector implements TableConnector {
   readonly kind = "mock" as const;
 
-  private records: TableRecord[] = [
-    {
-      id: "rec_1",
-      fields: {
-        Name: "Acme Operations",
-        Email: "ops@acme.example",
-        Status: "Active",
-        Seats: 18,
-        RenewalDate: "2026-10-01"
-      }
-    },
-    {
-      id: "rec_2",
-      fields: {
-        Name: "Northwind Analytics",
-        Email: "data@northwind.example",
-        Status: "Paused",
-        Seats: 7,
-        RenewalDate: "2026-08-15"
-      }
-    },
-    {
-      id: "rec_3",
-      fields: {
-        Name: "Contoso Finance",
-        Email: "finance@contoso.example",
-        Status: "Active",
-        Seats: 32,
-        RenewalDate: "2027-01-20"
-      }
-    }
-  ];
+  constructor(
+    private readonly data: MockDataStore,
+    private readonly sources: SourceStore
+  ) {}
 
   async listSources(): Promise<DataSource[]> {
-    return [source];
+    return this.sources.list().filter((source) => source.kind === this.kind);
   }
 
   async listTables(sourceId: string): Promise<TableRef[]> {
     this.assertSource(sourceId);
-    return [table];
+    return this.data.listTables(sourceId);
   }
 
   async describeTable(sourceId: string, tableId: string): Promise<TableSchema> {
-    this.assertTable(sourceId, tableId);
-    return schema;
+    return this.requireTable(sourceId, tableId);
   }
 
   async readTable(sourceId: string, tableId: string, options: ReadTableOptions = {}): Promise<TableRecord[]> {
-    this.assertTable(sourceId, tableId);
-    const offset = options.offset ?? 0;
-    const limit = options.limit ?? this.records.length;
-    return this.records.slice(offset, offset + limit).map(cloneRecord);
+    this.requireTable(sourceId, tableId);
+    return this.data.listRecords(sourceId, tableId, options).records;
   }
 
   async findRecords(sourceId: string, tableId: string, query: string): Promise<TableRecord[]> {
-    this.assertTable(sourceId, tableId);
+    this.requireTable(sourceId, tableId);
     const normalized = query.toLowerCase();
-    return this.records
+    const { records } = this.data.listRecords(sourceId, tableId);
+    return records
       .filter((record) => Object.values(record.fields).some((value) => String(value).toLowerCase().includes(normalized)))
-      .map(cloneRecord);
+      .slice(0, FIND_RECORDS_LIMIT);
   }
 
   async appendRecords(sourceId: string, tableId: string, records: Array<Record<string, unknown>>): Promise<TableRecord[]> {
-    this.assertTable(sourceId, tableId);
-    const appended = records.map((fields) => ({
-      id: `rec_${crypto.randomUUID()}`,
-      fields: { ...fields }
-    }));
-    this.records = [...this.records, ...appended];
-    return appended.map(cloneRecord);
+    this.requireTable(sourceId, tableId);
+    return this.data.appendRecords(sourceId, tableId, records);
   }
 
   async updateRecords(sourceId: string, tableId: string, patches: RecordPatch[]): Promise<TableRecord[]> {
-    this.assertTable(sourceId, tableId);
-    const updated: TableRecord[] = [];
-    const patchById = new Map(patches.map((patch) => [patch.recordId, patch]));
-    this.records = this.records.map((record) => {
-      const patch = patchById.get(record.id);
-      if (!patch) {
-        return record;
-      }
-      const next = { ...record, fields: { ...record.fields, ...patch.fields } };
-      updated.push(next);
-      return next;
-    });
-    return updated.map(cloneRecord);
+    this.requireTable(sourceId, tableId);
+    return this.data.updateRecords(sourceId, tableId, patches);
   }
 
   private assertSource(sourceId: string): void {
-    if (sourceId !== source.id) {
+    if (this.sources.getKind(sourceId) !== this.kind) {
       throw new Error(`Unknown mock source ${sourceId}`);
     }
   }
 
-  private assertTable(sourceId: string, tableId: string): void {
+  private requireTable(sourceId: string, tableId: string): TableSchema {
     this.assertSource(sourceId);
-    if (tableId !== table.tableId) {
-      throw new Error(`Unknown mock table ${tableId}`);
+    const schema = this.data.getTable(sourceId, tableId);
+    if (!schema) {
+      throw new Error(`Unknown mock table ${sourceId}/${tableId}`);
     }
+    return schema;
   }
-}
-
-function cloneRecord(record: TableRecord): TableRecord {
-  return { id: record.id, fields: { ...record.fields } };
 }

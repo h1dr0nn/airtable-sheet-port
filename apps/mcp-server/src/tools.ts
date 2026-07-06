@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { BULK_UPDATE_THRESHOLD } from "@sheet-port/shared";
 import { z } from "zod";
 import type { AppContext } from "./context.js";
 
@@ -7,37 +8,62 @@ const sourceTableSchema = {
   tableId: z.string().min(1)
 };
 
+const READ_ONLY = { readOnlyHint: true } as const;
+
 export function createServer(context: AppContext): McpServer {
   const server = new McpServer({
     name: "sheet-port",
     version: "0.1.0"
   });
 
-  server.tool("list_sources", "List connected data sources.", {}, async () => {
-    const sources = await context.registry.listSources();
-    context.audit.record({ actor: "agent", action: "list_sources", metadata: { count: sources.length } });
-    return json({ sources });
-  });
+  server.registerTool(
+    "list_sources",
+    { description: "List connected data sources.", annotations: READ_ONLY },
+    async () => {
+      const sources = await context.registry.listSources();
+      context.audit.record({ actor: "agent", action: "list_sources", metadata: { count: sources.length } });
+      return json({ sources });
+    }
+  );
 
-  server.tool("list_tables", "List tables for a data source.", { sourceId: z.string().min(1) }, async ({ sourceId }) => {
-    context.permissions.assertCanRead(sourceId);
-    const tables = await context.registry.listTables(sourceId);
-    context.audit.record({ actor: "agent", action: "list_tables", sourceId, metadata: { count: tables.length } });
-    return json({ tables });
-  });
+  server.registerTool(
+    "list_tables",
+    {
+      description: "List tables for a data source.",
+      inputSchema: { sourceId: z.string().min(1) },
+      annotations: READ_ONLY
+    },
+    async ({ sourceId }) => {
+      context.permissions.assertCanRead(sourceId);
+      const tables = await context.registry.listTables(sourceId);
+      context.audit.record({ actor: "agent", action: "list_tables", sourceId, metadata: { count: tables.length } });
+      return json({ tables });
+    }
+  );
 
-  server.tool("describe_table", "Describe a table schema.", sourceTableSchema, async ({ sourceId, tableId }) => {
-    context.permissions.assertCanRead(sourceId, tableId);
-    const schema = await context.registry.describeTable(sourceId, tableId);
-    context.schemas.set(schema);
-    context.audit.record({ actor: "agent", action: "describe_table", sourceId, tableId });
-    return json({ schema });
-  });
+  server.registerTool(
+    "describe_table",
+    { description: "Describe a table schema.", inputSchema: sourceTableSchema, annotations: READ_ONLY },
+    async ({ sourceId, tableId }) => {
+      context.permissions.assertCanRead(sourceId, tableId);
+      const schema = await context.registry.describeTable(sourceId, tableId);
+      context.schemas.set(schema);
+      context.audit.record({ actor: "agent", action: "describe_table", sourceId, tableId });
+      return json({ schema });
+    }
+  );
 
-  server.tool(
+  server.registerTool(
     "read_table",
-    "Read bounded records from a table.",
-    { ...sourceTableSchema, limit: z.number().int().min(1).max(500).default(100), offset: z.number().int().min(0).default(0) },
+    {
+      description: "Read bounded records from a table.",
+      inputSchema: {
+        ...sourceTableSchema,
+        limit: z.number().int().min(1).max(500).default(100),
+        offset: z.number().int().min(0).default(0)
+      },
+      annotations: READ_ONLY
+    },
     async ({ sourceId, tableId, limit, offset }) => {
       context.permissions.assertCanRead(sourceId, tableId);
       const records = await context.registry.readTable(sourceId, tableId, { limit, offset });
@@ -46,10 +72,13 @@ export function createServer(context: AppContext): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "find_records",
-    "Find records by text query.",
-    { ...sourceTableSchema, query: z.string().min(1).max(200) },
+    {
+      description: "Find records by text query.",
+      inputSchema: { ...sourceTableSchema, query: z.string().min(1).max(200) },
+      annotations: READ_ONLY
+    },
     async ({ sourceId, tableId, query }) => {
       context.permissions.assertCanRead(sourceId, tableId);
       const records = await context.registry.findRecords(sourceId, tableId, query);
@@ -58,16 +87,21 @@ export function createServer(context: AppContext): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "preview_update_records",
-    "Create a pending update change and return its diff.",
     {
-      ...sourceTableSchema,
-      patches: z.array(z.object({ recordId: z.string().min(1), fields: z.record(z.unknown()) })).min(1).max(100)
+      description: "Create a pending update change and return its diff.",
+      inputSchema: {
+        ...sourceTableSchema,
+        patches: z.array(z.object({ recordId: z.string().min(1), fields: z.record(z.unknown()) })).min(1).max(100)
+      }
     },
     async ({ sourceId, tableId, patches }) => {
-      const policy = context.permissions.assertCanWrite(sourceId, tableId, patches.length > 20 ? "update" : "update");
-      const change = await context.changes.createUpdateChange(sourceId, tableId, patches, context.registry);
+      // Read permission is checked first: the diff exposes current record values.
+      context.permissions.assertCanRead(sourceId, tableId);
+      const action = patches.length > BULK_UPDATE_THRESHOLD ? "bulk_update" : "update";
+      const policy = context.permissions.assertCanWrite(sourceId, tableId, action);
+      const change = await context.changes.createUpdateChange(sourceId, tableId, patches, policy.requiresConfirmation);
       context.audit.record({
         actor: "agent",
         action: "preview_update_records",
@@ -79,13 +113,15 @@ export function createServer(context: AppContext): McpServer {
     }
   );
 
-  server.tool(
+  server.registerTool(
     "append_records",
-    "Create a pending append change and return its diff.",
-    { ...sourceTableSchema, records: z.array(z.record(z.unknown())).min(1).max(100) },
+    {
+      description: "Create a pending append change and return its diff.",
+      inputSchema: { ...sourceTableSchema, records: z.array(z.record(z.unknown())).min(1).max(100) }
+    },
     async ({ sourceId, tableId, records }) => {
       const policy = context.permissions.assertCanWrite(sourceId, tableId, "append");
-      const change = context.changes.createAppendChange(sourceId, tableId, records);
+      const change = context.changes.createAppendChange(sourceId, tableId, records, policy.requiresConfirmation);
       context.audit.record({
         actor: "agent",
         action: "append_records_preview",
@@ -97,26 +133,44 @@ export function createServer(context: AppContext): McpServer {
     }
   );
 
-  server.tool("commit_change", "Commit a pending change after policy checks.", { changeId: z.string().min(1) }, async ({ changeId }) => {
-    const pending = context.changes.get(changeId);
-    if (!pending) {
-      throw new Error(`Unknown change ${changeId}`);
+  server.registerTool(
+    "commit_change",
+    {
+      description: "Commit a pending change after policy checks.",
+      inputSchema: { changeId: z.string().min(1) }
+    },
+    async ({ changeId }) => {
+      const pending = context.changes.get(changeId);
+      if (!pending) {
+        throw new Error(`Unknown change ${changeId}`);
+      }
+      context.permissions.assertCanWrite(pending.sourceId, pending.tableId, pending.type);
+      // ChangeService.commit enforces the approval flow (docs/ipc.md) and
+      // re-checks permissions with the exact preview action before writing.
+      const result = await context.changes.commit(changeId);
+      context.audit.record({
+        actor: "agent",
+        action: "commit_change",
+        sourceId: result.change.sourceId,
+        tableId: result.change.tableId,
+        metadata: { changeId, recordCount: result.records.length }
+      });
+      return json(result);
     }
-    context.permissions.assertCanWrite(pending.sourceId, pending.tableId, pending.type);
-    const result = await context.changes.commit(changeId, context.registry);
-    context.audit.record({
-      actor: "agent",
-      action: "commit_change",
-      sourceId: result.change.sourceId,
-      tableId: result.change.tableId,
-      metadata: { changeId, recordCount: result.records.length }
-    });
-    return json(result);
-  });
+  );
 
-  server.tool("get_audit_log", "Return recent audit events.", { limit: z.number().int().min(1).max(500).default(100) }, async ({ limit }) => {
-    return json({ events: context.audit.list(limit) });
-  });
+  server.registerTool(
+    "get_audit_log",
+    {
+      description: "Return recent audit events.",
+      inputSchema: { limit: z.number().int().min(1).max(500).default(100) },
+      annotations: READ_ONLY
+    },
+    async ({ limit }) => {
+      context.audit.record({ actor: "agent", action: "get_audit_log", metadata: { limit } });
+      return json({ events: context.audit.list(limit) });
+    }
+  );
 
   return server;
 }

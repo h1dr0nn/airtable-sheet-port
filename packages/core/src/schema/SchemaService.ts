@@ -11,6 +11,10 @@ export class SchemaService {
     this.schemas.set(this.key(schema.sourceId, schema.tableId), schema);
   }
 
+  clearCache(): void {
+    this.schemas.clear();
+  }
+
   validateFields(schema: TableSchema, fields: Record<string, unknown>): string[] {
     const allowed = new Set(schema.fields.map((field) => field.name));
     return Object.keys(fields).filter((name) => !allowed.has(name));
