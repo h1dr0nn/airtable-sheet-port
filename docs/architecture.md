@@ -2,7 +2,7 @@
 
 ## High-Level Architecture
 
-Sheet Port is a local desktop app plus a local MCP sidecar. The desktop app owns identity, policy, approval, and audit UX. The MCP sidecar exposes a small set of table tools to agents and delegates all domain decisions to shared core services.
+Airtable - Sheet Port is a local desktop app plus a local MCP sidecar. The desktop app owns identity, policy, approval, and audit UX. The MCP sidecar exposes a small set of table tools to agents and delegates all domain decisions to shared core services.
 
 ```mermaid
 flowchart LR

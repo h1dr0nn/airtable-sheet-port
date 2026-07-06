@@ -36,13 +36,13 @@ The Airtable connector will map bases to sources, tables to tables, fields to sc
 
 - API key or OAuth setup stored in OS keychain.
 - Base and table discovery.
-- Field type mapping to Sheet Port field types.
+- Field type mapping to Airtable - Sheet Port field types.
 - Pagination and rate-limit handling.
 - Batch update and append operations.
 
 ## Google Sheets Range Mapping
 
-Google Sheets does not have native row ids. Sheet Port should create internal record ids using a table id plus row number or a hidden configured id column. The preferred production path is a stable id column because row-number ids shift when users sort or insert rows.
+Google Sheets does not have native row ids. Airtable - Sheet Port should create internal record ids using a table id plus row number or a hidden configured id column. The preferred production path is a stable id column because row-number ids shift when users sort or insert rows.
 
 ## Airtable Mapping
 

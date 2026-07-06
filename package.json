@@ -2,7 +2,7 @@
   "name": "airtable-sheet-port",
   "private": true,
   "version": "0.1.0",
-  "description": "Sheet Port - Safe local port for AI agents to access tables and spreadsheets.",
+  "description": "Airtable - Sheet Port - Safe local port for AI agents to access tables and spreadsheets.",
   "type": "module",
   "packageManager": "pnpm@9.15.4",
   "scripts": {

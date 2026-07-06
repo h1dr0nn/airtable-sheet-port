@@ -28,7 +28,7 @@ export function App() {
               <Database size={20} />
             </div>
             <div>
-              <h1 className="text-lg font-semibold">Sheet Port</h1>
+              <h1 className="text-lg font-semibold">Airtable - Sheet Port</h1>
               <p className="text-xs text-slate-500">Safe local table access</p>
             </div>
           </div>

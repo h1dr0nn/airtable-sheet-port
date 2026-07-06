@@ -22,9 +22,9 @@ AI agents are useful for spreadsheet cleanup, enrichment, reporting, and operati
 
 ## Non-Goals
 
-- Sheet Port is not a full spreadsheet editor.
-- Sheet Port is not a cloud-hosted proxy.
-- Sheet Port does not expose raw provider APIs to agents.
+- Airtable - Sheet Port is not a full spreadsheet editor.
+- Airtable - Sheet Port is not a cloud-hosted proxy.
+- Airtable - Sheet Port does not expose raw provider APIs to agents.
 - The MVP does not implement destructive delete flows.
 - The MVP does not sync every spreadsheet feature such as formulas, charts, formatting, or pivot tables.
 

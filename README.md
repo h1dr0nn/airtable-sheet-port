@@ -1,8 +1,8 @@
-# Sheet Port
+# Airtable - Sheet Port
 
 Safe local port for AI agents to access tables and spreadsheets.
 
-Sheet Port is a desktop permission broker for Google Sheets now and Airtable later. The app owns OAuth tokens and local policy, while AI agents interact only through a narrow local MCP server with typed tools for reading, previewing, and committing table changes.
+Airtable - Sheet Port is a desktop permission broker for Google Sheets now and Airtable later. The app owns OAuth tokens and local policy, while AI agents interact only through a narrow local MCP server with typed tools for reading, previewing, and committing table changes.
 
 ## Current Status
 
