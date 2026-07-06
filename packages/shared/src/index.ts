@@ -1,9 +1,12 @@
 export type DataSourceKind = "google_sheets" | "provider" | "mock";
 
+export type SourceStatus = "connected" | "placeholder" | "error";
+
 export type DataSource = {
   id: string;
   kind: DataSourceKind;
   name: string;
+  status?: SourceStatus;
 };
 
 export type TableRef = {
@@ -40,6 +43,12 @@ export type RecordPatch = {
 export type ChangeType = "append" | "update" | "delete";
 export type ConfirmationAction = "append" | "update" | "delete" | "bulk_update" | "formula_change";
 
+/** Write action evaluated against permission rules; wider than ChangeType. */
+export type WriteAction = ChangeType | "bulk_update";
+
+/** Update previews touching more than this many records are treated as bulk_update. */
+export const BULK_UPDATE_THRESHOLD = 20;
+
 export type PermissionRule = {
   sourceId: string;
   tableId?: string;
@@ -49,14 +58,21 @@ export type PermissionRule = {
   requireConfirmationFor: ConfirmationAction[];
 };
 
+export type ChangeStatus = "pending" | "approved" | "committed" | "rejected";
+
 export type PendingChange = {
   id: string;
   sourceId: string;
   tableId: string;
   type: ChangeType;
   createdAt: string;
-  status: "pending" | "committed" | "rejected";
+  status: ChangeStatus;
+  /** True when the matching permission rule requires user confirmation before commit. */
+  requiresConfirmation: boolean;
   diff: unknown;
+  decidedAt?: string;
+  decidedBy?: "user" | "policy";
+  committedAt?: string;
 };
 
 export type AuditEvent = {
