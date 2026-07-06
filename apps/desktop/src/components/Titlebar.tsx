@@ -213,6 +213,26 @@ export function Titlebar({
       className="relative flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-transparent"
     >
       <div className="flex h-full items-stretch">
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Application menu"
+                  className={TITLEBAR_BUTTON_CLASS}
+                >
+                  <svg {...MENU_GLYPH_PROPS}>
+                    <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />
+                  </svg>
+                </button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Menu</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="start">{renderMenuEntries(menu)}</DropdownMenuContent>
+        </DropdownMenu>
+
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -233,26 +253,6 @@ export function Titlebar({
             {sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           </TooltipContent>
         </Tooltip>
-
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Application menu"
-                  className={TITLEBAR_BUTTON_CLASS}
-                >
-                  <svg {...MENU_GLYPH_PROPS}>
-                    <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />
-                  </svg>
-                </button>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Menu</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="start">{renderMenuEntries(menu)}</DropdownMenuContent>
-        </DropdownMenu>
 
         <Tooltip>
           <TooltipTrigger asChild>
