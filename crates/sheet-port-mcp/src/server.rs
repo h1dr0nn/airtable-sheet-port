@@ -18,7 +18,7 @@ use crate::tools;
 
 /// Server identity agents see in `initialize`; matches the TypeScript sidecar.
 const SERVER_NAME: &str = "sheet-port";
-const SERVER_VERSION: &str = "0.0.1";
+const SERVER_VERSION: &str = "0.3.0";
 
 pub struct SheetPortServer {
     state: Arc<BrokerState>,

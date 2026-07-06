@@ -1,6 +1,6 @@
 [package]
 name = "sheet-port-mcp"
-version = "0.0.1"
+version = "0.3.0"
 description = "Airtable - Sheet Port MCP sidecar: stdio server exposing the 9 broker tools to AI agents."
 authors = ["Airtable - Sheet Port"]
 edition = "2021"
