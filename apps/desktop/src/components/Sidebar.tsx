@@ -87,7 +87,7 @@ export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps)
       <div className={cn("pb-1 pt-4", collapsed ? "px-3" : "px-6")}>
         <h1
           className={cn(
-            "truncate text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted",
+            "truncate text-[13px] font-semibold uppercase tracking-wide text-ink",
             "motion-safe:transition-opacity motion-safe:duration-[var(--dur-fast)]",
             collapsed && "opacity-0"
           )}
