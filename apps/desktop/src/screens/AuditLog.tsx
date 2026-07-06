@@ -1,15 +1,26 @@
-import { ChevronDown, ChevronRight, ScrollText } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, Card, EmptyState, Skeleton } from "@sheet-port/ui";
+import { Badge, Button, Card, EmptyState, Skeleton, cn, type BadgeVariant } from "@sheet-port/ui";
 import type { AuditEvent } from "@sheet-port/shared";
 import { useAuditEvents } from "../hooks/useAuditEvents.js";
-import { RelativeTime } from "../components/RelativeTime.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 
-const EMPTY_STATE_ICON_SIZE = 22;
-const EXPAND_ICON_SIZE = 13;
+const ISO_DATE_END = 10;
+const ISO_TIME_START = 11;
+const ISO_TIME_END = 19;
 
-const ACTOR_VARIANTS = { agent: "info", user: "success", system: "muted" } as const;
+const ACTOR_VARIANTS: Record<"agent" | "user" | "system", BadgeVariant> = {
+  agent: "default",
+  user: "strong",
+  system: "muted"
+};
+
+/** "YYYY-MM-DD HH:MM:SS" readout from an ISO timestamp; raw value if malformed. */
+function formatIsoTimestamp(iso: string): string {
+  if (iso.length < ISO_TIME_END) {
+    return iso;
+  }
+  return `${iso.slice(0, ISO_DATE_END)} ${iso.slice(ISO_TIME_START, ISO_TIME_END)}`;
+}
 
 function AuditRow({ event }: { event: AuditEvent }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -18,30 +29,35 @@ function AuditRow({ event }: { event: AuditEvent }) {
 
   return (
     <li className="border-t border-edge first:border-t-0">
-      <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="flex h-8 items-center gap-3 px-4">
         <button
           type="button"
           aria-label={isExpanded ? "Collapse metadata" : "Expand metadata"}
           aria-expanded={isExpanded}
           disabled={!hasMetadata}
           onClick={() => setIsExpanded((current) => !current)}
-          className="rounded p-0.5 text-ink-muted transition-colors enabled:hover:bg-raised enabled:hover:text-ink disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-        >
-          {isExpanded ? (
-            <ChevronDown size={EXPAND_ICON_SIZE} aria-hidden />
-          ) : (
-            <ChevronRight size={EXPAND_ICON_SIZE} aria-hidden />
+          className={cn(
+            "w-4 shrink-0 font-mono text-xs text-ink-muted transition-colors",
+            "enabled:hover:text-ink disabled:opacity-30",
+            "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard"
           )}
+        >
+          <span aria-hidden>{isExpanded ? "-" : "+"}</span>
         </button>
-        <RelativeTime iso={event.timestamp} className="w-20 shrink-0 font-mono text-xs text-ink-muted" />
+        <time
+          dateTime={event.timestamp}
+          className="shrink-0 font-mono text-[11px] tabular-nums text-ink-muted"
+        >
+          {formatIsoTimestamp(event.timestamp)}
+        </time>
         <Badge variant={ACTOR_VARIANTS[event.actor]}>{event.actor}</Badge>
-        <span className="truncate text-[13px] font-medium text-ink">{event.action}</span>
+        <span className="truncate font-mono text-xs text-ink">{event.action}</span>
         {target !== "" ? (
-          <span className="ml-auto truncate font-mono text-xs text-ink-muted">{target}</span>
+          <span className="ml-auto truncate font-mono text-[11px] text-ink-muted">{target}</span>
         ) : null}
       </div>
       {isExpanded && hasMetadata ? (
-        <pre className="mx-4 mb-3 overflow-x-auto rounded-md border border-edge bg-bg p-3 font-mono text-[11px] leading-4 text-ink-muted">
+        <pre className="mx-4 mb-3 overflow-x-auto border border-edge bg-bg p-3 font-mono text-[11px] leading-4 text-ink-muted">
           {JSON.stringify(event.metadata, null, 2)}
         </pre>
       ) : null}
@@ -57,20 +73,20 @@ export function AuditLog() {
     <>
       <ScreenHeader
         title="Audit Log"
-        description="Every read, preview, decision, and commit, in order."
+        description="Every read, preview, decision, and commit, in order"
+        meta={isPending ? "EVT / SCAN" : `EVT ${events.length}${hasNextPage ? "+" : ""}`}
       />
 
       {isPending ? (
-        <div className="space-y-3">
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
+        <div className="grid gap-px border border-edge bg-edge">
+          <Skeleton className="h-8" />
+          <Skeleton className="h-8" />
+          <Skeleton className="h-8" />
         </div>
       ) : events.length === 0 ? (
         <EmptyState
-          icon={<ScrollText size={EMPTY_STATE_ICON_SIZE} aria-hidden />}
-          title="No audit events"
-          description="Agent activity is recorded here as soon as it happens."
+          title="No records"
+          description="Agent activity is recorded here as soon as it happens"
         />
       ) : (
         <>
@@ -89,7 +105,7 @@ export function AuditLog() {
                 disabled={isFetchingNextPage}
                 onClick={() => void fetchNextPage()}
               >
-                {isFetchingNextPage ? "Loading..." : "Load more"}
+                {isFetchingNextPage ? "Loading..." : ">>> Load more"}
               </Button>
             </div>
           ) : null}

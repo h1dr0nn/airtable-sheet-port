@@ -5,7 +5,6 @@ import {
   useReactTable,
   type RowData
 } from "@tanstack/react-table";
-import { Check, X } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { Badge, Button, cn } from "@sheet-port/ui";
 import type { FieldSchema, TableRecord, TableSchema } from "@sheet-port/shared";
@@ -21,29 +20,32 @@ declare module "@tanstack/react-table" {
   }
 }
 
-const BOOL_ICON_SIZE = 14;
-
 function renderTypedCell(field: FieldSchema, value: unknown): ReactNode {
   if (value === null || value === undefined || value === "") {
-    return <span className="text-ink-muted/50">-</span>;
+    return <span className="text-ink-muted">-</span>;
   }
   switch (field.type) {
     case "boolean":
+      // ASCII truth markers; green stays reserved for the MCP readout.
       return value === true ? (
-        <Check size={BOOL_ICON_SIZE} className="text-accent" aria-label="true" />
+        <span className="font-mono text-xs font-bold text-ink" aria-label="true">
+          X
+        </span>
       ) : (
-        <X size={BOOL_ICON_SIZE} className="text-ink-muted" aria-label="false" />
+        <span className="font-mono text-xs text-ink-muted" aria-label="false">
+          -
+        </span>
       );
     case "email":
-      return <span className="font-mono text-[13px]">{formatValue(value)}</span>;
+      return <span className="font-mono text-xs">{formatValue(value)}</span>;
     case "enum":
       return <Badge variant="muted">{formatValue(value)}</Badge>;
     case "number":
-      return <span className="font-mono text-[13px] tabular-nums">{formatValue(value)}</span>;
+      return <span className="font-mono text-xs tabular-nums">{formatValue(value)}</span>;
     case "date":
-      return <span className="font-mono text-[13px]">{formatValue(value)}</span>;
+      return <span className="font-mono text-xs">{formatValue(value)}</span>;
     default:
-      return <span className="text-[13px]">{formatValue(value)}</span>;
+      return <span className="font-mono text-xs">{formatValue(value)}</span>;
   }
 }
 
@@ -61,7 +63,7 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
       columnHelper.accessor("id", {
         id: "__record_id",
         header: "Record",
-        cell: (info) => <span className="font-mono text-xs text-ink-muted">{info.getValue()}</span>
+        cell: (info) => <span className="font-mono text-[11px] text-ink-muted">{info.getValue()}</span>
       }),
       ...schema.fields.map((field) =>
         columnHelper.accessor((row) => row.fields[field.name], {
@@ -81,19 +83,21 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
   const lastRow = Math.min(page.total, (pageIndex + 1) * TABLE_PAGE_SIZE);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-edge bg-surface shadow-card">
+    <div className="border border-edge bg-surface">
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="bg-raised/60">
+              <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
                   const align = header.column.columnDef.meta?.align;
                   return (
                     <th
                       key={header.id}
                       className={cn(
-                        "px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-widest text-ink-muted",
+                        "h-8 border-b border-r border-edge bg-raised px-3 text-left align-middle",
+                        "font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-ink-muted",
+                        "last:border-r-0",
                         align === "right" && "text-right"
                       )}
                     >
@@ -106,11 +110,17 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-t border-edge transition-colors hover:bg-raised/40">
+              <tr key={row.id} className="transition-colors hover:bg-raised [&:last-child>td]:border-b-0">
                 {row.getVisibleCells().map((cell) => {
                   const align = cell.column.columnDef.meta?.align;
                   return (
-                    <td key={cell.id} className={cn("px-3 py-2", align === "right" && "text-right")}>
+                    <td
+                      key={cell.id}
+                      className={cn(
+                        "h-8 border-b border-r border-edge px-3 align-middle last:border-r-0",
+                        align === "right" && "text-right"
+                      )}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   );
@@ -121,9 +131,11 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
         </table>
       </div>
       <footer className="flex items-center justify-between border-t border-edge px-3 py-2">
-        <p className="text-xs text-ink-muted">
-          <span className="font-mono tabular-nums">{firstRow}-{lastRow}</span> of{" "}
-          <span className="font-mono tabular-nums">{page.total}</span> records
+        <p className="font-mono text-[11px] uppercase tracking-[0.05em] text-ink-muted">
+          <span className="tabular-nums text-ink">
+            {firstRow}-{lastRow}
+          </span>{" "}
+          of <span className="tabular-nums text-ink">{page.total}</span> records
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -132,9 +144,9 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
             disabled={pageIndex === 0}
             onClick={() => onPageChange(pageIndex - 1)}
           >
-            Previous
+            {"< Prev"}
           </Button>
-          <span className="font-mono text-xs tabular-nums text-ink-muted">
+          <span className="font-mono text-[11px] tabular-nums text-ink-muted">
             {pageIndex + 1}/{pageCount}
           </span>
           <Button
@@ -143,7 +155,7 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
             disabled={pageIndex + 1 >= pageCount}
             onClick={() => onPageChange(pageIndex + 1)}
           >
-            Next
+            {"Next >"}
           </Button>
         </div>
       </footer>

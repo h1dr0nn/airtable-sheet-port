@@ -1,15 +1,6 @@
-import { ArrowRight } from "lucide-react";
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Skeleton,
-  StatusDot,
-  cn
-} from "@sheet-port/ui";
+import type { ReactNode } from "react";
+import { Badge, Skeleton, StatusDot, cn, type BadgeVariant } from "@sheet-port/ui";
+import type { ChangeStatus } from "@sheet-port/shared";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import { useAuditEvents } from "../hooks/useAuditEvents.js";
 import { useChanges } from "../hooks/useChanges.js";
@@ -24,210 +15,262 @@ import { CopyButton } from "../components/CopyButton.js";
 import { RelativeTime } from "../components/RelativeTime.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 
-const ACTOR_VARIANTS = { agent: "info", user: "success", system: "muted" } as const;
+const ACTOR_VARIANTS: Record<"agent" | "user" | "system", BadgeVariant> = {
+  agent: "default",
+  user: "strong",
+  system: "muted"
+};
 
-function McpServerCard() {
-  const { data: status, isPending } = useAppStatus();
-  if (isPending || !status) {
-    return <Skeleton className="h-36" />;
-  }
+const CHANGE_STATUS_VARIANTS: Record<ChangeStatus, BadgeVariant> = {
+  pending: "default",
+  approved: "strong",
+  committed: "strong",
+  rejected: "danger"
+};
+
+/** Dense telemetry compartment with a "[ LABEL ]" header strip. */
+function Panel({ label, right, children }: { label: string; right?: ReactNode; children: ReactNode }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>MCP server</CardTitle>
-        <StatusDot status={status.mcpRunning ? "live" : "idle"} />
-      </CardHeader>
-      <CardContent>
-        <p className={cn("text-lg font-semibold", status.mcpRunning ? "text-accent" : "text-ink-muted")}>
-          {status.mcpRunning ? "Running" : "Stopped"}
-        </p>
-        {status.mcpRunning ? (
-          <p className="mt-1 text-xs text-ink-muted">
-            pid <span className="font-mono text-ink">{status.mcpPid ?? "?"}</span>
+    <section className="flex flex-col bg-surface">
+      <header className="flex items-center justify-between gap-3 border-b border-edge px-4 py-2">
+        <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted">
+          {"[ "}
+          {label}
+          {" ]"}
+        </h3>
+        {right}
+      </header>
+      <div className="flex-1 px-4 py-3">{children}</div>
+    </section>
+  );
+}
+
+function PendingHero({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
+  const { data: status, isPending } = useAppStatus();
+  const count = status?.pendingCount ?? 0;
+
+  return (
+    <section className="flex flex-col justify-between gap-10 bg-surface p-8 lg:col-span-2 lg:row-span-3">
+      <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-muted">
+        /// Approval queue
+      </p>
+      {isPending || !status ? (
+        <Skeleton className="h-32 w-48" />
+      ) : (
+        <div>
+          <p
+            className={cn(
+              "font-display text-[clamp(4rem,10vw,9rem)] leading-none tabular-nums",
+              count > 0 ? "text-hazard" : "text-ink"
+            )}
+          >
+            {count}
+          </p>
+          <p className="mt-3 font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-ink-muted">
+            [ Pending approvals ]
+          </p>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => onNavigate("changes")}
+        className={cn(
+          "self-start font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-ink transition-colors",
+          "hover:text-hazard focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard"
+        )}
+      >
+        {">>> Review changes"}
+      </button>
+    </section>
+  );
+}
+
+function McpPanel() {
+  const { data: status, isPending } = useAppStatus();
+
+  return (
+    <Panel
+      label="MCP Server"
+      right={status ? <StatusDot status={status.mcpRunning ? "live" : "idle"} /> : undefined}
+    >
+      {isPending || !status ? (
+        <Skeleton className="h-16" />
+      ) : status.mcpRunning ? (
+        <>
+          <p className="font-mono text-lg font-bold uppercase tracking-[0.05em] text-signal">Running</p>
+          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.05em] text-ink-muted">
+            PID <span className="text-ink">{status.mcpPid ?? "?"}</span>
             {status.mcpLastSeen ? (
               <>
-                {" · heartbeat "}
-                <RelativeTime iso={status.mcpLastSeen} />
+                {" / HB "}
+                <RelativeTime iso={status.mcpLastSeen} className="text-ink" />
               </>
             ) : null}
           </p>
-        ) : (
-          <div className="mt-2">
-            <div className="flex items-start justify-between gap-1">
-              <pre className="flex-1 overflow-x-auto rounded-md border border-edge bg-bg p-2 font-mono text-[10px] leading-4 text-ink-muted">
-                {CLAUDE_DESKTOP_CONFIG_HINT}
-              </pre>
-              <CopyButton value={CLAUDE_DESKTOP_CONFIG_HINT} label="Copy Claude Desktop config" />
-            </div>
-            <p className="mt-1.5 text-[11px] text-ink-muted">
-              Add to claude_desktop_config.json, then restart Claude Desktop.
-            </p>
+        </>
+      ) : (
+        <>
+          <p className="font-mono text-lg font-bold uppercase tracking-[0.05em] text-ink-muted">Offline</p>
+          <div className="mt-2 flex items-start justify-between gap-1">
+            <pre className="flex-1 overflow-x-auto border border-edge bg-bg p-2 font-mono text-[10px] leading-4 text-ink-muted">
+              {CLAUDE_DESKTOP_CONFIG_HINT}
+            </pre>
+            <CopyButton value={CLAUDE_DESKTOP_CONFIG_HINT} label="Copy Claude Desktop config" />
           </div>
-        )}
-      </CardContent>
-    </Card>
+          <p className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.05em] text-ink-muted">
+            Add to claude_desktop_config.json, then restart Claude Desktop
+          </p>
+        </>
+      )}
+    </Panel>
   );
 }
 
-function DatabaseCard() {
+function DatabasePanel() {
   const { data: status, isPending } = useAppStatus();
-  if (isPending || !status) {
-    return <Skeleton className="h-36" />;
-  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Database</CardTitle>
-        <CopyButton value={status.dbPath} label="Copy database path" />
-      </CardHeader>
-      <CardContent>
-        <p className="text-lg font-semibold text-ink">Shared SQLite</p>
-        <p className="mt-1 break-all font-mono text-[11px] leading-4 text-ink-muted" title={status.dbPath}>
-          {status.dbPath}
-        </p>
-        <p className="mt-1.5 text-[11px] text-ink-muted">
-          App version <span className="font-mono text-ink">{status.appVersion}</span>
-        </p>
-      </CardContent>
-    </Card>
+    <Panel
+      label="Database"
+      right={status ? <CopyButton value={status.dbPath} label="Copy database path" /> : undefined}
+    >
+      {isPending || !status ? (
+        <Skeleton className="h-16" />
+      ) : (
+        <>
+          <p className="font-mono text-[13px] font-bold uppercase tracking-[0.05em] text-ink">
+            Shared SQLite
+          </p>
+          <p className="mt-1 break-all font-mono text-[11px] leading-4 text-ink-muted" title={status.dbPath}>
+            {status.dbPath}
+          </p>
+          <p className="mt-1.5 font-mono text-[10px] uppercase tracking-[0.05em] text-ink-muted">
+            Rev <span className="text-ink">{status.appVersion}</span>
+          </p>
+        </>
+      )}
+    </Panel>
   );
 }
 
-function PendingCard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
-  const { data: status, isPending } = useAppStatus();
-  if (isPending || !status) {
-    return <Skeleton className="h-36" />;
-  }
-  const count = status.pendingCount;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Pending approvals</CardTitle>
-        {count > 0 ? <StatusDot status="warning" /> : null}
-      </CardHeader>
-      <CardContent>
-        <p className={cn("font-mono text-3xl font-semibold tabular-nums", count > 0 ? "text-warning" : "text-ink")}>
-          {count}
-        </p>
-        <Button variant="secondary" size="sm" className="mt-3" onClick={() => onNavigate("changes")}>
-          Review changes
-          <ArrowRight size={13} aria-hidden />
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function TokensCard() {
+function TokenVaultPanel() {
   const { data: tokens, isPending } = useTokenStatus();
-  if (isPending || !tokens) {
-    return <Skeleton className="h-36" />;
-  }
   const rows = [
-    { label: "Google Sheets", stored: tokens.googleSheets },
-    { label: "Provider", stored: tokens.provider }
+    { label: "GOOGLE_SHEETS", stored: tokens?.googleSheets ?? false },
+    { label: "PROVIDER", stored: tokens?.provider ?? false }
   ];
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Tokens</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2.5">
-        {rows.map((row) => (
-          <div key={row.label} className="flex items-center justify-between">
-            <span className="text-[13px] text-ink">{row.label}</span>
-            <Badge variant={row.stored ? "success" : "muted"}>{row.stored ? "in keychain" : "not stored"}</Badge>
-          </div>
-        ))}
-        <p className="pt-1 text-[11px] text-ink-muted">Tokens never leave the OS keychain.</p>
-      </CardContent>
-    </Card>
+    <Panel label="Token Vault">
+      {isPending || !tokens ? (
+        <Skeleton className="h-16" />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-3">
+              <span className="font-mono text-[11px] tracking-[0.05em] text-ink">{row.label}</span>
+              <Badge variant={row.stored ? "strong" : "muted"}>
+                {row.stored ? "In Keychain" : "Not Stored"}
+              </Badge>
+            </div>
+          ))}
+          <p className="pt-1 font-mono text-[10px] uppercase tracking-[0.05em] text-ink-muted">
+            Tokens never leave the OS keychain
+          </p>
+        </div>
+      )}
+    </Panel>
   );
 }
 
 function RecentAudit() {
   const { data, isPending } = useAuditEvents();
   const events = (data?.pages[0] ?? []).slice(0, DASHBOARD_AUDIT_COUNT);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Recent activity</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isPending ? (
-          <Skeleton className="h-40" />
-        ) : events.length === 0 ? (
-          <p className="py-6 text-center text-[13px] text-ink-muted">No activity yet</p>
-        ) : (
-          <ol className="space-y-0">
-            {events.map((event) => (
-              <li key={event.id} className="flex items-center gap-2.5 border-t border-edge py-2 first:border-t-0">
-                <Badge variant={ACTOR_VARIANTS[event.actor]}>{event.actor}</Badge>
-                <span className="truncate font-mono text-[13px] text-ink">{event.action}</span>
-                <RelativeTime iso={event.timestamp} className="ml-auto text-xs text-ink-muted" />
-              </li>
-            ))}
-          </ol>
-        )}
-      </CardContent>
-    </Card>
+    <Panel label="Audit Log">
+      {isPending ? (
+        <Skeleton className="h-40" />
+      ) : events.length === 0 ? (
+        <p className="py-6 text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+          [ No records ]
+        </p>
+      ) : (
+        <ol>
+          {events.map((event) => (
+            <li key={event.id} className="flex h-8 items-center gap-2.5 border-t border-edge first:border-t-0">
+              <Badge variant={ACTOR_VARIANTS[event.actor]}>{event.actor}</Badge>
+              <span className="truncate font-mono text-xs text-ink">{event.action}</span>
+              <RelativeTime iso={event.timestamp} className="ml-auto font-mono text-[11px] text-ink-muted" />
+            </li>
+          ))}
+        </ol>
+      )}
+    </Panel>
   );
 }
 
 function RecentChanges({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { data: changes, isPending } = useChanges(null);
   const recent = (changes ?? []).slice(0, DASHBOARD_CHANGES_COUNT);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Recent changes</CardTitle>
-        <Button variant="ghost" size="sm" onClick={() => onNavigate("changes")}>
-          View all
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {isPending ? (
-          <Skeleton className="h-40" />
-        ) : recent.length === 0 ? (
-          <p className="py-6 text-center text-[13px] text-ink-muted">No changes proposed yet</p>
-        ) : (
-          <ol>
-            {recent.map((change) => (
-              <li key={change.id} className="flex items-center gap-2.5 border-t border-edge py-2 first:border-t-0">
-                <Badge
-                  variant={
-                    change.status === "pending" ? "warning" : change.status === "committed" ? "success" : change.status === "rejected" ? "danger" : "info"
-                  }
-                >
-                  {change.status}
-                </Badge>
-                <span className="truncate font-mono text-[13px] text-ink-muted">
-                  {change.type} · {change.sourceId}/{change.tableId}
-                </span>
-                <RelativeTime iso={change.createdAt} className="ml-auto text-xs text-ink-muted" />
-              </li>
-            ))}
-          </ol>
-        )}
-      </CardContent>
-    </Card>
+    <Panel
+      label="Changes"
+      right={
+        <button
+          type="button"
+          onClick={() => onNavigate("changes")}
+          className={cn(
+            "font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-ink-muted transition-colors",
+            "hover:text-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard"
+          )}
+        >
+          {">>> View all"}
+        </button>
+      }
+    >
+      {isPending ? (
+        <Skeleton className="h-40" />
+      ) : recent.length === 0 ? (
+        <p className="py-6 text-center font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+          [ No records ]
+        </p>
+      ) : (
+        <ol>
+          {recent.map((change) => (
+            <li key={change.id} className="flex h-8 items-center gap-2.5 border-t border-edge first:border-t-0">
+              <Badge variant={CHANGE_STATUS_VARIANTS[change.status]}>{change.status}</Badge>
+              <span className="truncate font-mono text-xs text-ink-muted">
+                {change.type} / {change.sourceId}/{change.tableId}
+              </span>
+              <RelativeTime iso={change.createdAt} className="ml-auto font-mono text-[11px] text-ink-muted" />
+            </li>
+          ))}
+        </ol>
+      )}
+    </Panel>
   );
 }
 
 export function Dashboard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
+  const { data: status } = useAppStatus();
+  const meta = status ? `PENDING ${status.pendingCount} / REV ${status.appVersion}` : "SYS / BOOT";
+
   return (
     <>
       <ScreenHeader
         title="Dashboard"
-        description="Local capability broker between agents and your spreadsheets."
+        description="Local capability broker between agents and your spreadsheets"
+        meta={meta}
       />
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        <McpServerCard />
-        <DatabaseCard />
-        <PendingCard onNavigate={onNavigate} />
-        <TokensCard />
+      <div className="grid gap-px border border-edge bg-edge lg:grid-cols-3">
+        <PendingHero onNavigate={onNavigate} />
+        <McpPanel />
+        <DatabasePanel />
+        <TokenVaultPanel />
       </div>
-      <div className="mt-6 grid gap-4 xl:grid-cols-2">
+      <div className="mt-6 grid gap-px border border-edge bg-edge xl:grid-cols-2">
         <RecentAudit />
         <RecentChanges onNavigate={onNavigate} />
       </div>

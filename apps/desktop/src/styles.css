@@ -1,3 +1,7 @@
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/archivo-black/index.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,17 +9,16 @@
 :root {
   color-scheme: dark;
   /* Token mirror of tailwind.config.ts for non-Tailwind consumers. */
-  --color-bg: #0a0d12;
-  --color-surface: #10141b;
-  --color-surface-raised: #161b24;
-  --color-border: rgba(148, 163, 184, 0.08);
-  --color-text: #e6eaf2;
-  --color-text-muted: #8a94a6;
-  --color-accent: #34d399;
-  --color-warning: #fbbf24;
-  --color-danger: #f87171;
-  --color-info: #60a5fa;
-  font-family: "Inter var", Inter, system-ui, sans-serif;
+  --color-bg: #0a0a0a;
+  --color-surface: #101010;
+  --color-raised: #141414;
+  --color-border: #262626;
+  --color-border-strong: #3a3a3a;
+  --color-text: #eaeaea;
+  --color-text-muted: #8a8a85;
+  --color-hazard: #ff2a2a;
+  --color-signal: #4af626;
+  font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
 }
 
 html,
@@ -29,7 +32,36 @@ body {
   overflow: hidden;
   background: var(--color-bg);
   color: var(--color-text);
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+}
+
+/* CRT scanlines over the whole app. Static, subtle, non-interactive. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.22) 2px,
+    rgba(0, 0, 0, 0.22) 4px
+  );
+}
+
+/* Global SVG noise grain (feTurbulence data URI; img-src data: is CSP-allowed). */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  opacity: 0.03;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 button,
@@ -38,10 +70,10 @@ input {
 }
 
 ::selection {
-  background: rgba(52, 211, 153, 0.25);
+  background: rgba(255, 42, 42, 0.4);
 }
 
-/* Slim dark scrollbars for the embedded webview. */
+/* Square dark scrollbars for the embedded webview. */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -52,12 +84,9 @@ input {
 }
 
 *::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 8px;
-  background-color: rgba(148, 163, 184, 0.16);
-  background-clip: content-box;
+  background-color: #262626;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(148, 163, 184, 0.32);
+  background-color: #3a3a3a;
 }

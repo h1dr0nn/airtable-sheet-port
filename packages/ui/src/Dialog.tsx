@@ -17,13 +17,14 @@ export const DialogContent = forwardRef<
   ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-bg/70 backdrop-blur-sm motion-safe:animate-fade-in" />
+    {/* Flat overlay: no blur, no translucent panel styling. */}
+    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[rgba(10,10,10,0.85)] motion-safe:animate-fade-in" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
         "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2",
-        "rounded-lg border border-edge bg-surface p-5 shadow-raised",
-        "focus:outline-none motion-safe:animate-scale-in",
+        "border-2 border-ink bg-bg p-5",
+        "focus:outline-none motion-safe:animate-fade-in",
         className
       )}
       {...props}
@@ -32,9 +33,10 @@ export const DialogContent = forwardRef<
       <DialogPrimitive.Close
         aria-label="Close dialog"
         className={cn(
-          "absolute right-3.5 top-3.5 rounded-md p-1 text-ink-muted transition-colors",
-          "hover:bg-raised hover:text-ink",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          "absolute right-3 top-3 p-1 text-ink-muted transition-colors",
+          "hover:bg-hazard hover:text-bg",
+          "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2",
+          "focus-visible:outline-hazard"
         )}
       >
         <XIcon className="h-3.5 w-3.5" />
@@ -45,18 +47,23 @@ export const DialogContent = forwardRef<
 DialogContent.displayName = "DialogContent";
 
 export function DialogHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("mb-4 flex flex-col gap-1 pr-8", className)} {...props} />;
+  return <div className={cn("mb-4 flex flex-col gap-1.5 pr-8", className)} {...props} />;
 }
 
+/** Dialog title in "[ TITLE ]" ASCII framing. */
 export const DialogTitle = forwardRef<
   ElementRef<typeof DialogPrimitive.Title>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => (
+>(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn("text-base font-semibold text-ink", className)}
+    className={cn("font-mono text-sm font-bold uppercase tracking-[0.1em] text-ink", className)}
     {...props}
-  />
+  >
+    {"[ "}
+    {children}
+    {" ]"}
+  </DialogPrimitive.Title>
 ));
 DialogTitle.displayName = "DialogTitle";
 
@@ -66,7 +73,7 @@ export const DialogDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-[13px] text-ink-muted", className)}
+    className={cn("font-mono text-xs leading-5 text-ink-muted", className)}
     {...props}
   />
 ));

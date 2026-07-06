@@ -4,24 +4,27 @@ import { cn } from "./cn.js";
 
 const buttonVariants = cva(
   [
-    "inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-md",
-    "text-sm font-medium transition-colors",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
-    "focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
-    "disabled:pointer-events-none disabled:opacity-45"
+    "inline-flex select-none items-center justify-center gap-2 whitespace-nowrap",
+    "font-mono text-[11px] font-bold uppercase tracking-[0.08em] transition-colors",
+    "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2",
+    "focus-visible:outline-hazard",
+    "disabled:pointer-events-none disabled:opacity-40"
   ].join(" "),
   {
     variants: {
       variant: {
-        default: "bg-accent text-bg hover:bg-accent/85 active:bg-accent/75",
-        secondary: "border border-edge-strong bg-raised text-ink hover:bg-raised/70 active:bg-raised/60",
-        ghost: "text-ink-muted hover:bg-raised hover:text-ink active:bg-raised/70",
-        destructive: "bg-danger text-bg hover:bg-danger/85 active:bg-danger/75",
-        outline: "border border-edge-strong bg-transparent text-ink hover:bg-raised active:bg-raised/70"
+        // Primary (approve): solid phosphor, hover pure white.
+        default: "border border-ink bg-ink text-bg hover:border-white hover:bg-white",
+        // Standard: phosphor border/text, hover inverts.
+        secondary: "border border-ink bg-transparent text-ink hover:bg-ink hover:text-bg",
+        ghost: "border border-transparent text-ink-muted hover:border-edge-strong hover:text-ink",
+        // Destructive: hazard red, hover fills red.
+        destructive: "border border-hazard bg-transparent text-hazard hover:bg-hazard hover:text-bg",
+        outline: "border border-edge-strong bg-transparent text-ink hover:border-ink hover:bg-ink hover:text-bg"
       },
       size: {
-        sm: "h-7 px-2.5 text-xs",
-        md: "h-9 px-3.5",
+        sm: "h-7 px-3 text-[10px]",
+        md: "h-9 px-4",
         icon: "h-8 w-8"
       }
     },

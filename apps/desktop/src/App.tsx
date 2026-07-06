@@ -22,17 +22,45 @@ const SCREENS: Record<ScreenId, ComponentType<ScreenProps>> = {
   audit: AuditLog
 };
 
+const CORNER_POSITIONS = [
+  "left-1.5 top-1",
+  "right-1.5 top-1",
+  "left-1.5 bottom-1",
+  "right-1.5 bottom-1"
+] as const;
+
+/** Crosshair "+" registration marks at the corners of the content compartment. */
+function CornerMarks() {
+  return (
+    <>
+      {CORNER_POSITIONS.map((position) => (
+        <span
+          key={position}
+          aria-hidden
+          className={`pointer-events-none absolute z-10 select-none font-mono text-[10px] leading-none text-edge-strong ${position}`}
+        >
+          +
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function App() {
   const [screen, setScreen] = useState<ScreenId>("dashboard");
   const Screen = SCREENS[screen];
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-ink">
+    // Blueprint grid shell: compartments separated by real 1px lines (gap-px over edge fill).
+    <div className="flex h-screen flex-col gap-px bg-edge text-ink">
       <Titlebar />
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 gap-px">
         <Sidebar active={screen} onNavigate={setScreen} />
-        <main className="min-w-0 flex-1 overflow-y-auto px-8 py-6">
-          <Screen onNavigate={setScreen} />
+        <main className="relative min-w-0 flex-1 bg-bg">
+          <CornerMarks />
+          <div className="h-full overflow-y-auto px-10 py-8">
+            <Screen onNavigate={setScreen} />
+          </div>
         </main>
       </div>
     </div>

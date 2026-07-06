@@ -15,7 +15,7 @@ type ConfirmationChipsProps = {
   disabled?: boolean;
 };
 
-/** Toggleable chips for the actions that require user confirmation. */
+/** Square toggle markers; armed confirmation requirements read as hazard warnings. */
 export function ConfirmationChips({ value, onChange, disabled = false }: ConfirmationChipsProps) {
   const toggle = (action: ConfirmationAction) => {
     const next = value.includes(action)
@@ -36,11 +36,11 @@ export function ConfirmationChips({ value, onChange, disabled = false }: Confirm
             disabled={disabled}
             onClick={() => toggle(action)}
             className={cn(
-              "rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
-              "disabled:cursor-not-allowed disabled:opacity-45",
+              "border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.05em] transition-colors",
+              "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard",
+              "disabled:cursor-not-allowed disabled:opacity-40",
               isActive
-                ? "border-warning/30 bg-warning/10 text-warning hover:bg-warning/15"
+                ? "border-hazard font-bold text-hazard"
                 : "border-edge text-ink-muted hover:border-edge-strong hover:text-ink"
             )}
           >

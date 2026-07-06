@@ -1,8 +1,6 @@
-import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
   Button,
-  Card,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -51,71 +49,69 @@ export function RuleRow({ rule }: { rule: PermissionRuleRow }) {
   const save = useSavePermissionRule();
   const remove = useDeletePermissionRule();
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const scope = `${rule.sourceId}/${rule.tableId ?? "*"}`;
 
   const saveWith = (patch: Partial<SavePermissionRule>) => {
     save.mutate({ ...toSaveShape(rule), ...patch });
   };
 
   return (
-    <Card className="p-4">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="min-w-44 flex-1">
-          <p className="font-mono text-[13px] text-ink">{rule.sourceId}</p>
-          <p className="mt-0.5 text-xs text-ink-muted">
-            {rule.tableId ? (
-              <span className="font-mono">{rule.tableId}</span>
-            ) : (
-              "entire source"
-            )}
-            {" · updated "}
-            <RelativeTime iso={rule.updatedAt} />
-          </p>
-        </div>
-        <div className="flex items-center gap-5">
+    <article className="bg-surface">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge px-4 py-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted">
+          RULE / <span className="text-ink">{scope}</span>
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.05em] text-ink-muted">
+          Updated <RelativeTime iso={rule.updatedAt} />
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Delete rule for ${scope}`}
+          className="ml-auto text-hazard hover:border-hazard hover:text-hazard"
+          onClick={() => setIsConfirmOpen(true)}
+        >
+          Del
+        </Button>
+      </header>
+
+      <div className="px-4 py-3">
+        <div className="flex flex-wrap items-center gap-6">
           {TOGGLES.map(({ field, label }) => (
-            <label key={field} className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+            <label
+              key={field}
+              className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+            >
               <Switch
                 checked={rule[field]}
                 disabled={save.isPending}
                 onCheckedChange={(checked) => saveWith(buildTogglePatch(field, checked))}
-                aria-label={`${label} access for ${rule.sourceId}/${rule.tableId ?? "entire source"}`}
+                aria-label={`${label} access for ${scope}`}
               />
               {label}
             </label>
           ))}
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={`Delete rule for ${rule.sourceId}/${rule.tableId ?? "entire source"}`}
-          className="hover:text-danger"
-          onClick={() => setIsConfirmOpen(true)}
-        >
-          <Trash2 size={14} aria-hidden />
-        </Button>
-      </div>
 
-      <div className="mt-3 border-t border-edge pt-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-ink-muted">
-          Require confirmation for
-        </p>
-        <ConfirmationChips
-          value={rule.requireConfirmationFor}
-          disabled={save.isPending}
-          onChange={(next) => saveWith({ requireConfirmationFor: next })}
-        />
+        <div className="mt-3 border-t border-edge pt-3">
+          <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted">
+            [ Require confirmation for ]
+          </p>
+          <ConfirmationChips
+            value={rule.requireConfirmationFor}
+            disabled={save.isPending}
+            onChange={(next) => saveWith({ requireConfirmationFor: next })}
+          />
+        </div>
       </div>
 
       <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete permission rule</DialogTitle>
+            <DialogTitle>Delete rule</DialogTitle>
             <DialogDescription>
               Agents lose all access granted by the rule for{" "}
-              <span className="font-mono text-ink">
-                {rule.sourceId}/{rule.tableId ?? "*"}
-              </span>
-              . This cannot be undone.
+              <span className="font-mono text-ink">{scope}</span>. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -134,6 +130,6 @@ export function RuleRow({ rule }: { rule: PermissionRuleRow }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </article>
   );
 }

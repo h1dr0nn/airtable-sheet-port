@@ -4,24 +4,31 @@ import { cn } from "./cn.js";
 type EmptyStateProps = {
   title: string;
   description?: string;
-  icon?: ReactNode;
   action?: ReactNode;
   className?: string;
 };
 
-export function EmptyState({ title, description, icon, action, className }: EmptyStateProps) {
+/** Centered "[ NO RECORDS ]" style readout inside a hairline compartment. */
+export function EmptyState({ title, description, action, className }: EmptyStateProps) {
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-edge-strong",
-        "px-6 py-12 text-center",
+        "flex flex-col items-center justify-center gap-2 border border-edge bg-surface",
+        "px-6 py-14 text-center",
         className
       )}
     >
-      {icon ? <div className="mb-1 text-ink-muted/70">{icon}</div> : null}
-      <p className="text-sm font-medium text-ink">{title}</p>
-      {description ? <p className="max-w-sm text-[13px] text-ink-muted">{description}</p> : null}
-      {action ? <div className="mt-2">{action}</div> : null}
+      <p className="font-mono text-[13px] font-bold uppercase tracking-[0.1em] text-ink">
+        {"[ "}
+        {title}
+        {" ]"}
+      </p>
+      {description ? (
+        <p className="max-w-sm font-mono text-[11px] uppercase tracking-[0.05em] text-ink-muted">
+          {description}
+        </p>
+      ) : null}
+      {action ? <div className="mt-3">{action}</div> : null}
     </div>
   );
 }

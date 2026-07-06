@@ -27,9 +27,15 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 const TOAST_DURATION_MS = 4000;
 
 const VARIANT_CLASSES: Record<ToastVariant, string> = {
-  success: "border-accent/30 text-accent",
-  error: "border-danger/30 text-danger",
-  info: "border-info/30 text-info"
+  success: "border-ink text-ink",
+  error: "border-hazard text-hazard",
+  info: "border-edge-strong text-ink"
+};
+
+const VARIANT_MARKERS: Record<ToastVariant, string> = {
+  success: "[ OK ]",
+  error: "[ ERR ]",
+  info: "[ SYS ]"
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -57,12 +63,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               key={item.id}
               role="status"
               className={cn(
-                "pointer-events-auto rounded-md border bg-raised px-3.5 py-2.5 text-[13px] font-medium",
-                "shadow-raised motion-safe:animate-toast-in",
+                "pointer-events-auto flex items-baseline gap-2 border bg-raised px-3.5 py-2.5",
+                "font-mono text-[11px] uppercase tracking-[0.05em]",
+                "motion-safe:animate-fade-in",
                 VARIANT_CLASSES[item.variant]
               )}
             >
-              {item.message}
+              <span className="shrink-0 font-bold" aria-hidden>
+                {VARIANT_MARKERS[item.variant]}
+              </span>
+              <span className="min-w-0 break-words">{item.message}</span>
             </div>
           ))}
         </div>,

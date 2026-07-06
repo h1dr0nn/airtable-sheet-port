@@ -19,6 +19,8 @@ import { useSavePermissionRule } from "../../hooks/usePermissions.js";
 import { useSources } from "../../hooks/useSources.js";
 import { ConfirmationChips } from "./ConfirmationChips.js";
 
+const FIELD_LABEL_CLASS = "font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted";
+
 type RuleFormDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -72,7 +74,7 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add permission rule</DialogTitle>
+          <DialogTitle>New rule</DialogTitle>
           <DialogDescription>
             Grant agents scoped access to a source, or a single table inside it.
           </DialogDescription>
@@ -80,7 +82,7 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold uppercase tracking-widest text-ink-muted" htmlFor="rule-source">
+            <label className={FIELD_LABEL_CLASS} htmlFor="rule-source">
               Source
             </label>
             <Select value={draft.sourceId} onValueChange={(sourceId) => setDraft({ ...draft, sourceId })}>
@@ -98,28 +100,28 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold uppercase tracking-widest text-ink-muted" htmlFor="rule-table">
-              Table id <span className="normal-case tracking-normal text-ink-muted/70">(blank = entire source)</span>
+            <label className={FIELD_LABEL_CLASS} htmlFor="rule-table">
+              Table id{" "}
+              <span className="font-normal normal-case tracking-normal">(blank = entire source)</span>
             </label>
             <Input
               id="rule-table"
               value={draft.tableId}
               placeholder="customers"
-              className="font-mono text-[13px]"
               onChange={(event) => setDraft({ ...draft, tableId: event.target.value })}
             />
           </div>
 
           <div className="flex items-center gap-6">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+            <label className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
               <Switch checked={draft.read} onCheckedChange={(read) => setDraft({ ...draft, read })} aria-label="Read" />
               Read
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+            <label className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
               <Switch checked={draft.write} onCheckedChange={(write) => setDraft({ ...draft, write })} aria-label="Write" />
               Write
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
+            <label className="flex cursor-pointer items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">
               <Switch
                 checked={draft.deleteRecords}
                 onCheckedChange={(deleteRecords) => setDraft({ ...draft, deleteRecords })}
@@ -130,9 +132,7 @@ export function RuleFormDialog({ open, onOpenChange }: RuleFormDialogProps) {
           </div>
 
           <div className="space-y-1.5">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-ink-muted">
-              Require confirmation for
-            </p>
+            <p className={FIELD_LABEL_CLASS}>[ Require confirmation for ]</p>
             <ConfirmationChips
               value={draft.requireConfirmationFor}
               onChange={(requireConfirmationFor) => setDraft({ ...draft, requireConfirmationFor })}

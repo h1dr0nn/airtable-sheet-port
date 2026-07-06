@@ -1,4 +1,3 @@
-import { Table2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   EmptyState,
@@ -14,8 +13,6 @@ import { useSources } from "../hooks/useSources.js";
 import { useTablePage, useTableSchema, useTables } from "../hooks/useTables.js";
 import { RecordsTable } from "../components/tables/RecordsTable.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
-
-const EMPTY_STATE_ICON_SIZE = 22;
 
 function TableListSkeleton() {
   return (
@@ -45,17 +42,16 @@ export function Tables() {
   }, [effectiveSourceId]);
 
   const isLoading = sourcesPending || tablesPending;
+  const meta = isLoading ? "TBL / SCAN" : `SRC ${(sources ?? []).length} / TBL ${(tables ?? []).length}`;
 
   return (
     <>
       <ScreenHeader
         title="Tables"
-        description="Browse records through the same read path agents use."
+        description="Browse records through the same read path agents use"
+        meta={meta}
         actions={
-          <Select
-            value={effectiveSourceId ?? ""}
-            onValueChange={(next) => setSourceId(next)}
-          >
+          <Select value={effectiveSourceId ?? ""} onValueChange={(next) => setSourceId(next)}>
             <SelectTrigger className="w-56" aria-label="Data source">
               <SelectValue placeholder="Choose a source" />
             </SelectTrigger>
@@ -74,9 +70,8 @@ export function Tables() {
         <TableListSkeleton />
       ) : (tables ?? []).length === 0 ? (
         <EmptyState
-          icon={<Table2 size={EMPTY_STATE_ICON_SIZE} aria-hidden />}
-          title="No tables in this source"
-          description="Placeholder sources expose their tables once the connector is authenticated."
+          title="No tables"
+          description="Placeholder sources expose their tables once the connector is authenticated"
         />
       ) : (
         <div className="space-y-4">
@@ -94,15 +89,15 @@ export function Tables() {
                     setPageIndex(0);
                   }}
                   className={cn(
-                    "rounded-md border px-3 py-1.5 text-[13px] font-medium transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+                    "border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.05em] transition-colors",
+                    "focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-hazard",
                     isActive
-                      ? "border-accent/30 bg-accent/10 text-accent"
+                      ? "border-ink bg-ink font-bold text-bg"
                       : "border-edge text-ink-muted hover:border-edge-strong hover:text-ink"
                   )}
                 >
                   {table.name}
-                  <span className="ml-1.5 font-mono text-[11px] opacity-70">{table.tableId}</span>
+                  <span className="ml-1.5 text-[10px] opacity-70">{table.tableId}</span>
                 </button>
               );
             })}
@@ -112,9 +107,8 @@ export function Tables() {
             <Skeleton className="h-96" />
           ) : page.total === 0 ? (
             <EmptyState
-              icon={<Table2 size={EMPTY_STATE_ICON_SIZE} aria-hidden />}
               title="No records"
-              description="This table is empty. Agent appends will show up here after commit."
+              description="This table is empty. Agent appends will show up here after commit"
             />
           ) : (
             <RecordsTable schema={schema} page={page} pageIndex={pageIndex} onPageChange={setPageIndex} />

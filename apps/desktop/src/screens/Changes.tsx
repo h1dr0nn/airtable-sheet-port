@@ -1,12 +1,9 @@
-import { GitPullRequestArrow } from "lucide-react";
 import { useState } from "react";
 import { EmptyState, Skeleton, cn } from "@sheet-port/ui";
 import type { ChangeStatus } from "@sheet-port/shared";
 import { useChanges } from "../hooks/useChanges.js";
 import { ChangeCard } from "../components/changes/ChangeCard.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
-
-const EMPTY_STATE_ICON_SIZE = 22;
 
 type StatusFilter = ChangeStatus | null;
 
@@ -29,7 +26,7 @@ function FilterControl({
     <div
       role="radiogroup"
       aria-label="Filter changes by status"
-      className="inline-flex rounded-md border border-edge bg-surface p-0.5"
+      className="inline-flex border border-edge bg-bg"
     >
       {FILTERS.map((filter) => {
         const isActive = filter.value === active;
@@ -41,9 +38,10 @@ function FilterControl({
             aria-checked={isActive}
             onClick={() => onChange(filter.value)}
             className={cn(
-              "rounded px-3 py-1 text-xs font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
-              isActive ? "bg-raised text-ink shadow-card" : "text-ink-muted hover:text-ink"
+              "border-r border-edge px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em]",
+              "transition-colors last:border-r-0",
+              "focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-2 focus-visible:outline-hazard",
+              isActive ? "bg-ink font-bold text-bg" : "text-ink-muted hover:text-ink"
             )}
           >
             {filter.label}
@@ -57,29 +55,30 @@ function FilterControl({
 export function Changes() {
   const [filter, setFilter] = useState<StatusFilter>(null);
   const { data: changes, isPending } = useChanges(filter);
+  const list = changes ?? [];
 
   return (
     <>
       <ScreenHeader
         title="Changes"
-        description="Every agent write lands here as a preview before it can commit."
+        description="Every agent write lands here as a preview before it can commit"
+        meta={isPending ? "CHG / SCAN" : `CHG ${list.length}`}
         actions={<FilterControl active={filter} onChange={setFilter} />}
       />
 
       {isPending ? (
-        <div className="space-y-3">
+        <div className="grid gap-px border border-edge bg-edge">
           <Skeleton className="h-44" />
           <Skeleton className="h-44" />
         </div>
-      ) : (changes ?? []).length === 0 ? (
+      ) : list.length === 0 ? (
         <EmptyState
-          icon={<GitPullRequestArrow size={EMPTY_STATE_ICON_SIZE} aria-hidden />}
-          title={filter === null ? "No changes yet" : `No ${filter} changes`}
-          description="When an agent previews a write it appears here for review."
+          title={filter === null ? "No changes" : `No ${filter} changes`}
+          description="When an agent previews a write it appears here for review"
         />
       ) : (
-        <div className="space-y-3">
-          {(changes ?? []).map((change) => (
+        <div className="grid gap-px border border-edge bg-edge">
+          {list.map((change) => (
             <ChangeCard key={change.id} change={change} />
           ))}
         </div>

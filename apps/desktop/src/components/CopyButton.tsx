@@ -1,10 +1,8 @@
-import { Check, Copy } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button, useToast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 
 const COPIED_RESET_MS = 1500;
-const ICON_SIZE = 13;
 
 type CopyButtonProps = {
   value: string;
@@ -30,12 +28,14 @@ export function CopyButton({ value, label }: CopyButtonProps) {
   };
 
   return (
-    <Button variant="ghost" size="icon" aria-label={label} onClick={() => void handleCopy()}>
-      {isCopied ? (
-        <Check size={ICON_SIZE} className="text-accent" aria-hidden />
-      ) : (
-        <Copy size={ICON_SIZE} aria-hidden />
-      )}
+    <Button
+      variant="ghost"
+      size="sm"
+      aria-label={label}
+      className="w-14 px-0"
+      onClick={() => void handleCopy()}
+    >
+      {isCopied ? "[ OK ]" : "Copy"}
     </Button>
   );
 }
