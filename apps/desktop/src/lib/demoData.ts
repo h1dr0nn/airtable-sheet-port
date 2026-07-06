@@ -12,6 +12,10 @@ import type {
   GoogleConfig,
   GoogleConnectResult,
   IpcApi,
+  McpClient,
+  McpClientState,
+  McpConfigView,
+  McpTransport,
   PermissionRuleRow,
   SavePermissionRule,
   TablePage,
@@ -33,6 +37,34 @@ const MAX_AUDIT_LIMIT = 500;
 const CHANGES_LIST_LIMIT = 200;
 const DEMO_MCP_PID = 48213;
 const HEARTBEAT_AGE_MS = 4_000;
+
+// Mirrors core::db defaults for the MCP sidecar config.
+const DEFAULT_MCP_TRANSPORT: McpTransport = "stdio";
+const DEFAULT_MCP_PORT = 4319;
+
+// Plausible client roster for the browser preview: one installed-but-unconfigured,
+// one installed-and-configured, and one absent so every dot state is visible.
+type DemoClientSeed = { id: string; name: string; state: McpClientState; configPath: string | null };
+const DEMO_MCP_CLIENTS: readonly DemoClientSeed[] = [
+  {
+    id: "claude-desktop",
+    name: "Claude Desktop",
+    state: "unconfigured",
+    configPath: "C:\\Users\\demo\\AppData\\Roaming\\Claude\\claude_desktop_config.json"
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    state: "configured",
+    configPath: "C:\\Users\\demo\\.cursor\\mcp.json"
+  },
+  {
+    id: "vscode",
+    name: "VS Code",
+    state: "not_found",
+    configPath: null
+  }
+];
 
 // Mirrors sheet-port-core: google::GOOGLE_SOURCE_ID and the source name format.
 const GOOGLE_SOURCE_ID = "google-sheets";
@@ -102,6 +134,25 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
 
   // App-managed preference mirror; off by default, cleared on reset.
   let autoApproveWrites = false;
+
+  // MCP sidecar config mirror; the demo sidecar is treated as always running.
+  let mcpTransport: McpTransport = DEFAULT_MCP_TRANSPORT;
+  let mcpPort = DEFAULT_MCP_PORT;
+  // Clone the seed so configure/unregister mutate an isolated demo roster.
+  let mcpClients: McpClient[] = DEMO_MCP_CLIENTS.map((client) => ({ ...client }));
+
+  const setClientState = (id: string, state: McpClientState): McpClient => {
+    const existing = mcpClients.find((client) => client.id === id);
+    if (!existing) {
+      throw new Error(`Unknown MCP client ${id}`);
+    }
+    if (existing.state === "not_found") {
+      throw new Error(`${existing.name} is not installed`);
+    }
+    const updated: McpClient = { ...existing, state };
+    mcpClients = mcpClients.map((client) => (client.id === id ? updated : client));
+    return updated;
+  };
 
   let sources: DataSource[] = [];
   let permissionRules: PermissionRuleRow[] = [];
@@ -344,6 +395,68 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       // Prefs-only: mirrors reset_settings deleting the auto-approve meta key.
       autoApproveWrites = false;
       pushAudit({ actor: "user", action: "settings_reset" });
+    },
+    async getMcpConfig(): Promise<McpConfigView> {
+      await delay();
+      // The demo sidecar is always "running"; boundPort is only meaningful for http.
+      return {
+        transport: mcpTransport,
+        port: mcpPort,
+        running: true,
+        boundPort: mcpTransport === "http" ? mcpPort : null
+      };
+    },
+    async setMcpTransport(transport: McpTransport): Promise<void> {
+      await delay();
+      mcpTransport = transport;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "mcp_transport", transport }
+      });
+    },
+    async setMcpPort(port: number): Promise<void> {
+      await delay();
+      // Mirrors set_mcp_port validation so the preview rejects the same values.
+      if (!Number.isInteger(port) || port < 1024 || port > 65_535) {
+        throw new Error("Port must be an integer between 1024 and 65535");
+      }
+      mcpPort = port;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "mcp_port", port }
+      });
+    },
+    async mcpDetectClients(): Promise<McpClient[]> {
+      await delay();
+      return mcpClients.map((client) => ({ ...client }));
+    },
+    async mcpConfigureClient(id: string): Promise<void> {
+      await delay();
+      const updated = setClientState(id, "configured");
+      pushAudit({
+        actor: "user",
+        action: "mcp_client_configured",
+        metadata: { client: updated.id }
+      });
+    },
+    async mcpUnregisterClient(id: string): Promise<void> {
+      await delay();
+      const updated = setClientState(id, "unconfigured");
+      pushAudit({
+        actor: "user",
+        action: "mcp_client_unregistered",
+        metadata: { client: updated.id }
+      });
+    },
+    async mcpConfigureAll(): Promise<void> {
+      await delay();
+      // Only installed clients are touched; absent ones stay not_found.
+      mcpClients = mcpClients.map((client) =>
+        client.state === "unconfigured" ? { ...client, state: "configured" } : client
+      );
+      pushAudit({ actor: "user", action: "mcp_clients_configured_all" });
     }
   };
 }

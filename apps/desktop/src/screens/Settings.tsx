@@ -28,14 +28,12 @@ import { APP_AUTHOR } from "../lib/constants.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { GoogleJsonImport } from "../components/settings/GoogleJsonImport.js";
-// TODO(update-section): The updater agent owns components/settings/UpdateSection.tsx.
-// Once it lands, replace UpdateSectionSlot below with:
-//   import { UpdateSection } from "../components/settings/UpdateSection.js";
-// and render <UpdateSection /> in place of the slot. Guarded here so this screen
-// still typechecks and builds while that component is absent.
+import { UpdateSection } from "../components/settings/UpdateSection.js";
 import { RuleRow } from "../components/permissions/RuleRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
+import { McpServerCard } from "../components/settings/McpServerCard.js";
+import { McpClientsCard } from "../components/settings/McpClientsCard.js";
 
 const THEME_OPTIONS: ReadonlyArray<SegmentedOption<ThemeSetting>> = [
   { value: "light", label: "Light" },
@@ -400,21 +398,6 @@ function AboutCard() {
   );
 }
 
-/** Temporary stand-in until the updater agent's UpdateSection lands. See the
- * TODO(update-section) note near the imports for the swap-in instructions. */
-function UpdateSectionSlot() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Software Update</CardTitle>
-      </CardHeader>
-      <CardContent className="py-1">
-        <p className="text-[12.5px] text-ink-muted">Update controls load here.</p>
-      </CardContent>
-    </Card>
-  );
-}
-
 /** Auto-approve is a security tradeoff, so enabling it is gated behind a modal;
  * disabling is immediate. Defaults off. */
 function AgentPermissionsCard() {
@@ -526,7 +509,9 @@ export function Settings() {
 
       <div className="space-y-4">
         <AppearanceCard />
-        <UpdateSectionSlot />
+        <UpdateSection />
+        <McpServerCard />
+        <McpClientsCard />
         <GoogleSheetsCard />
         <PermissionsCard />
         <AgentPermissionsCard />

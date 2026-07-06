@@ -18,3 +18,13 @@ export const CLAUDE_DESKTOP_CONFIG_HINT = `{
     }
   }
 }`;
+
+/** Stdio launch command clients use to spawn the MCP sidecar. */
+export const MCP_STDIO_COMMAND = "<repo>/target/release/sheet-port-mcp.exe";
+
+/** Bounds enforced by the backend's set_mcp_port (docs/ipc.md). */
+export const MCP_PORT_MIN = 1024;
+export const MCP_PORT_MAX = 65_535;
+
+/** Local HTTP endpoint clients connect to; {port} is the configured port. */
+export const buildMcpHttpUrl = (port: number): string => `http://127.0.0.1:${port}/mcp`;

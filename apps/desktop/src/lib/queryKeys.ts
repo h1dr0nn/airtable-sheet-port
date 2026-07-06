@@ -13,5 +13,7 @@ export const queryKeys = {
   auditEventsPaged: (pageSize: number) => ["audit-events", pageSize] as const,
   tokenStatus: ["token-status"] as const,
   googleConfig: ["google-config"] as const,
-  settings: ["settings"] as const
+  settings: ["settings"] as const,
+  mcpConfig: ["mcp-config"] as const,
+  mcpClients: ["mcp-clients"] as const
 };

@@ -58,6 +58,30 @@ export type GoogleConfig = {
   hasClientSecret: boolean;      // secret presence only; the value never crosses IPC
 };
 
+export type McpTransport = "stdio" | "http";
+
+export type McpConfigView = {
+  transport: McpTransport; // meta key 'mcp_transport', default 'stdio'
+  port: number;            // meta key 'mcp_port', default 4319, range 1024-65535
+  running: boolean;        // fresh heartbeat exists right now
+  boundPort: number | null; // configured port when running AND http, else null
+};
+
+/** Whether a known MCP client is installed and, if so, its config state. */
+export type McpClientState =
+  | "configured"    // client config already points at this sidecar
+  | "unconfigured"  // client is installed but not registered yet
+  | "not_found";    // client is not installed on this machine
+
+/** One MCP client the desktop can auto-configure (Claude Desktop, Cursor, ...). */
+export type McpClient = {
+  id: string;                 // stable client id, e.g. "claude-desktop"
+  name: string;               // display name, e.g. "Claude Desktop"
+  state: McpClientState;
+  /** Resolved config file the desktop would edit, null when not found. */
+  configPath: string | null;
+};
+
 export type GoogleConnectResult = {
   email: string;
 };
@@ -98,6 +122,20 @@ export interface IpcApi {
   setAutoApprove(enabled: boolean): Promise<void>;
   /** Prefs-only reset: does not touch credentials, permission rules, or data. */
   resetSettings(): Promise<void>;
+  /** Persisted transport/port plus the live sidecar heartbeat state. */
+  getMcpConfig(): Promise<McpConfigView>;
+  /** Persists the transport choice; takes effect after a sidecar restart. */
+  setMcpTransport(transport: McpTransport): Promise<void>;
+  /** Persists the HTTP port (1024-65535); takes effect after a sidecar restart. */
+  setMcpPort(port: number): Promise<void>;
+  /** Scans the machine for known MCP clients and their config state. */
+  mcpDetectClients(): Promise<McpClient[]>;
+  /** Writes this sidecar into the given client's config file. */
+  mcpConfigureClient(id: string): Promise<void>;
+  /** Removes this sidecar from the given client's config file. */
+  mcpUnregisterClient(id: string): Promise<void>;
+  /** Configures every currently detected (installed) client at once. */
+  mcpConfigureAll(): Promise<void>;
 }
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -127,7 +165,14 @@ const tauriIpc: IpcApi = {
   googleDisconnect: () => invoke<void>("google_disconnect"),
   getSettings: () => invoke<AppSettings>("get_settings"),
   setAutoApprove: (enabled) => invoke<void>("set_auto_approve", { enabled }),
-  resetSettings: () => invoke<void>("reset_settings")
+  resetSettings: () => invoke<void>("reset_settings"),
+  getMcpConfig: () => invoke<McpConfigView>("get_mcp_config"),
+  setMcpTransport: (transport) => invoke<void>("set_mcp_transport", { transport }),
+  setMcpPort: (port) => invoke<void>("set_mcp_port", { port }),
+  mcpDetectClients: () => invoke<McpClient[]>("mcp_detect_clients"),
+  mcpConfigureClient: (id) => invoke<void>("mcp_configure_client", { id }),
+  mcpUnregisterClient: (id) => invoke<void>("mcp_unregister_client", { id }),
+  mcpConfigureAll: () => invoke<void>("mcp_configure_all")
 };
 
 // Plain-browser dev preview falls back to clickable in-memory fixtures.

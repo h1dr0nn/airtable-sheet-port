@@ -139,3 +139,98 @@ describe("demo IPC google flow", () => {
     expect(auditActions).toContain("settings_reset");
   });
 });
+
+describe("demo IPC mcp flow", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("defaults to stdio with a null boundPort and a running sidecar", async () => {
+    const ipc = createDemoIpc();
+
+    const config = await settle(ipc.getMcpConfig());
+    expect(config.transport).toBe("stdio");
+    expect(config.port).toBe(4319);
+    expect(config.running).toBe(true);
+    // boundPort is only meaningful for a running HTTP sidecar.
+    expect(config.boundPort).toBeNull();
+  });
+
+  it("switching to http exposes boundPort at the configured port", async () => {
+    const ipc = createDemoIpc();
+
+    await settle(ipc.setMcpTransport("http"));
+    await settle(ipc.setMcpPort(5000));
+
+    const config = await settle(ipc.getMcpConfig());
+    expect(config.transport).toBe("http");
+    expect(config.port).toBe(5000);
+    expect(config.boundPort).toBe(5000);
+  });
+
+  it("setMcpPort rejects out-of-range ports", async () => {
+    const ipc = createDemoIpc();
+
+    const assertion = expect(ipc.setMcpPort(80)).rejects.toThrow(
+      "Port must be an integer between 1024 and 65535"
+    );
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+
+  it("detects a plausible roster with every client state present", async () => {
+    const ipc = createDemoIpc();
+
+    const clients = await settle(ipc.mcpDetectClients());
+    const byState = new Map(clients.map((client) => [client.state, client]));
+    expect(byState.has("unconfigured")).toBe(true);
+    expect(byState.has("configured")).toBe(true);
+    expect(byState.has("not_found")).toBe(true);
+  });
+
+  it("configure and unregister flip an installed client's state", async () => {
+    const ipc = createDemoIpc();
+    const unconfigured = (await settle(ipc.mcpDetectClients())).find(
+      (client) => client.state === "unconfigured"
+    );
+    if (!unconfigured) {
+      throw new Error("expected an unconfigured demo client");
+    }
+
+    await settle(ipc.mcpConfigureClient(unconfigured.id));
+    let after = (await settle(ipc.mcpDetectClients())).find((c) => c.id === unconfigured.id);
+    expect(after?.state).toBe("configured");
+
+    await settle(ipc.mcpUnregisterClient(unconfigured.id));
+    after = (await settle(ipc.mcpDetectClients())).find((c) => c.id === unconfigured.id);
+    expect(after?.state).toBe("unconfigured");
+  });
+
+  it("configureAll configures installed clients but leaves absent ones", async () => {
+    const ipc = createDemoIpc();
+
+    await settle(ipc.mcpConfigureAll());
+    const clients = await settle(ipc.mcpDetectClients());
+    expect(clients.some((client) => client.state === "unconfigured")).toBe(false);
+    // A not_found client is never installed, so it stays absent.
+    expect(clients.some((client) => client.state === "not_found")).toBe(true);
+  });
+
+  it("rejects configuring a client that is not installed", async () => {
+    const ipc = createDemoIpc();
+    const absent = (await settle(ipc.mcpDetectClients())).find(
+      (client) => client.state === "not_found"
+    );
+    if (!absent) {
+      throw new Error("expected a not_found demo client");
+    }
+
+    const assertion = expect(ipc.mcpConfigureClient(absent.id)).rejects.toThrow("not installed");
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+});
