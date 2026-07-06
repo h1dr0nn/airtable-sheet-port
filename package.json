@@ -1,0 +1,19 @@
+{
+  "name": "airtable-sheet-port",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sheet Port - Safe local port for AI agents to access tables and spreadsheets.",
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3"
+  }
+}
