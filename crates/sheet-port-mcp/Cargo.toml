@@ -1,0 +1,21 @@
+[package]
+name = "sheet-port-mcp"
+version = "0.1.0"
+description = "Airtable - Sheet Port MCP sidecar: stdio server exposing the 9 broker tools to AI agents."
+authors = ["Airtable - Sheet Port"]
+edition = "2021"
+
+[[bin]]
+name = "sheet-port-mcp"
+path = "src/main.rs"
+
+[dependencies]
+sheet-port-core = { path = "../sheet-port-core" }
+rmcp = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }

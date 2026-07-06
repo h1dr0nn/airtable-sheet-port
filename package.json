@@ -10,7 +10,8 @@
     "build": "pnpm -r build",
     "typecheck": "tsc -b --pretty false",
     "lint": "pnpm -r lint",
-    "test": "pnpm -r --if-present test && pnpm --filter @sheet-port/mcp-server test:e2e",
+    "test": "pnpm -r --if-present test && node scripts/e2e-smoke.mjs",
+    "test:e2e": "node scripts/e2e-smoke.mjs",
     "format": "prettier --write ."
   },
   "devDependencies": {
