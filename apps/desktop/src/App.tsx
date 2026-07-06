@@ -1,8 +1,9 @@
 import { useEffect, useState, type ComponentType } from "react";
-import { ToastViewport } from "@sheet-port/ui";
+import { AnimatedScreen, ToastViewport } from "@sheet-port/ui";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
+import { useSidebarCollapsed } from "./hooks/useSidebarCollapsed.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useUpdate } from "./hooks/useUpdate.js";
 import type { ScreenId } from "./lib/nav.js";
@@ -30,6 +31,7 @@ export function App() {
   useTheme();
   const [screen, setScreen] = useState<ScreenId>("dashboard");
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const { collapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const Screen = SCREENS[screen];
 
   // Silent launch check: no toast, no dialog. When a newer version is found the
@@ -43,12 +45,19 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg font-sans text-ink">
-      <Titlebar onNavigate={setScreen} onOpenPalette={() => setIsPaletteOpen(true)} />
+      <Titlebar
+        onNavigate={setScreen}
+        onOpenPalette={() => setIsPaletteOpen(true)}
+        sidebarCollapsed={collapsed}
+        onToggleSidebar={toggleSidebar}
+      />
       <div className="flex min-h-0 flex-1">
-        <Sidebar active={screen} onNavigate={setScreen} update={update} />
+        <Sidebar active={screen} onNavigate={setScreen} update={update} collapsed={collapsed} />
         <main className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-8 py-8">
-            <Screen onNavigate={setScreen} />
+            <AnimatedScreen screenKey={screen}>
+              <Screen onNavigate={setScreen} />
+            </AnimatedScreen>
           </div>
         </main>
       </div>

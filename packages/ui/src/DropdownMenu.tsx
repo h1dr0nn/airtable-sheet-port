@@ -12,7 +12,8 @@ export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 
 const PANEL_CLASS = [
   "min-w-[176px] rounded-lg border border-edge bg-raised p-1",
-  "font-sans shadow-pop motion-safe:animate-fade-in"
+  // Scale/fade in so menus feel anchored to their trigger, not popped flat.
+  "font-sans shadow-pop motion-safe:animate-scale-in"
 ].join(" ");
 
 // Menus ride the dropdown layer (see --z-dropdown) so they escape dialogs and

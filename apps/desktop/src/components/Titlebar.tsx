@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, Check } from "lucide-react";
+import { Bell, Check, PanelLeft, PanelLeftClose } from "lucide-react";
 import {
   cn,
   DropdownMenu,
@@ -154,11 +154,21 @@ type TitlebarProps = {
   onNavigate: (screen: ScreenId) => void;
   /** Opens the app-wide command palette (also bound to Ctrl/Cmd+K). */
   onOpenPalette: () => void;
+  /** Current sidebar rail state; drives the toggle icon and tooltip. */
+  sidebarCollapsed: boolean;
+  /** Collapses/expands the sidebar rail (state owned by App). */
+  onToggleSidebar: () => void;
 };
 
-/** Custom titlebar: hamburger menu + command-palette search on the left,
- * window controls on the right (Tauri only). The middle stays a drag region. */
-export function Titlebar({ onNavigate, onOpenPalette }: TitlebarProps) {
+/** Custom titlebar: sidebar toggle + hamburger menu + command-palette search on
+ * the left, window controls on the right (Tauri only). The middle stays a drag
+ * region. */
+export function Titlebar({
+  onNavigate,
+  onOpenPalette,
+  sidebarCollapsed,
+  onToggleSidebar
+}: TitlebarProps) {
   const queryClient = useQueryClient();
   const { setting, setSetting } = useTheme();
   const { data: status } = useAppStatus();
@@ -203,6 +213,27 @@ export function Titlebar({ onNavigate, onOpenPalette }: TitlebarProps) {
       className="relative flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-transparent"
     >
       <div className="flex h-full items-stretch">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+              aria-pressed={sidebarCollapsed}
+              onClick={onToggleSidebar}
+              className={TITLEBAR_BUTTON_CLASS}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeft size={15} strokeWidth={1.75} aria-hidden />
+              ) : (
+                <PanelLeftClose size={15} strokeWidth={1.75} aria-hidden />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          </TooltipContent>
+        </Tooltip>
+
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>

@@ -59,13 +59,19 @@ export default {
           from: { opacity: "0" },
           to: { opacity: "1" }
         },
+        "scale-in": {
+          from: { opacity: "0", transform: "scale(0.98)" },
+          to: { opacity: "1", transform: "scale(1)" }
+        },
         "dot-pulse": {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.4" }
         }
       },
       animation: {
-        "fade-in": "fade-in 140ms ease-out",
+        "fade-in": "fade-in 140ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "fade-up": "fade-up 200ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "scale-in": "scale-in 160ms cubic-bezier(0.4, 0, 0.2, 1)",
         "dot-pulse": "dot-pulse 2s ease-in-out infinite"
       }
     }

@@ -32,7 +32,8 @@ export const DialogContent = forwardRef<
       className={cn(
         "fixed left-1/2 w-full max-w-md -translate-x-1/2",
         "rounded-card border border-edge bg-raised p-5 shadow-pop",
-        "focus:outline-none motion-safe:animate-fade-in",
+        // Gentle scale-up + fade on enter; centered origin keeps it grounded.
+        "focus:outline-none motion-safe:animate-scale-in",
         className
       )}
       {...props}

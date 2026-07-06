@@ -124,7 +124,7 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
       // Rides the dropdown layer (see --z-dropdown) so activity opened from the
       // titlebar is never occluded by an in-flight toast stack.
       style={{ zIndex: "var(--z-dropdown)" }}
-      className="absolute right-2 top-full mt-1 flex max-h-[70vh] w-[380px] flex-col overflow-hidden rounded-lg border border-edge bg-raised shadow-pop"
+      className="absolute right-2 top-full mt-1 flex max-h-[70vh] w-[380px] flex-col overflow-hidden rounded-lg border border-edge bg-raised shadow-pop motion-safe:animate-scale-in"
     >
       <div className="flex shrink-0 items-center border-b border-edge px-3 py-2.5">
         <h2 className="text-[13px] font-semibold text-ink">Activity</h2>

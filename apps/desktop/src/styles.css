@@ -47,6 +47,33 @@
   --z-modal: 3000;
   --z-modal-overlay: 2999;
   --z-toast: 2800;
+
+  /*
+   * Motion tokens. One easing/duration vocabulary the whole app shares so
+   * transitions stay consistent instead of drifting per-component.
+   *   standard   - most enter/exit, hover, color shifts
+   *   emphasized - deliberate, spatial moves (sidebar collapse)
+   */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 120ms;
+  --dur-normal: 200ms;
+  --dur-slow: 320ms;
+}
+
+/*
+ * Global reduced-motion guard: users who ask for less motion get instant
+ * state changes everywhere, including the CSS-driven sidebar collapse below.
+ * framer-motion is handled separately via useReducedMotion.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 .dark {

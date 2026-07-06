@@ -47,7 +47,7 @@ export function CommandDialog({ open, onOpenChange, title, children }: CommandDi
           className={cn(
             "fixed left-1/2 top-[25vh] w-full max-w-xl -translate-x-1/2 overflow-hidden",
             "rounded-card border border-edge bg-raised p-0 shadow-pop",
-            "focus:outline-none motion-safe:animate-fade-in"
+            "focus:outline-none motion-safe:animate-scale-in"
           )}
         >
           <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
