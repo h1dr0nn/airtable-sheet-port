@@ -36,6 +36,12 @@ For frontend-only development:
 pnpm --filter @sheet-port/desktop dev
 ```
 
+The desktop frontend intentionally uses the app-specific local port `8477`, not a framework default:
+
+```txt
+http://127.0.0.1:8477
+```
+
 For the Tauri shell after installing Rust/Tauri prerequisites:
 
 ```bash

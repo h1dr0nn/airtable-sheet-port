@@ -61,6 +61,12 @@ pnpm --filter @sheet-port/mcp-server dev
 pnpm --filter @sheet-port/desktop dev
 ```
 
+Desktop dev UI runs on the app-specific local port:
+
+```txt
+http://127.0.0.1:8477
+```
+
 ## Dev Scripts
 
 ```bash

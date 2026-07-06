@@ -5,7 +5,7 @@
   "identifier": "dev.sheetport.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://127.0.0.1:1420",
+    "devUrl": "http://127.0.0.1:8477",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
