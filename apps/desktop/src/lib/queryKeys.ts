@@ -15,6 +15,7 @@ export const queryKeys = {
   googleConfig: ["google-config"] as const,
   googleAccounts: ["google-accounts"] as const,
   settings: ["settings"] as const,
+  autostart: ["autostart"] as const,
   mcpConfig: ["mcp-config"] as const,
   mcpClients: ["mcp-clients"] as const
 };

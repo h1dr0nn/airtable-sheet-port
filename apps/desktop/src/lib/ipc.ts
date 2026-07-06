@@ -114,10 +114,17 @@ export type GoogleConnectResult = {
 export type FontScale = "small" | "normal" | "large";
 export type FontFamily = "classic" | "modern" | "system";
 
+/** What happens when the user clicks the window close button. */
+export type CloseBehavior =
+  | "ask"   // meta key 'close_behavior', default: prompt via the close dialog
+  | "tray"  // minimize to the system tray, keep running in the background
+  | "quit"; // exit the app
+
 export type AppSettings = {
   autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1', off by default
   fontScale: FontScale;       // meta key 'ui_font_scale', 'normal' by default
   fontFamily: FontFamily;     // meta key 'ui_font_family', 'modern' by default
+  closeBehavior: CloseBehavior; // meta key 'close_behavior', 'ask' by default
 };
 
 /** Managed-sidecar status returned by mcp_server_start / mcp_server_stop. */
@@ -165,6 +172,16 @@ export interface IpcApi {
   setFontScale(scale: FontScale): Promise<void>;
   /** Persists the UI font-family preference. */
   setFontFamily(family: FontFamily): Promise<void>;
+  /** Persists the window close behavior; "ask" restores the close dialog. */
+  setCloseBehavior(behavior: CloseBehavior): Promise<void>;
+  /** Hides the main window to the system tray, keeping the app running. */
+  windowHideToTray(): Promise<void>;
+  /** Quits the application. */
+  windowQuit(): Promise<void>;
+  /** Whether launch-at-login (autostart) is currently enabled. */
+  getAutostartEnabled(): Promise<boolean>;
+  /** Enables or disables launch-at-login (autostart). */
+  setAutostartEnabled(enabled: boolean): Promise<void>;
   /** Prefs-only reset: does not touch credentials, permission rules, or data. */
   resetSettings(): Promise<void>;
   /** Persisted transport/port plus the live sidecar heartbeat state. */
@@ -218,6 +235,11 @@ const tauriIpc: IpcApi = {
   setAutoApprove: (enabled) => invoke<void>("set_auto_approve", { enabled }),
   setFontScale: (scale) => invoke<void>("set_font_scale", { scale }),
   setFontFamily: (family) => invoke<void>("set_font_family", { family }),
+  setCloseBehavior: (behavior) => invoke<void>("set_close_behavior", { behavior }),
+  windowHideToTray: () => invoke<void>("window_hide_to_tray"),
+  windowQuit: () => invoke<void>("window_quit"),
+  getAutostartEnabled: () => invoke<boolean>("get_autostart_enabled"),
+  setAutostartEnabled: (enabled) => invoke<void>("set_autostart_enabled", { enabled }),
   resetSettings: () => invoke<void>("reset_settings"),
   getMcpConfig: () => invoke<McpConfigView>("get_mcp_config"),
   setMcpTransport: (transport) => invoke<void>("set_mcp_transport", { transport }),

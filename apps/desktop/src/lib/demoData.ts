@@ -9,6 +9,7 @@ import type {
 import type {
   AppSettings,
   AppStatus,
+  CloseBehavior,
   FontFamily,
   FontScale,
   GoogleAccount,
@@ -79,6 +80,9 @@ const DEMO_GOOGLE_CLIENT_ID = "000000000000-demo.apps.googleusercontent.com";
 // Default UI font preferences; mirror core::db defaults (normal + modern).
 const DEFAULT_FONT_SCALE: FontScale = "normal";
 const DEFAULT_FONT_FAMILY: FontFamily = "modern";
+
+// Default window close behavior; mirrors core::db default ("ask").
+const DEFAULT_CLOSE_BEHAVIOR: CloseBehavior = "ask";
 
 /** Builds the "google-sheets:{accountKey}" source id from an email address. */
 function sourceIdForEmail(email: string): string {
@@ -154,6 +158,10 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   // UI font preferences; mirror the backend defaults, cleared on reset.
   let fontScale: FontScale = DEFAULT_FONT_SCALE;
   let fontFamily: FontFamily = DEFAULT_FONT_FAMILY;
+  // Window close behavior; mirrors the backend default, cleared on reset.
+  let closeBehavior: CloseBehavior = DEFAULT_CLOSE_BEHAVIOR;
+  // Launch-at-login mirror; off by default in the preview.
+  let autostartEnabled = false;
 
   // Desktop-managed HTTP sidecar: not running until mcp_server_start.
   let managedSidecarPid: number | null = null;
@@ -426,7 +434,7 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     },
     async getSettings(): Promise<AppSettings> {
       await delay();
-      return { autoApproveWrites, fontScale, fontFamily };
+      return { autoApproveWrites, fontScale, fontFamily, closeBehavior };
     },
     async setAutoApprove(enabled: boolean): Promise<void> {
       await delay();
@@ -455,12 +463,45 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         metadata: { key: "ui_font_family", family }
       });
     },
+    async setCloseBehavior(behavior: CloseBehavior): Promise<void> {
+      await delay();
+      closeBehavior = behavior;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "close_behavior", behavior }
+      });
+    },
+    async windowHideToTray(): Promise<void> {
+      await delay();
+      // No real window in the browser preview; record the intent for parity.
+      pushAudit({ actor: "user", action: "window_hidden_to_tray" });
+    },
+    async windowQuit(): Promise<void> {
+      await delay();
+      // No-op in the browser preview; the real backend exits the process.
+      pushAudit({ actor: "user", action: "window_quit" });
+    },
+    async getAutostartEnabled(): Promise<boolean> {
+      await delay();
+      return autostartEnabled;
+    },
+    async setAutostartEnabled(enabled: boolean): Promise<void> {
+      await delay();
+      autostartEnabled = enabled;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "autostart", enabled }
+      });
+    },
     async resetSettings(): Promise<void> {
       await delay();
       // Prefs-only: mirrors reset_settings clearing the app-managed meta keys.
       autoApproveWrites = false;
       fontScale = DEFAULT_FONT_SCALE;
       fontFamily = DEFAULT_FONT_FAMILY;
+      closeBehavior = DEFAULT_CLOSE_BEHAVIOR;
       pushAudit({ actor: "user", action: "settings_reset" });
     },
     async getMcpConfig(): Promise<McpConfigView> {

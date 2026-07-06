@@ -8,11 +8,17 @@ import {
   CardTitle,
   Input,
   Skeleton,
+  Switch,
   Tooltip,
   TooltipContent,
   TooltipTrigger
 } from "@sheet-port/ui";
 import { useAppStatus } from "../hooks/useAppStatus.js";
+import {
+  useAutostartEnabled,
+  useSetAutostartEnabled,
+  useSetCloseBehavior
+} from "../hooks/useCloseBehavior.js";
 import {
   useGoogleAccounts,
   useGoogleConfig,
@@ -29,7 +35,7 @@ import {
 import { useSources } from "../hooks/useSources.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { APP_AUTHOR, APP_NAME } from "../lib/constants.js";
-import type { FontFamily, FontScale } from "../lib/ipc.js";
+import { isTauri, type CloseBehavior, type FontFamily, type FontScale } from "../lib/ipc.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { GoogleJsonImport } from "../components/settings/GoogleJsonImport.js";
@@ -56,6 +62,12 @@ const FONT_FAMILY_OPTIONS: ReadonlyArray<SegmentedOption<FontFamily>> = [
   { value: "classic", label: "Classic" },
   { value: "modern", label: "Modern" },
   { value: "system", label: "System" }
+];
+
+const CLOSE_BEHAVIOR_OPTIONS: ReadonlyArray<SegmentedOption<CloseBehavior>> = [
+  { value: "ask", label: "Ask" },
+  { value: "tray", label: "Minimize to Tray" },
+  { value: "quit", label: "Quit" }
 ];
 
 const RESOLVED_LABELS: Record<"light" | "dark", string> = {
@@ -463,6 +475,60 @@ function AboutCard() {
   );
 }
 
+/** Window-behavior preferences: what closing the window does, and whether the
+ * app launches at login. Launch at Login needs OS integration, so it is only
+ * shown under Tauri; the browser preview hides it. */
+function GeneralCard() {
+  const { data: settings } = useSettings();
+  const setCloseBehavior = useSetCloseBehavior();
+  const { data: autostartEnabled } = useAutostartEnabled();
+  const setAutostart = useSetAutostartEnabled();
+
+  const closeBehavior = settings?.closeBehavior ?? "ask";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>General</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="divide-y divide-edge">
+          <div className="pb-4 first:pt-0">
+            <AppearanceRow
+              title="When Closing the Window"
+              description="Ask each time, keep running in the tray, or quit the app."
+              control={
+                <SegmentedControl
+                  options={CLOSE_BEHAVIOR_OPTIONS}
+                  value={closeBehavior}
+                  onChange={(next) => setCloseBehavior.mutate(next)}
+                  ariaLabel="When Closing the Window"
+                />
+              }
+            />
+          </div>
+          {isTauri ? (
+            <div className="pt-4 last:pb-0">
+              <AppearanceRow
+                title="Launch at Login"
+                description="Start the app automatically when you sign in."
+                control={
+                  <Switch
+                    checked={autostartEnabled ?? false}
+                    onCheckedChange={(checked) => setAutostart.mutate(checked)}
+                    disabled={setAutostart.isPending}
+                    aria-label="Launch at Login"
+                  />
+                }
+              />
+            </div>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Resets frontend prefs (theme) and app-managed prefs (auto-approve) only. */
 function ResetCard() {
   const resetSettings = useResetSettings();
@@ -516,6 +582,7 @@ export function Settings() {
         <McpClientsCard />
         <GoogleSheetsCard />
         <PermissionsCard />
+        <GeneralCard />
         <AboutCard />
         <ResetCard />
       </div>

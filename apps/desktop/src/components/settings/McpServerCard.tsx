@@ -119,9 +119,10 @@ function PortField({ savedPort }: PortFieldProps) {
   );
 }
 
-/** Start/Stop control for the desktop-managed HTTP sidecar. Stdio clients
- * spawn their own sidecar, so this only applies to the Local HTTP transport. */
-function ServerControl({ isRunning }: { isRunning: boolean }) {
+/** Start/Stop control for the desktop-managed sidecar. The backend now respects
+ * the configured transport, so this applies to both stdio and Local HTTP: the
+ * description adapts to explain what the managed process does for each. */
+function ServerControl({ isRunning, isHttp }: { isRunning: boolean; isHttp: boolean }) {
   const start = useStartMcpServer();
   const stop = useStopMcpServer();
   const isBusy = start.isPending || stop.isPending;
@@ -131,7 +132,9 @@ function ServerControl({ isRunning }: { isRunning: boolean }) {
       <div className="min-w-0">
         <p className="text-[13px] font-medium text-ink">Server Process</p>
         <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">
-          Runs the shared HTTP endpoint as a desktop-managed process.
+          {isHttp
+            ? "Runs the shared HTTP endpoint as a desktop-managed process."
+            : "MCP clients usually launch their own instance; this runs a local managed one."}
         </p>
       </div>
       {isRunning ? (
@@ -212,13 +215,7 @@ export function McpServerCard() {
 
             {isHttp ? <PortField savedPort={port} /> : null}
 
-            {isHttp ? (
-              <ServerControl isRunning={isRunning} />
-            ) : (
-              <p className="border-t border-edge pt-4 text-[12px] leading-4 text-ink-muted">
-                Clients launch the sidecar themselves - use MCP Clients to register it.
-              </p>
-            )}
+            <ServerControl isRunning={isRunning} isHttp={isHttp} />
 
             {isHttp ? (
               <div className="space-y-1.5 border-t border-edge pt-4">
