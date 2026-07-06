@@ -10,6 +10,9 @@ import {
   FOCUS_RING,
   Skeleton,
   StatusDot,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   type BadgeVariant
 } from "@sheet-port/ui";
 import type { ChangeStatus } from "@sheet-port/shared";
@@ -73,7 +76,14 @@ function McpStatCard() {
   return (
     <StatCard label="MCP Server">
       <div className="flex items-center gap-2">
-        <StatusDot status={status.mcpRunning ? "live" : "idle"} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <StatusDot status={status.mcpRunning ? "live" : "idle"} />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{status.mcpRunning ? "Running" : "Offline"}</TooltipContent>
+        </Tooltip>
         <span className="text-[15px] font-semibold text-ink">
           {status.mcpRunning ? "Running" : "Offline"}
         </span>
@@ -147,9 +157,12 @@ function DatabaseStatCard() {
       ) : (
         <>
           <p className="text-[13px] font-medium text-ink">Shared SQLite</p>
-          <p className="mt-1 truncate font-mono text-[12px] text-ink-muted" title={status.dbPath}>
-            {status.dbPath}
-          </p>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <p className="mt-1 truncate font-mono text-[12px] text-ink-muted">{status.dbPath}</p>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-md break-all font-mono">{status.dbPath}</TooltipContent>
+          </Tooltip>
           <p className="mt-2 text-[12.5px] text-ink-muted">
             Version <span className="font-mono text-ink">{status.appVersion}</span>
           </p>

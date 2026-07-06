@@ -7,7 +7,10 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Skeleton
+  Skeleton,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
 } from "@sheet-port/ui";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import {
@@ -22,7 +25,7 @@ import { useTheme } from "../hooks/useTheme.js";
 import { APP_AUTHOR } from "../lib/constants.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
-import { CopyButton } from "../components/CopyButton.js";
+import { GoogleJsonImport } from "../components/settings/GoogleJsonImport.js";
 import { RuleRow } from "../components/permissions/RuleRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
@@ -37,6 +40,38 @@ const RESOLVED_LABELS: Record<"light" | "dark", string> = {
   light: "light",
   dark: "dark"
 };
+
+type SaveButtonProps = {
+  canSave: boolean;
+  isPending: boolean;
+  onClick: () => void;
+  /** Tooltip shown when the button is disabled because nothing changed. */
+  disabledReason: string;
+};
+
+/** Save button that explains via tooltip why it is disabled (nothing to save).
+ * While pending it stays plain since the "Saving..." label is self-explanatory. */
+function SaveButton({ canSave, isPending, onClick, disabledReason }: SaveButtonProps) {
+  const button = (
+    <Button size="sm" disabled={!canSave} onClick={onClick}>
+      {isPending ? "Saving..." : "Save"}
+    </Button>
+  );
+
+  if (canSave || isPending) {
+    return button;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {/* Span wrapper so the tooltip still fires over a disabled button. */}
+        <span className="inline-flex">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent>{disabledReason}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 function AppearanceCard() {
   const { setting, resolved, setSetting } = useTheme();
@@ -97,9 +132,12 @@ function ClientIdField({ storedClientId }: { storedClientId: string }) {
           autoComplete="off"
           onChange={(event) => setDraft(event.target.value)}
         />
-        <Button size="sm" disabled={!canSave} onClick={save}>
-          {saveClientId.isPending ? "Saving..." : "Save"}
-        </Button>
+        <SaveButton
+          canSave={canSave}
+          isPending={saveClientId.isPending}
+          onClick={save}
+          disabledReason="No changes to save"
+        />
       </div>
       <p className="text-[12px] leading-4 text-ink-muted">
         Desktop-app client ID from Google Cloud Console.
@@ -156,9 +194,12 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
             autoComplete="off"
             onChange={(event) => setDraft(event.target.value)}
           />
-          <Button size="sm" disabled={!canSave} onClick={save}>
-            {saveSecret.isPending ? "Saving..." : "Save"}
-          </Button>
+          <SaveButton
+            canSave={canSave}
+            isPending={saveSecret.isPending}
+            onClick={save}
+            disabledReason="No changes to save"
+          />
           {isReplacing ? (
             <Button
               variant="outline"
@@ -219,6 +260,7 @@ function GoogleSheetsCard() {
     <Card>
       <CardHeader>
         <CardTitle>Google Sheets</CardTitle>
+        <GoogleJsonImport />
       </CardHeader>
       <CardContent>
         {isPending || !config ? (
@@ -328,19 +370,36 @@ function AboutCard() {
               <dd className="font-mono text-[12.5px] text-ink">{status.appVersion}</dd>
             </div>
             <div className="flex h-9 items-center justify-between gap-4">
-              <dt className="shrink-0 text-[13px] text-ink-muted">Database</dt>
-              <dd className="flex min-w-0 items-center gap-1">
-                <span className="truncate font-mono text-[12.5px] text-ink" title={status.dbPath}>
-                  {status.dbPath}
-                </span>
-                <CopyButton value={status.dbPath} label="Copy database path" />
-              </dd>
-            </div>
-            <div className="flex h-9 items-center justify-between gap-4">
               <dt className="text-[13px] text-ink-muted">Created By</dt>
               <dd className="text-[12.5px] font-medium text-ink">{APP_AUTHOR}</dd>
             </div>
           </dl>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DatabaseCard() {
+  const { data: status, isPending } = useAppStatus();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Database</CardTitle>
+      </CardHeader>
+      <CardContent className="py-1">
+        {isPending || !status ? (
+          <Skeleton className="my-2 h-5" />
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <p className="truncate font-mono text-[12.5px] text-ink-muted">{status.dbPath}</p>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-md break-all font-mono">
+              {status.dbPath}
+            </TooltipContent>
+          </Tooltip>
         )}
       </CardContent>
     </Card>
@@ -355,15 +414,12 @@ export function Settings() {
         description="Appearance, connections, permissions, and application details"
       />
 
-      <div className="grid items-start gap-4 xl:grid-cols-2">
-        <div className="space-y-4">
-          <AppearanceCard />
-          <AboutCard />
-        </div>
-        <div className="space-y-4">
-          <GoogleSheetsCard />
-          <PermissionsCard />
-        </div>
+      <div className="space-y-4">
+        <AppearanceCard />
+        <GoogleSheetsCard />
+        <PermissionsCard />
+        <AboutCard />
+        <DatabaseCard />
       </div>
     </>
   );

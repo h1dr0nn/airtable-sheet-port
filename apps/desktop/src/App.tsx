@@ -5,7 +5,6 @@ import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
 import { useTheme } from "./hooks/useTheme.js";
 import type { ScreenId } from "./lib/nav.js";
-import { AuditLog } from "./screens/AuditLog.js";
 import { Changes } from "./screens/Changes.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { DataSources } from "./screens/DataSources.js";
@@ -21,7 +20,6 @@ const SCREENS: Record<ScreenId, ComponentType<ScreenProps>> = {
   sources: DataSources,
   tables: Tables,
   changes: Changes,
-  audit: AuditLog,
   settings: Settings
 };
 

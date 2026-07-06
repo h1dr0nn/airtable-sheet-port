@@ -1,6 +1,16 @@
 import { useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import { Badge, Button, cn, FOCUS_RING, Skeleton, type BadgeVariant } from "@sheet-port/ui";
+import {
+  Badge,
+  Button,
+  cn,
+  FOCUS_RING,
+  Skeleton,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  type BadgeVariant
+} from "@sheet-port/ui";
 import type { DataSource, SourceStatus } from "@sheet-port/shared";
 import { useGoogleConfig, useGoogleConnect, useGoogleDisconnect } from "../hooks/useGoogleConfig.js";
 import { useSources } from "../hooks/useSources.js";
@@ -62,14 +72,19 @@ function GoogleSheetsCard({ source, onNavigate }: GoogleSheetsCardProps) {
           overline="google_sheets"
           badge={<Badge variant="success">Connected</Badge>}
           footer={
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={disconnect.isPending}
-              onClick={() => setIsConfirmOpen(true)}
-            >
-              Disconnect
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={disconnect.isPending}
+                  onClick={() => setIsConfirmOpen(true)}
+                >
+                  Disconnect
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Remove this account and its stored token</TooltipContent>
+            </Tooltip>
           }
         >
           <p className="text-[15px] font-semibold text-ink">{source.name}</p>
@@ -104,21 +119,35 @@ function GoogleSheetsCard({ source, onNavigate }: GoogleSheetsCardProps) {
       badge={<Badge variant="muted">Not Connected</Badge>}
       footer={
         <>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!hasClientId || connect.isPending}
-            onClick={() => connect.mutate()}
-          >
-            {connect.isPending ? (
-              <>
-                <Loader2 size={14} aria-hidden className="animate-spin" />
-                Connecting...
-              </>
-            ) : (
-              "Connect"
-            )}
-          </Button>
+          {!hasClientId ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* Span wrapper so the tooltip still fires over a disabled button. */}
+                <span className="inline-flex">
+                  <Button variant="outline" size="sm" disabled>
+                    Connect
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Set the Client ID in Settings first</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={connect.isPending}
+              onClick={() => connect.mutate()}
+            >
+              {connect.isPending ? (
+                <>
+                  <Loader2 size={14} aria-hidden className="animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                "Connect"
+              )}
+            </Button>
+          )}
           {!hasClientId ? (
             <button
               type="button"
@@ -151,9 +180,17 @@ function ProviderCard() {
       badge={<Badge variant="muted">Coming Soon</Badge>}
       footer={
         <>
-          <Button variant="outline" size="sm" disabled>
-            Connect
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {/* Span wrapper so the tooltip still fires over a disabled button. */}
+              <span className="inline-flex">
+                <Button variant="outline" size="sm" disabled>
+                  Connect
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Available once the connector ships</TooltipContent>
+          </Tooltip>
           <span className="text-[12px] text-ink-muted">Not available yet</span>
         </>
       }

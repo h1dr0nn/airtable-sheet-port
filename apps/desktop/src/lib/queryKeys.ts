@@ -10,6 +10,7 @@ export const queryKeys = {
   changesRoot: ["changes"] as const,
   changes: (status: string | null) => ["changes", status ?? "all"] as const,
   auditEvents: ["audit-events"] as const,
+  auditEventsPaged: (pageSize: number) => ["audit-events", pageSize] as const,
   tokenStatus: ["token-status"] as const,
   googleConfig: ["google-config"] as const
 };

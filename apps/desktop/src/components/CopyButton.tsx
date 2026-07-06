@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Button, toast } from "@sheet-port/ui";
+import { Button, toast, Tooltip, TooltipContent, TooltipTrigger } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 
 const COPIED_RESET_MS = 1500;
@@ -30,14 +30,19 @@ export function CopyButton({ value, label, children }: CopyButtonProps) {
   };
 
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      aria-label={label}
-      className="min-w-16 px-2"
-      onClick={() => void handleCopy()}
-    >
-      {isCopied ? "Copied" : children ?? "Copy"}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={label}
+          className="min-w-16 px-2"
+          onClick={() => void handleCopy()}
+        >
+          {isCopied ? "Copied" : children ?? "Copy"}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{isCopied ? "Copied" : "Copy"}</TooltipContent>
+    </Tooltip>
   );
 }

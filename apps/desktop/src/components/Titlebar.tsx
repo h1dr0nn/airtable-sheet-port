@@ -1,7 +1,7 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Bell, Check } from "lucide-react";
 import {
   cn,
   DropdownMenu,
@@ -13,13 +13,22 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   FOCUS_RING,
-  toast
+  toast,
+  Tooltip,
+  TooltipContent,
+  TooltipHint,
+  TooltipTrigger
 } from "@sheet-port/ui";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import { useTheme } from "../hooks/useTheme.js";
 import { isTauri } from "../lib/ipc.js";
 import { buildAppMenu, type MenuEntry } from "../lib/menu.js";
 import type { ScreenId } from "../lib/nav.js";
+import { AuditDropdown } from "./AuditDropdown.js";
+
+// Gap that separates the activity button from the window-control cluster so it
+// reads as a distinct control rather than another window button.
+const CONTROL_CLUSTER_GAP = "mr-2";
 
 // Shared 46px hover zone so menu/search buttons read like the window controls.
 const TITLEBAR_BUTTON_CLASS = cn(
@@ -30,27 +39,35 @@ const TITLEBAR_BUTTON_CLASS = cn(
 );
 
 type WindowControlProps = {
+  /** Accessible name; also the tooltip text. */
   label: string;
+  /** Short tooltip label when it should differ from the a11y name. */
+  tooltip: string;
   children: ReactNode;
   onClick: () => void;
   isClose?: boolean;
 };
 
-function WindowControl({ label, children, onClick, isClose = false }: WindowControlProps) {
+function WindowControl({ label, tooltip, children, onClick, isClose = false }: WindowControlProps) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        "flex h-full w-[46px] items-center justify-center text-ink-muted transition-colors",
-        FOCUS_RING,
-        "focus-visible:ring-offset-0",
-        isClose ? "hover:bg-danger-solid hover:text-white" : "hover:bg-surface hover:text-ink"
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          onClick={onClick}
+          className={cn(
+            "flex h-full w-[46px] items-center justify-center text-ink-muted transition-colors",
+            FOCUS_RING,
+            "focus-visible:ring-offset-0",
+            isClose ? "hover:bg-danger-solid hover:text-white" : "hover:bg-surface hover:text-ink"
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -101,17 +118,30 @@ function WindowControls() {
   const appWindow = getCurrentWindow();
   return (
     <div className="flex h-full items-stretch">
-      <WindowControl label="Minimize window" onClick={() => void appWindow.minimize()}>
+      <WindowControl
+        label="Minimize window"
+        tooltip="Minimize"
+        onClick={() => void appWindow.minimize()}
+      >
         <svg {...GLYPH_PROPS}>
           <path d="M0.5 5h9" />
         </svg>
       </WindowControl>
-      <WindowControl label="Toggle maximize" onClick={() => void appWindow.toggleMaximize()}>
+      <WindowControl
+        label="Toggle maximize"
+        tooltip="Maximize"
+        onClick={() => void appWindow.toggleMaximize()}
+      >
         <svg {...GLYPH_PROPS}>
           <rect x="1" y="1" width="8" height="8" rx="1" />
         </svg>
       </WindowControl>
-      <WindowControl label="Close window" isClose onClick={() => void appWindow.close()}>
+      <WindowControl
+        label="Close window"
+        tooltip="Close"
+        isClose
+        onClick={() => void appWindow.close()}
+      >
         <svg {...GLYPH_PROPS}>
           <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" />
         </svg>
@@ -132,6 +162,7 @@ export function Titlebar({ onNavigate, onOpenPalette }: TitlebarProps) {
   const queryClient = useQueryClient();
   const { setting, setSetting } = useTheme();
   const { data: status } = useAppStatus();
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
 
   const copyVersion = () => {
     const version = status?.appVersion;
@@ -162,34 +193,77 @@ export function Titlebar({ onNavigate, onOpenPalette }: TitlebarProps) {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-bg"
+      // Positioned above the modal layer so the custom bar and its window
+      // controls stay clickable while a dialog is open (see --z-titlebar).
+      style={{ zIndex: "var(--z-titlebar)" }}
+      className="relative flex h-10 shrink-0 select-none items-stretch justify-between border-b border-edge bg-bg"
     >
       <div className="flex h-full items-stretch">
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button type="button" aria-label="Application menu" className={TITLEBAR_BUTTON_CLASS}>
-              <svg {...MENU_GLYPH_PROPS}>
-                <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />
-              </svg>
-            </button>
-          </DropdownMenuTrigger>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Application menu"
+                  className={TITLEBAR_BUTTON_CLASS}
+                >
+                  <svg {...MENU_GLYPH_PROPS}>
+                    <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />
+                  </svg>
+                </button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Menu</TooltipContent>
+          </Tooltip>
           <DropdownMenuContent align="start">{renderMenuEntries(menu)}</DropdownMenuContent>
         </DropdownMenu>
 
-        <button
-          type="button"
-          aria-label="Open command palette"
-          onClick={onOpenPalette}
-          className={TITLEBAR_BUTTON_CLASS}
-        >
-          <svg {...MENU_GLYPH_PROPS}>
-            <circle cx="5.25" cy="5.25" r="3.5" />
-            <path d="M8 8l2.5 2.5" />
-          </svg>
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Open command palette"
+              onClick={onOpenPalette}
+              className={TITLEBAR_BUTTON_CLASS}
+            >
+              <svg {...MENU_GLYPH_PROPS}>
+                <circle cx="5.25" cy="5.25" r="3.5" />
+                <path d="M8 8l2.5 2.5" />
+              </svg>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            Search
+            <TooltipHint>Ctrl K</TooltipHint>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
-      {isTauri ? <WindowControls /> : null}
+      {/* Right cluster: activity button (always) then window controls (Tauri
+       * only), with extra spacing so activity reads as its own control. The
+       * relative wrapper anchors the right-aligned dropdown under the bell and
+       * is treated as "inside" so toggling via the button never double-fires. */}
+      <div className="flex h-full items-stretch">
+        <div className={cn("relative flex h-full items-stretch", isTauri && CONTROL_CLUSTER_GAP)}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Activity"
+                aria-expanded={isActivityOpen}
+                onClick={() => setIsActivityOpen((current) => !current)}
+                className={cn(TITLEBAR_BUTTON_CLASS, isActivityOpen && "bg-surface text-ink")}
+              >
+                <Bell size={14} strokeWidth={1.5} aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Activity</TooltipContent>
+          </Tooltip>
+          <AuditDropdown open={isActivityOpen} onOpenChange={setIsActivityOpen} />
+        </div>
+        {isTauri ? <WindowControls /> : null}
+      </div>
     </header>
   );
 }

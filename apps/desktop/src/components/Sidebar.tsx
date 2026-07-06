@@ -3,7 +3,6 @@ import {
   Database,
   GitPullRequest,
   LayoutDashboard,
-  ScrollText,
   Settings as SettingsIcon,
   Table2,
   type LucideIcon
@@ -20,7 +19,6 @@ const NAV_ICONS: Record<ScreenId, LucideIcon> = {
   sources: Database,
   tables: Table2,
   changes: GitPullRequest,
-  audit: ScrollText,
   settings: SettingsIcon
 };
 

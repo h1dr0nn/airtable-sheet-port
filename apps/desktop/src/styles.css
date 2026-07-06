@@ -34,6 +34,21 @@
   --shadow-pop: 0 4px 16px rgba(35, 38, 43, 0.12);
 }
 
+/*
+ * Stacking order (adb-compass pattern). The custom titlebar is only 40px tall
+ * and must stay clickable even while a modal is open, so it sits ABOVE the
+ * modal layer; the dialog is offset below the bar so nothing overlaps it.
+ * Menus, dropdowns, and tooltips ride highest so they escape every panel.
+ */
+:root,
+.dark {
+  --z-titlebar: 5000;
+  --z-dropdown: 5600;
+  --z-modal: 3000;
+  --z-modal-overlay: 2999;
+  --z-toast: 2800;
+}
+
 .dark {
   color-scheme: dark;
   --bg: 28 30 35; /* #1C1E23 graphite */

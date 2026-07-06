@@ -19,7 +19,7 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider delayDuration={250}>
+      <TooltipProvider delayDuration={300}>
         <App />
       </TooltipProvider>
     </QueryClientProvider>
