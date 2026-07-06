@@ -20,7 +20,8 @@ pub enum CoreError {
     Conflict(String),
     /// The operation is not implemented yet (connector stubs, delete MVP).
     Unsupported(String),
-    /// SQLite or JSON (de)serialization failure, with context.
+    /// SQLite, JSON (de)serialization, keychain, or network/API failure,
+    /// with context.
     Storage(String),
 }
 

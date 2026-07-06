@@ -270,12 +270,18 @@ fn delete_rule_removes_row_and_audits() {
 }
 
 #[test]
-fn list_rules_includes_seeded_customers_rule() {
+fn fresh_database_has_no_permission_rules() {
     let conn = open_temp_db();
+    assert!(list_rules(&conn).expect("list").is_empty());
+}
+
+#[test]
+fn list_rules_includes_demo_fixture_customers_rule() {
+    let conn = crate::test_fixtures::demo_db();
     let rules = list_rules(&conn).expect("list");
     assert!(rules.iter().any(|rule| {
-        rule.source_id == "mock-source"
-            && rule.table_id.as_deref() == Some("customers")
+        rule.source_id == crate::test_fixtures::DEMO_SOURCE_ID
+            && rule.table_id.as_deref() == Some(crate::test_fixtures::DEMO_TABLE_ID)
             && rule.read
             && rule.write
             && !rule.delete_records

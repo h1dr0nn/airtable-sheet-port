@@ -1,7 +1,9 @@
 //! Shared SQLite access (see docs/ipc.md). Whichever process opens the
-//! database first applies schema + seed; the schema is idempotent and the
-//! seed only runs while the meta 'seeded' marker is absent, so user-visible
-//! deletions of seed rows survive restarts.
+//! database first applies schema + seed + pending migrations; the schema is
+//! idempotent and the seed only runs while the meta 'seeded' marker is
+//! absent. Since schema_version 2 fresh databases start empty (no demo
+//! workspace); the v1 -> v2 migration removes the demo rows early builds
+//! seeded on first run.
 
 use std::path::{Path, PathBuf};
 
@@ -15,10 +17,27 @@ const DB_DIR_NAME: &str = "sheet-port";
 const DB_FILE_NAME: &str = "sheet-port.db";
 const BUSY_TIMEOUT_MS: u64 = 5000;
 
+const META_SEEDED_KEY: &str = "seeded";
+const META_SCHEMA_VERSION_KEY: &str = "schema_version";
+const SCHEMA_VERSION_CURRENT: &str = "2";
+
 // include_str! paths are relative to THIS source file. The .sql files are the
 // single source of truth for the shared database contract.
 const SCHEMA_SQL: &str = include_str!("../sql/schema.sql");
 const SEED_SQL: &str = include_str!("../sql/seed.sql");
+
+/// v1 -> v2: drop the demo workspace ('mock-source' + placeholder sources,
+/// all mock data, and the demo permission rule). User-created rows survive.
+/// Runs atomically together with the version bump.
+const MIGRATE_V1_TO_V2_SQL: &str = "\
+BEGIN IMMEDIATE;
+DELETE FROM sources WHERE id IN ('mock-source', 'google-placeholder', 'provider-placeholder');
+DELETE FROM mock_tables;
+DELETE FROM mock_records;
+DELETE FROM permission_rules WHERE source_id = 'mock-source';
+INSERT INTO meta (key, value) VALUES ('schema_version', '2')
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+COMMIT;";
 
 /// `SHEET_PORT_DB` override, else the per-user app-data directory documented
 /// in docs/ipc.md (APPDATA / Application Support / XDG data home).
@@ -60,8 +79,8 @@ pub fn open_default() -> Result<(Connection, PathBuf), CoreError> {
 }
 
 /// Opens (creating parent dirs), sets the shared pragmas, and applies
-/// schema + first-run seed. Tests call this directly with temp paths so they
-/// never touch the `SHEET_PORT_DB` env var.
+/// schema + first-run seed + migrations. Tests call this directly with temp
+/// paths so they never touch the `SHEET_PORT_DB` env var.
 pub fn open_at(path: &Path) -> Result<Connection, CoreError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
@@ -99,17 +118,46 @@ fn apply_schema_and_seed(conn: &Connection) -> Result<(), CoreError> {
         conn.execute_batch(SEED_SQL)
             .map_err(|error| db_error("Could not apply seed data", error))?;
     }
+    migrate_to_current_version(conn)?;
+    Ok(())
+}
+
+/// Brings older databases up to `SCHEMA_VERSION_CURRENT`. A missing
+/// schema_version means a v1 database (the v1 seed always wrote it, but be
+/// defensive); fresh databases get version 2 from the seed and skip this.
+fn migrate_to_current_version(conn: &Connection) -> Result<(), CoreError> {
+    let version = get_meta(conn, META_SCHEMA_VERSION_KEY)?;
+    if version.as_deref() == Some(SCHEMA_VERSION_CURRENT) {
+        return Ok(());
+    }
+    conn.execute_batch(MIGRATE_V1_TO_V2_SQL)
+        .map_err(|error| db_error("Could not migrate database to schema version 2", error))?;
     Ok(())
 }
 
 fn is_seeded(conn: &Connection) -> Result<bool, CoreError> {
-    let marker: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'seeded'", [], |row| {
-            row.get(0)
-        })
-        .optional()
-        .map_err(|error| db_error("Could not read seed marker", error))?;
-    Ok(marker.is_some())
+    Ok(get_meta(conn, META_SEEDED_KEY)?.is_some())
+}
+
+/// Reads a settings value from the shared `meta` table (e.g.
+/// [`crate::constants::META_GOOGLE_CLIENT_ID`]).
+pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, CoreError> {
+    conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+        row.get(0)
+    })
+    .optional()
+    .map_err(|error| db_error("Could not read meta value", error))
+}
+
+/// Upserts a settings value in the shared `meta` table.
+pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [key, value],
+    )
+    .map_err(|error| db_error("Could not write meta value", error))?;
+    Ok(())
 }
 
 /// ISO-8601 UTC with milliseconds, matching SQLite's
@@ -124,6 +172,12 @@ pub fn now_iso() -> String {
 /// checks in plain SQL.
 pub fn iso_before(ms_ago: i64) -> String {
     format_iso(chrono::Utc::now() - chrono::Duration::milliseconds(ms_ago))
+}
+
+/// The instant `ms_ahead` milliseconds in the future, in the same ISO shape.
+/// Used for token-expiry bookkeeping (lexicographic comparison).
+pub(crate) fn iso_after(ms_ahead: i64) -> String {
+    format_iso(chrono::Utc::now() + chrono::Duration::milliseconds(ms_ahead))
 }
 
 fn format_iso(instant: chrono::DateTime<chrono::Utc>) -> String {
@@ -151,6 +205,60 @@ pub mod test_support {
 mod tests {
     use super::test_support::temp_db_path;
     use super::*;
+    use crate::constants::META_GOOGLE_CLIENT_ID;
+
+    fn count(conn: &Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .expect("count")
+    }
+
+    /// The exact rows the v1 seed shipped, plus user-created rows that must
+    /// survive the v1 -> v2 migration.
+    const V1_DATABASE_FIXTURE: &str = r#"
+INSERT INTO sources (id, kind, name, status) VALUES
+  ('mock-source', 'mock', 'Demo Workspace', 'connected'),
+  ('google-placeholder', 'google_sheets', 'Google Sheets (connect soon)', 'placeholder'),
+  ('provider-placeholder', 'provider', 'Additional provider (connect soon)', 'placeholder'),
+  ('google-sheets', 'google_sheets', 'Google Sheets (user@example.com)', 'connected');
+INSERT INTO permission_rules
+  (source_id, table_id, can_read, can_write, can_delete, require_confirmation, updated_at)
+VALUES
+  ('mock-source', 'customers', 1, 1, 0, '["append","update","delete","bulk_update"]',
+   '2026-01-01T00:00:00.000Z'),
+  ('google-sheets', NULL, 1, 0, 0, '[]', '2026-01-01T00:00:00.000Z');
+INSERT INTO mock_tables (source_id, table_id, name, fields) VALUES
+  ('mock-source', 'customers', 'Customers', '[]');
+INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALUES
+  ('mock-source', 'customers', 'rec_seed_1', '{}', 1);
+"#;
+
+    fn build_v1_database(path: &std::path::Path, meta_sql: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        let setup = Connection::open(path).expect("open raw");
+        setup.execute_batch(SCHEMA_SQL).expect("apply schema");
+        setup
+            .execute_batch(V1_DATABASE_FIXTURE)
+            .expect("apply v1 fixture");
+        setup.execute_batch(meta_sql).expect("apply v1 meta");
+    }
+
+    #[test]
+    fn fresh_databases_start_empty_at_schema_version_2() {
+        let path = temp_db_path();
+        let conn = open_at(&path).expect("open");
+
+        assert_eq!(count(&conn, "sources"), 0, "no seeded sources");
+        assert_eq!(count(&conn, "permission_rules"), 0, "no seeded rules");
+        assert_eq!(count(&conn, "mock_tables"), 0, "no seeded mock tables");
+        assert_eq!(count(&conn, "mock_records"), 0, "no seeded mock records");
+        assert_eq!(get_meta(&conn, "seeded").expect("meta"), Some("1".into()));
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some(SCHEMA_VERSION_CURRENT.to_string())
+        );
+    }
 
     #[test]
     fn schema_and_seed_apply_idempotently_twice() {
@@ -159,41 +267,100 @@ mod tests {
         drop(first);
         let second = open_at(&path).expect("second open should reapply schema");
 
-        let sources: i64 = second
-            .query_row("SELECT COUNT(*) FROM sources", [], |row| row.get(0))
-            .expect("sources count");
-        assert_eq!(sources, 3, "seed sources must not duplicate on re-open");
-
-        let records: i64 = second
-            .query_row("SELECT COUNT(*) FROM mock_records", [], |row| row.get(0))
-            .expect("mock records count");
-        assert_eq!(records, 3, "seed records must not duplicate on re-open");
-
-        let seeded: String = second
-            .query_row("SELECT value FROM meta WHERE key = 'seeded'", [], |row| {
-                row.get(0)
-            })
-            .expect("seeded meta row");
-        assert_eq!(seeded, "1");
+        assert_eq!(count(&second, "sources"), 0, "reopen must not add rows");
+        let meta_rows: i64 = count(&second, "meta");
+        assert_eq!(meta_rows, 2, "meta must hold exactly seeded + version");
     }
 
     #[test]
-    fn does_not_reseed_deleted_rows_once_seeded() {
-        // User-visible deletions must survive process restarts.
+    fn user_rows_survive_reopen_without_reseeding() {
+        // Rows created after the first open (e.g. by connecting a source or
+        // by the test fixture) must not be wiped by later opens.
         let path = temp_db_path();
         let conn = open_at(&path).expect("first open");
-        conn.execute(
-            "DELETE FROM mock_records WHERE record_id = 'rec_seed_1'",
-            [],
-        )
-        .expect("delete seed row");
+        crate::test_fixtures::install_demo_workspace(&conn);
         drop(conn);
 
         let reopened = open_at(&path).expect("second open");
-        let records: i64 = reopened
-            .query_row("SELECT COUNT(*) FROM mock_records", [], |row| row.get(0))
-            .expect("count");
-        assert_eq!(records, 2, "deleted seed row must stay deleted");
+        assert_eq!(count(&reopened, "sources"), 1);
+        assert_eq!(count(&reopened, "mock_records"), 3);
+        assert_eq!(count(&reopened, "permission_rules"), 1);
+    }
+
+    #[test]
+    fn migrates_v1_seeded_database_to_empty_v2() {
+        let path = temp_db_path();
+        build_v1_database(
+            &path,
+            "INSERT INTO meta (key, value) VALUES ('seeded', '1'), ('schema_version', '1');",
+        );
+
+        let conn = open_at(&path).expect("open migrates v1 database");
+
+        let source_ids: Vec<String> = conn
+            .prepare("SELECT id FROM sources ORDER BY id")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("collect");
+        assert_eq!(
+            source_ids,
+            ["google-sheets"],
+            "demo sources removed, user source kept"
+        );
+        assert_eq!(count(&conn, "mock_tables"), 0);
+        assert_eq!(count(&conn, "mock_records"), 0);
+        let rule_sources: Vec<String> = conn
+            .prepare("SELECT source_id FROM permission_rules")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("collect");
+        assert_eq!(
+            rule_sources,
+            ["google-sheets"],
+            "demo rule removed, user rule kept"
+        );
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some(SCHEMA_VERSION_CURRENT.to_string())
+        );
+    }
+
+    #[test]
+    fn migrates_seeded_database_missing_schema_version() {
+        let path = temp_db_path();
+        build_v1_database(
+            &path,
+            "INSERT INTO meta (key, value) VALUES ('seeded', '1');",
+        );
+
+        let conn = open_at(&path).expect("open migrates unversioned database");
+        assert_eq!(count(&conn, "mock_records"), 0);
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some(SCHEMA_VERSION_CURRENT.to_string())
+        );
+    }
+
+    #[test]
+    fn meta_helpers_read_and_upsert_values() {
+        let conn = test_support::open_temp_db();
+        assert_eq!(get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"), None);
+
+        set_meta(&conn, META_GOOGLE_CLIENT_ID, "client-1").expect("insert");
+        assert_eq!(
+            get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"),
+            Some("client-1".to_string())
+        );
+
+        set_meta(&conn, META_GOOGLE_CLIENT_ID, "client-2").expect("upsert");
+        assert_eq!(
+            get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"),
+            Some("client-2".to_string())
+        );
     }
 
     #[test]
@@ -207,11 +374,14 @@ mod tests {
     }
 
     #[test]
-    fn iso_before_is_in_the_past_and_ordered() {
+    fn iso_before_and_after_are_ordered_around_now() {
         let earlier = iso_before(30_000);
         let now = now_iso();
+        let later = iso_after(30_000);
         assert!(earlier < now, "{earlier} must sort before {now}");
+        assert!(now < later, "{now} must sort before {later}");
         assert_eq!(earlier.len(), 24);
+        assert_eq!(later.len(), 24);
     }
 
     #[test]

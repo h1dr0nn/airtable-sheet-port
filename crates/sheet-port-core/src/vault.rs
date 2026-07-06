@@ -3,8 +3,10 @@
 
 use crate::types::TokenStatus;
 
-const KEYRING_SERVICE: &str = "sheet-port";
-const KEYRING_USER_GOOGLE_SHEETS: &str = "google_sheets";
+// Shared with the google module: token storage writes the same entry this
+// status check reads.
+pub(crate) const KEYRING_SERVICE: &str = "sheet-port";
+pub(crate) const KEYRING_USER_GOOGLE_SHEETS: &str = "google_sheets";
 const KEYRING_USER_PROVIDER: &str = "provider";
 
 pub fn token_status() -> TokenStatus {
@@ -17,7 +19,7 @@ pub fn token_status() -> TokenStatus {
 /// True only when a credential exists. Unexpected keychain errors are logged
 /// to stderr and reported as "absent" so a broken keychain never blocks the
 /// UI.
-fn entry_exists(user: &str) -> bool {
+pub(crate) fn entry_exists(user: &str) -> bool {
     let entry = match keyring::Entry::new(KEYRING_SERVICE, user) {
         Ok(entry) => entry,
         Err(error) => {

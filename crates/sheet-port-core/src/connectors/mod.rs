@@ -68,10 +68,12 @@ impl ConnectorRegistry {
     }
 
     /// Registry with the connectors the broker actually serves today; the
-    /// Google Sheets and provider connectors join once their auth lands.
+    /// provider connector joins once its auth lands. MockConnector stays
+    /// registered for tests and the e2e smoke.
     pub fn with_default_connectors() -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(MockConnector));
+        registry.register(Box::new(GoogleSheetsConnector::new()));
         registry
     }
 
@@ -175,6 +177,22 @@ impl ConnectorRegistry {
                     kind.as_str()
                 ))
             })
+    }
+}
+
+/// JavaScript `String(value)` parity so find_records substring matching
+/// behaves identically across connectors (and matches the TypeScript
+/// reference): numbers/booleans stringify plainly, null is "null", arrays
+/// join with commas, and plain objects become "[object Object]".
+pub(crate) fn js_string(value: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text.clone(),
+        Value::Array(items) => items.iter().map(js_string).collect::<Vec<_>>().join(","),
+        Value::Object(_) => "[object Object]".to_string(),
     }
 }
 

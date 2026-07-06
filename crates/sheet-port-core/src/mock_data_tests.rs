@@ -1,13 +1,14 @@
 //! Ports the MockDataStore vitest suite plus the desktop read_table paging
-//! tests. The seed provides mock-source/customers with rec_seed_1..3.
+//! tests. Fresh databases are empty since schema v2, so each test installs
+//! the demo-workspace fixture (mock-source/customers with rec_seed_1..3).
 
 use serde_json::json;
 
 use super::*;
-use crate::db::test_support::open_temp_db;
+use crate::test_fixtures::{demo_db, DEMO_SOURCE_ID, DEMO_TABLE_ID};
 
-const SOURCE: &str = "mock-source";
-const TABLE: &str = "customers";
+const SOURCE: &str = DEMO_SOURCE_ID;
+const TABLE: &str = DEMO_TABLE_ID;
 
 fn fields(pairs: &[(&str, serde_json::Value)]) -> JsonMap {
     pairs
@@ -18,7 +19,7 @@ fn fields(pairs: &[(&str, serde_json::Value)]) -> JsonMap {
 
 #[test]
 fn paginates_records_by_position_with_unpaged_total() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let page = list_records(
         &conn,
         SOURCE,
@@ -41,7 +42,7 @@ fn paginates_records_by_position_with_unpaged_total() {
 
 #[test]
 fn returns_all_records_when_no_options_given() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let page = list_records(&conn, SOURCE, TABLE, ReadOptions::default()).expect("page");
     assert_eq!(page.records.len(), 3);
     assert_eq!(page.total, 3);
@@ -49,7 +50,7 @@ fn returns_all_records_when_no_options_given() {
 
 #[test]
 fn appends_records_with_generated_ids_after_existing_ones() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let appended = append_records(
         &conn,
         SOURCE,
@@ -81,7 +82,7 @@ fn appends_records_with_generated_ids_after_existing_ones() {
 
 #[test]
 fn shallow_merges_patch_fields_into_stored_record() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let updated = update_records(
         &conn,
         SOURCE,
@@ -113,7 +114,7 @@ fn shallow_merges_patch_fields_into_stored_record() {
 
 #[test]
 fn skips_unknown_record_ids_on_update() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let updated = update_records(
         &conn,
         SOURCE,
@@ -129,7 +130,7 @@ fn skips_unknown_record_ids_on_update() {
 
 #[test]
 fn unknown_table_gives_none_schema_and_empty_page() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     assert!(get_table(&conn, SOURCE, "no-such-table")
         .expect("get")
         .is_none());
@@ -140,7 +141,7 @@ fn unknown_table_gives_none_schema_and_empty_page() {
 
 #[test]
 fn exposes_seeded_table_schema() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let tables = list_tables(&conn, SOURCE).expect("tables");
     assert_eq!(tables.len(), 1);
     assert_eq!(tables[0].table_id, TABLE);
@@ -161,21 +162,21 @@ fn exposes_seeded_table_schema() {
 
 #[test]
 fn list_tables_returns_empty_for_unknown_source() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let tables = list_tables(&conn, "does-not-exist").expect("list");
     assert!(tables.is_empty());
 }
 
 #[test]
 fn describe_table_errors_on_unknown_table() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let error = describe_table(&conn, SOURCE, "nope").expect_err("must fail");
     assert_eq!(error.to_string(), format!("Unknown table {SOURCE}/nope"));
 }
 
 #[test]
 fn read_table_page_paginates_and_reports_full_total() {
-    let conn = open_temp_db();
+    let conn = demo_db();
 
     let first = read_table_page(&conn, SOURCE, TABLE, Some(2), Some(0)).expect("page 1");
     assert_eq!(first.records.len(), 2);
@@ -190,7 +191,7 @@ fn read_table_page_paginates_and_reports_full_total() {
 
 #[test]
 fn read_table_page_clamps_limit_and_offset() {
-    let conn = open_temp_db();
+    let conn = demo_db();
 
     let clamped_low = read_table_page(&conn, SOURCE, TABLE, Some(0), Some(-5)).expect("read");
     assert_eq!(clamped_low.records.len(), 1, "limit must clamp up to 1");

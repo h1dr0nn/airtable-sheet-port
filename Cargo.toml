@@ -21,6 +21,13 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 uuid = { version = "1", features = ["v4"] }
 # Platform credential stores; tokens never leave the OS keychain.
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Google OAuth + Sheets/Drive REST calls (sheet-port-core google module).
+# rustls-tls so no process depends on a system OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+url = "2"
+# PKCE code challenge (RFC 7636): SHA-256 digest, base64url without padding.
+sha2 = "0.10"
+base64 = "0.22"
 # MCP stdio sidecar stack (crates/sheet-port-mcp).
 rmcp = { version = "2.1", features = ["server", "macros", "transport-io"], default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }

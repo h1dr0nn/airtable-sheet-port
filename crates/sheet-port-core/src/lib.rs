@@ -12,12 +12,16 @@ pub mod connectors;
 pub mod constants;
 pub mod db;
 pub mod error;
+pub mod google;
 pub mod heartbeat;
 pub mod mock_data;
 pub mod permissions;
 pub mod sources;
 pub mod types;
 pub mod vault;
+
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 
 pub use error::CoreError;
 

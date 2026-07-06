@@ -31,3 +31,8 @@ pub const CHANGE_LIST_LIMIT: i64 = 200;
 /// Audit log paging: default page size and maximum.
 pub const AUDIT_LIMIT_DEFAULT: i64 = 100;
 pub const AUDIT_LIMIT_MAX: i64 = 500;
+
+/// Meta key storing the Google OAuth desktop client id. Written from the
+/// desktop app settings (db::set_meta) and read by the Google connect and
+/// token-refresh flows.
+pub const META_GOOGLE_CLIENT_ID: &str = "google_client_id";

@@ -3,9 +3,8 @@
 //! changes.
 
 use rusqlite::Connection;
-use serde_json::Value;
 
-use super::TableConnector;
+use super::{js_string, TableConnector};
 use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
 use crate::types::{
@@ -118,19 +117,5 @@ impl TableConnector for MockConnector {
     ) -> Result<Vec<TableRecord>, CoreError> {
         self.require_table(conn, source_id, table_id)?;
         mock_data::update_records(conn, source_id, table_id, patches)
-    }
-}
-
-/// JavaScript `String(value)` parity so search results match the TypeScript
-/// connector exactly: numbers/booleans stringify plainly, null is "null",
-/// arrays join with commas, and plain objects become "[object Object]".
-fn js_string(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::String(text) => text.clone(),
-        Value::Array(items) => items.iter().map(js_string).collect::<Vec<_>>().join(","),
-        Value::Object(_) => "[object Object]".to_string(),
     }
 }

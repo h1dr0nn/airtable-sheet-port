@@ -1,14 +1,17 @@
-//! Ports the ConnectorRegistry and MockConnector vitest suites, plus the
-//! stub-connector TODO messages that agents see verbatim.
+//! ConnectorRegistry and MockConnector behavior against the demo-workspace
+//! fixture (fresh databases are empty since schema v2), plus the
+//! provider-stub TODO messages agents see verbatim. GoogleSheetsConnector
+//! network behavior is covered by pure-function tests in google_sheets.rs.
 
 use serde_json::json;
 
 use super::*;
 use crate::db::test_support::open_temp_db;
 use crate::mock_data;
+use crate::test_fixtures::{demo_db, DEMO_SOURCE_ID, DEMO_TABLE_ID};
 
-const SOURCE: &str = "mock-source";
-const TABLE: &str = "customers";
+const SOURCE: &str = DEMO_SOURCE_ID;
+const TABLE: &str = DEMO_TABLE_ID;
 
 fn registry() -> ConnectorRegistry {
     ConnectorRegistry::with_default_connectors()
@@ -21,9 +24,91 @@ fn fields(pairs: &[(&str, serde_json::Value)]) -> JsonMap {
         .collect()
 }
 
+/// Minimal stand-in connector used to observe registry routing semantics.
+struct FakeConnector {
+    kind: SourceKind,
+    ids: Vec<&'static str>,
+}
+
+impl TableConnector for FakeConnector {
+    fn kind(&self) -> SourceKind {
+        self.kind
+    }
+
+    fn list_sources(&self, _conn: &Connection) -> Result<Vec<DataSource>, CoreError> {
+        Ok(self
+            .ids
+            .iter()
+            .map(|id| DataSource {
+                id: (*id).to_string(),
+                kind: self.kind,
+                name: (*id).to_string(),
+                status: None,
+            })
+            .collect())
+    }
+
+    fn list_tables(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+    ) -> Result<Vec<TableRef>, CoreError> {
+        Err(CoreError::Unsupported("fake connector".to_string()))
+    }
+
+    fn describe_table(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+    ) -> Result<TableSchema, CoreError> {
+        Err(CoreError::Unsupported("fake connector".to_string()))
+    }
+
+    fn read_table(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _options: ReadOptions,
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        Err(CoreError::Unsupported("fake connector".to_string()))
+    }
+
+    fn find_records(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _query: &str,
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        Err(CoreError::Unsupported("fake connector".to_string()))
+    }
+
+    fn append_records(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _records: &[JsonMap],
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        Err(CoreError::Unsupported("fake connector".to_string()))
+    }
+
+    fn update_records(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _patches: &[RecordPatch],
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        Err(CoreError::Unsupported("fake connector".to_string()))
+    }
+}
+
 #[test]
 fn registry_routes_reads_through_the_mock_connector() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let registry = registry();
 
     let tables = registry.list_tables(&conn, SOURCE).expect("tables");
@@ -43,7 +128,7 @@ fn registry_routes_reads_through_the_mock_connector() {
 
 #[test]
 fn registry_routes_writes_through_the_mock_connector() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let registry = registry();
 
     let appended = registry
@@ -84,41 +169,61 @@ fn registry_errors_for_unknown_source() {
 #[test]
 fn registry_errors_when_kind_has_no_connector() {
     let conn = open_temp_db();
-    // google-placeholder is seeded but only the mock connector is registered.
+    // A provider source exists in the DB but no provider connector is part of
+    // the defaults.
+    crate::sources::upsert(
+        &conn,
+        "provider-crm",
+        SourceKind::Provider,
+        "CRM",
+        crate::sources::SOURCE_STATUS_CONNECTED,
+    )
+    .expect("insert provider source");
+
     let error = registry()
-        .list_tables(&conn, "google-placeholder")
+        .list_tables(&conn, "provider-crm")
         .expect_err("must fail");
     assert_eq!(
         error.to_string(),
-        "No connector registered for source kind google_sheets (source google-placeholder)"
+        "No connector registered for source kind provider (source provider-crm)"
     );
 }
 
 #[test]
 fn registry_aggregates_sources_across_connectors() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let mut registry = registry();
-    registry.register(Box::new(GoogleSheetsConnector::new(vec![
-        "sheet-a".to_string()
-    ])));
+    registry.register(Box::new(FakeConnector {
+        kind: SourceKind::Provider,
+        ids: vec!["provider:crm"],
+    }));
 
     let sources = registry.list_sources(&conn).expect("sources");
     let ids: Vec<&str> = sources.iter().map(|source| source.id.as_str()).collect();
-    assert_eq!(ids, ["mock-source", "google_sheets:sheet-a"]);
+    assert_eq!(ids, [SOURCE, "provider:crm"]);
 }
 
 #[test]
 fn mock_list_sources_filters_to_mock_kind() {
-    let conn = open_temp_db();
+    let conn = demo_db();
+    crate::sources::upsert(
+        &conn,
+        "google-sheets",
+        SourceKind::GoogleSheets,
+        "Google Sheets (user@example.com)",
+        crate::sources::SOURCE_STATUS_CONNECTED,
+    )
+    .expect("insert google source");
+
     let sources = MockConnector.list_sources(&conn).expect("sources");
-    assert_eq!(sources.len(), 1, "placeholder sources must be excluded");
+    assert_eq!(sources.len(), 1, "non-mock sources must be excluded");
     assert_eq!(sources[0].id, SOURCE);
     assert_eq!(sources[0].kind, SourceKind::Mock);
 }
 
 #[test]
 fn mock_rejects_unknown_source_and_table() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let source_error = MockConnector
         .list_tables(&conn, "nope")
         .expect_err("unknown source");
@@ -133,18 +238,23 @@ fn mock_rejects_unknown_source_and_table() {
     );
 
     // A non-mock source id is also rejected even though it exists.
+    crate::sources::upsert(
+        &conn,
+        "google-sheets",
+        SourceKind::GoogleSheets,
+        "Google Sheets (user@example.com)",
+        crate::sources::SOURCE_STATUS_CONNECTED,
+    )
+    .expect("insert google source");
     let wrong_kind = MockConnector
-        .list_tables(&conn, "google-placeholder")
+        .list_tables(&conn, "google-sheets")
         .expect_err("wrong kind");
-    assert_eq!(
-        wrong_kind.to_string(),
-        "Unknown mock source google-placeholder"
-    );
+    assert_eq!(wrong_kind.to_string(), "Unknown mock source google-sheets");
 }
 
 #[test]
 fn mock_find_records_matches_case_insensitive_substrings() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let find = |query: &str| {
         MockConnector
             .find_records(&conn, SOURCE, TABLE, query)
@@ -174,7 +284,7 @@ fn mock_find_records_matches_case_insensitive_substrings() {
 
 #[test]
 fn mock_find_records_caps_results_at_100() {
-    let conn = open_temp_db();
+    let conn = demo_db();
     let batch: Vec<JsonMap> = (0..120)
         .map(|n| fields(&[("Name", json!(format!("needle-{n}")))]))
         .collect();
@@ -184,32 +294,6 @@ fn mock_find_records_caps_results_at_100() {
         .find_records(&conn, SOURCE, TABLE, "needle")
         .expect("find");
     assert_eq!(found.len(), 100, "results must cap at 100");
-}
-
-#[test]
-fn google_sheets_stub_lists_configured_sources_and_errors_elsewhere() {
-    let conn = open_temp_db();
-    let connector = GoogleSheetsConnector::new(vec!["abc".to_string()]);
-
-    let sources = connector.list_sources(&conn).expect("sources");
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].id, "google_sheets:abc");
-    assert_eq!(sources[0].name, "Google Sheet abc");
-
-    let error = connector
-        .list_tables(&conn, "google_sheets:abc")
-        .expect_err("stub");
-    assert_eq!(
-        error.to_string(),
-        "Google Sheets connector TODO: discover sheet tabs/ranges after OAuth is implemented"
-    );
-    let error = connector
-        .read_table(&conn, "google_sheets:abc", "tab", ReadOptions::default())
-        .expect_err("stub");
-    assert_eq!(
-        error.to_string(),
-        "Google Sheets connector TODO: read bounded values through googleapis"
-    );
 }
 
 #[test]
@@ -235,13 +319,16 @@ fn provider_stub_lists_configured_sources_and_errors_elsewhere() {
 fn registering_the_same_kind_replaces_the_connector() {
     let conn = open_temp_db();
     let mut registry = ConnectorRegistry::new();
-    registry.register(Box::new(GoogleSheetsConnector::new(vec!["a".to_string()])));
-    registry.register(Box::new(GoogleSheetsConnector::new(vec![
-        "b".to_string(),
-        "c".to_string(),
-    ])));
+    registry.register(Box::new(FakeConnector {
+        kind: SourceKind::Provider,
+        ids: vec!["provider:a"],
+    }));
+    registry.register(Box::new(FakeConnector {
+        kind: SourceKind::Provider,
+        ids: vec!["provider:b", "provider:c"],
+    }));
 
     let sources = registry.list_sources(&conn).expect("sources");
     let ids: Vec<&str> = sources.iter().map(|source| source.id.as_str()).collect();
-    assert_eq!(ids, ["google_sheets:b", "google_sheets:c"]);
+    assert_eq!(ids, ["provider:b", "provider:c"]);
 }
