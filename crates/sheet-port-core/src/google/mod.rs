@@ -50,7 +50,8 @@ pub fn connect(conn: &Connection, client_id: &str) -> Result<String, CoreError> 
         ));
     }
 
-    let flow = oauth::AuthFlow::start(client_id)?;
+    let client_secret = tokens::load_client_secret()?;
+    let flow = oauth::AuthFlow::start(client_id, client_secret.as_deref())?;
     open_in_browser(flow.consent_url())?;
     let (token_set, responder) = flow.wait_for_tokens()?;
 
@@ -118,7 +119,9 @@ pub(crate) fn access_token(conn: &Connection) -> Result<String, CoreError> {
             "Google client ID is not configured. Set it in the desktop app settings".to_string(),
         )
     })?;
-    let refreshed = oauth::refresh_access_token(&client_id, &refresh_token)?;
+    let client_secret = tokens::load_client_secret()?;
+    let refreshed =
+        oauth::refresh_access_token(&client_id, client_secret.as_deref(), &refresh_token)?;
     let updated = TokenSet {
         access_token: refreshed.access_token,
         // Google may omit the refresh token on refresh; keep the old one.
@@ -222,6 +225,23 @@ fn open_in_browser(url: &str) -> Result<(), CoreError> {
             "Could not open the system browser for Google sign-in: {error}"
         ))
     })
+}
+
+/// Stores (or clears, when empty) the OAuth client secret Google issues for
+/// desktop clients. Kept in the OS keychain next to the tokens.
+pub fn set_client_secret(secret: &str) -> Result<(), CoreError> {
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        tokens::delete_client_secret()
+    } else {
+        tokens::save_client_secret(trimmed)
+    }
+}
+
+/// Whether a client secret is stored; the secret itself never leaves the
+/// google module.
+pub fn has_client_secret() -> Result<bool, CoreError> {
+    Ok(tokens::load_client_secret()?.is_some())
 }
 
 #[cfg(test)]

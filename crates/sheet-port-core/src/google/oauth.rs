@@ -57,6 +57,7 @@ pub(crate) struct TokenResponse {
 pub(crate) struct AuthFlow {
     listener: TcpListener,
     client_id: String,
+    client_secret: Option<String>,
     redirect_uri: String,
     verifier: String,
     state: String,
@@ -64,7 +65,7 @@ pub(crate) struct AuthFlow {
 }
 
 impl AuthFlow {
-    pub(crate) fn start(client_id: &str) -> Result<Self, CoreError> {
+    pub(crate) fn start(client_id: &str, client_secret: Option<&str>) -> Result<Self, CoreError> {
         let listener = TcpListener::bind((LOOPBACK_HOST, 0)).map_err(|error| {
             CoreError::Storage(format!(
                 "Could not bind a loopback port for the Google sign-in callback: {error}"
@@ -84,6 +85,7 @@ impl AuthFlow {
         Ok(Self {
             listener,
             client_id: client_id.to_string(),
+            client_secret: client_secret.map(str::to_string),
             redirect_uri,
             verifier,
             state,
@@ -102,14 +104,19 @@ impl AuthFlow {
     pub(crate) fn wait_for_tokens(self) -> Result<(TokenSet, CallbackResponder), CoreError> {
         let (code, stream) = wait_for_callback(&self.listener, &self.state)?;
         let responder = CallbackResponder::new(stream);
-        let response =
-            match exchange_code(&self.client_id, &code, &self.verifier, &self.redirect_uri) {
-                Ok(response) => response,
-                Err(error) => {
-                    responder.fail(&error.to_string());
-                    return Err(error);
-                }
-            };
+        let response = match exchange_code(
+            &self.client_id,
+            self.client_secret.as_deref(),
+            &code,
+            &self.verifier,
+            &self.redirect_uri,
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                responder.fail(&error.to_string());
+                return Err(error);
+            }
+        };
         Ok((
             TokenSet {
                 access_token: response.access_token,
@@ -364,42 +371,49 @@ Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
     }
 }
 
-/// Exchanges the authorization code using the PKCE verifier; desktop clients
-/// send no client secret.
+/// Exchanges the authorization code using the PKCE verifier. Unlike the pure
+/// PKCE spec, Google requires the desktop client secret here when the OAuth
+/// client has one (it is explicitly non-confidential for installed apps).
 pub(crate) fn exchange_code(
     client_id: &str,
+    client_secret: Option<&str>,
     code: &str,
     verifier: &str,
     redirect_uri: &str,
 ) -> Result<TokenResponse, CoreError> {
-    request_tokens(
-        &[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("client_id", client_id),
-            ("code_verifier", verifier),
-            ("redirect_uri", redirect_uri),
-        ],
-        |message| {
-            CoreError::PermissionDenied(format!(
-                "Google authorization code exchange failed: {message}"
-            ))
-        },
-    )
+    let mut params = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", client_id),
+        ("code_verifier", verifier),
+        ("redirect_uri", redirect_uri),
+    ];
+    if let Some(secret) = client_secret {
+        params.push(("client_secret", secret));
+    }
+    request_tokens(&params, |message| {
+        CoreError::PermissionDenied(format!(
+            "Google authorization code exchange failed: {message}"
+        ))
+    })
 }
 
 pub(crate) fn refresh_access_token(
     client_id: &str,
+    client_secret: Option<&str>,
     refresh_token: &str,
 ) -> Result<TokenResponse, CoreError> {
-    request_tokens(
-        &[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", client_id),
-        ],
-        |_| CoreError::PermissionDenied(TOKEN_EXPIRED_MESSAGE.to_string()),
-    )
+    let mut params = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", client_id),
+    ];
+    if let Some(secret) = client_secret {
+        params.push(("client_secret", secret));
+    }
+    request_tokens(&params, |_| {
+        CoreError::PermissionDenied(TOKEN_EXPIRED_MESSAGE.to_string())
+    })
 }
 
 fn request_tokens(
@@ -520,7 +534,7 @@ mod tests {
 
     #[test]
     fn auth_flow_binds_an_ephemeral_loopback_redirect() {
-        let flow = AuthFlow::start("client-123").expect("start flow");
+        let flow = AuthFlow::start("client-123", None).expect("start flow");
         let parsed = Url::parse(flow.consent_url()).expect("parse consent url");
         let query: HashMap<String, String> = parsed
             .query_pairs()

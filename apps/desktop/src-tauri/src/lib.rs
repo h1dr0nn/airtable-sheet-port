@@ -26,6 +26,7 @@ pub fn run() {
             commands::token_status,
             commands::get_google_config,
             commands::set_google_client_id,
+            commands::set_google_client_secret,
             commands::google_connect,
             commands::google_disconnect,
         ])

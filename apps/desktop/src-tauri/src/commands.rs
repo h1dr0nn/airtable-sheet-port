@@ -207,6 +207,8 @@ pub fn token_status() -> Result<TokenStatus, String> {
 pub struct GoogleConfig {
     pub client_id: Option<String>,
     pub connected_email: Option<String>,
+    /// The secret itself never crosses IPC; the UI only needs presence.
+    pub has_client_secret: bool,
 }
 
 #[derive(Serialize)]
@@ -236,6 +238,7 @@ pub fn get_google_config(state: Db<'_>) -> Result<GoogleConfig, String> {
     Ok(GoogleConfig {
         client_id,
         connected_email,
+        has_client_secret: google::has_client_secret().unwrap_or(false),
     })
 }
 
@@ -303,6 +306,24 @@ pub async fn google_connect(state: Db<'_>) -> Result<GoogleConnectResult, String
     })
     .await
     .map_err(|error| format!("Background task failed: {error}"))?
+}
+
+/// Stores the Google OAuth client secret in the OS keychain (empty clears
+/// it). Google requires it on token exchange even for desktop-type clients.
+#[tauri::command]
+pub fn set_google_client_secret(state: Db<'_>, client_secret: String) -> Result<(), String> {
+    google::set_client_secret(&client_secret).map_err(|error| error.to_string())?;
+    let conn = lock_conn(&state)?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        "settings_updated",
+        None,
+        None,
+        Some(&json!({ "key": "google_client_secret" })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

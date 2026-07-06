@@ -7,6 +7,7 @@ use crate::types::TokenStatus;
 // status check reads.
 pub(crate) const KEYRING_SERVICE: &str = "sheet-port";
 pub(crate) const KEYRING_USER_GOOGLE_SHEETS: &str = "google_sheets";
+pub(crate) const KEYRING_USER_GOOGLE_CLIENT_SECRET: &str = "google_client_secret";
 const KEYRING_USER_PROVIDER: &str = "provider";
 
 pub fn token_status() -> TokenStatus {

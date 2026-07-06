@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::db;
 use crate::error::CoreError;
-use crate::vault::{KEYRING_SERVICE, KEYRING_USER_GOOGLE_SHEETS};
+use crate::vault::{
+    KEYRING_SERVICE, KEYRING_USER_GOOGLE_CLIENT_SECRET, KEYRING_USER_GOOGLE_SHEETS,
+};
 
 /// Refresh this long before the actual expiry so in-flight requests never
 /// race the deadline.
@@ -83,6 +85,43 @@ pub(crate) fn delete() -> Result<(), CoreError> {
 
 pub(crate) fn has_token() -> bool {
     crate::vault::entry_exists(KEYRING_USER_GOOGLE_SHEETS)
+}
+
+fn secret_entry() -> Result<keyring::Entry, CoreError> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER_GOOGLE_CLIENT_SECRET).map_err(|error| {
+        CoreError::Storage(format!(
+            "Could not open the OS keychain entry for the Google client secret: {error}"
+        ))
+    })
+}
+
+/// Google requires the (non-confidential) desktop client secret on token
+/// exchange; it still lives in the keychain rather than the database.
+pub(crate) fn save_client_secret(secret: &str) -> Result<(), CoreError> {
+    secret_entry()?.set_password(secret).map_err(|error| {
+        CoreError::Storage(format!(
+            "Could not store the Google client secret in the OS keychain: {error}"
+        ))
+    })
+}
+
+pub(crate) fn load_client_secret() -> Result<Option<String>, CoreError> {
+    match secret_entry()?.get_password() {
+        Ok(secret) => Ok(Some(secret)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(CoreError::Storage(format!(
+            "Could not read the Google client secret from the OS keychain: {error}"
+        ))),
+    }
+}
+
+pub(crate) fn delete_client_secret() -> Result<(), CoreError> {
+    match secret_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(CoreError::Storage(format!(
+            "Could not delete the Google client secret from the OS keychain: {error}"
+        ))),
+    }
 }
 
 #[cfg(test)]
