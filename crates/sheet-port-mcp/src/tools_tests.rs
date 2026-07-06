@@ -1,20 +1,75 @@
-//! Behavior tests against a temp copy of the seeded database. The protocol
-//! e2e (scripts/e2e-smoke.mjs) covers the wire format; these tests pin the
-//! tool semantics: statuses, payload hiding, approval enforcement wording,
-//! bulk escalation, and audit self-recording.
+//! Behavior tests against an isolated temp database. Fresh databases start
+//! empty since seed v2, so every test state installs its own demo workspace
+//! first (mirror of the core crate's test fixture). The protocol e2e
+//! (scripts/e2e-smoke.mjs) covers the wire format; these tests pin the tool
+//! semantics: statuses, payload hiding, approval enforcement wording, bulk
+//! escalation, and audit self-recording.
 
 use serde_json::Value;
 use sheet_port_core::db;
-use sheet_port_core::rusqlite::params;
+use sheet_port_core::rusqlite::{params, Connection};
 
 use super::*;
 use crate::state::BrokerState;
+
+const DEMO_TABLE_FIELDS: &str = r#"[{"name":"Name","type":"string","required":true},{"name":"Email","type":"email"},{"name":"Plan","type":"enum","enumValues":["free","pro","enterprise"]},{"name":"Seats","type":"number"},{"name":"Active","type":"boolean"}]"#;
+
+const DEMO_RECORDS: [(&str, &str); 3] = [
+    (
+        "rec_seed_1",
+        r#"{"Name":"Aurora Labs","Email":"ops@auroralabs.dev","Plan":"pro","Seats":24,"Active":true}"#,
+    ),
+    (
+        "rec_seed_2",
+        r#"{"Name":"Basalt Co","Email":"it@basalt.co","Plan":"free","Seats":3,"Active":true}"#,
+    ),
+    (
+        "rec_seed_3",
+        r#"{"Name":"Cirrus Retail","Email":"admin@cirrus.shop","Plan":"enterprise","Seats":180,"Active":false}"#,
+    ),
+];
+
+/// The demo workspace the v1 seed used to ship: mock source, Customers table
+/// with rec_seed_1..3, and a read+write rule requiring confirmation for
+/// every write action.
+fn install_demo_workspace(conn: &Connection) {
+    conn.execute(
+        "INSERT INTO sources (id, kind, name, status)
+         VALUES ('mock-source', 'mock', 'Test Workspace', 'connected')",
+        [],
+    )
+    .expect("insert demo source");
+    conn.execute(
+        "INSERT INTO mock_tables (source_id, table_id, name, fields)
+         VALUES ('mock-source', 'customers', 'Customers', ?1)",
+        params![DEMO_TABLE_FIELDS],
+    )
+    .expect("insert demo table");
+    for (position, (record_id, fields)) in DEMO_RECORDS.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO mock_records (source_id, table_id, record_id, fields, position)
+             VALUES ('mock-source', 'customers', ?1, ?2, ?3)",
+            params![record_id, fields, position as i64 + 1],
+        )
+        .expect("insert demo record");
+    }
+    conn.execute(
+        "INSERT INTO permission_rules
+             (source_id, table_id, can_read, can_write, can_delete,
+              require_confirmation, updated_at)
+         VALUES ('mock-source', 'customers', 1, 1, 0,
+                 '[\"append\",\"update\",\"delete\",\"bulk_update\"]', ?1)",
+        params![db::now_iso()],
+    )
+    .expect("insert demo rule");
+}
 
 fn temp_state() -> BrokerState {
     let path = std::env::temp_dir()
         .join("sheet-port-mcp-tests")
         .join(format!("{}.db", uuid::Uuid::new_v4()));
     let conn = db::open_at(&path).expect("temp db should open");
+    install_demo_workspace(&conn);
     BrokerState::new(conn)
 }
 

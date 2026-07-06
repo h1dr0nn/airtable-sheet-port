@@ -17,3 +17,6 @@ tauri = { version = "2", features = [] }
 # All broker logic (DB, permissions, changes, audit, connectors, keychain)
 # lives in the shared core crate; this app is only the Tauri shell.
 sheet-port-core = { path = "../../../crates/sheet-port-core" }
+# Command payload structs (docs/ipc.md shapes) and audit metadata JSON.
+serde = { workspace = true }
+serde_json = { workspace = true }

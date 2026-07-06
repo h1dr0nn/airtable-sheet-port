@@ -5,7 +5,7 @@
 // This script executes the debug binary and fails fast when it is missing.
 import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,46 @@ if (!existsSync(serverBinary)) {
 }
 
 const dbPath = join(tmpdir(), `sheet-port-e2e-${process.pid}.db`);
+
+// Seed v2 leaves fresh databases empty, so the smoke installs its own test
+// workspace before spawning the sidecar: the same schema + seed SQL the core
+// crate embeds, then the mock source, the Customers table with 3 records,
+// and a read+write rule requiring confirmation for every write action.
+const sqlDir = join(scriptDir, "..", "crates", "sheet-port-core", "sql");
+const nowIso = new Date().toISOString();
+{
+  const db = new DatabaseSync(dbPath);
+  db.exec(readFileSync(join(sqlDir, "schema.sql"), "utf8"));
+  db.exec(readFileSync(join(sqlDir, "seed.sql"), "utf8"));
+  db.prepare(
+    "INSERT INTO sources (id, kind, name, status) VALUES ('mock-source', 'mock', 'Test Workspace', 'connected')"
+  ).run();
+  db.prepare(
+    "INSERT INTO mock_tables (source_id, table_id, name, fields) VALUES ('mock-source', 'customers', 'Customers', ?)"
+  ).run(JSON.stringify([
+    { name: "Name", type: "string", required: true },
+    { name: "Email", type: "email" },
+    { name: "Plan", type: "enum", enumValues: ["free", "pro", "enterprise"] },
+    { name: "Seats", type: "number" },
+    { name: "Active", type: "boolean" }
+  ]));
+  const insertRecord = db.prepare(
+    "INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALUES ('mock-source', 'customers', ?, ?, ?)"
+  );
+  const records = [
+    ["rec_seed_1", { Name: "Aurora Labs", Email: "ops@auroralabs.dev", Plan: "pro", Seats: 24, Active: true }],
+    ["rec_seed_2", { Name: "Basalt Co", Email: "it@basalt.co", Plan: "free", Seats: 3, Active: true }],
+    ["rec_seed_3", { Name: "Cirrus Retail", Email: "admin@cirrus.shop", Plan: "enterprise", Seats: 180, Active: false }]
+  ];
+  records.forEach(([recordId, fields], index) => {
+    insertRecord.run(recordId, JSON.stringify(fields), index + 1);
+  });
+  db.prepare(
+    "INSERT INTO permission_rules (source_id, table_id, can_read, can_write, can_delete, require_confirmation, updated_at) " +
+      "VALUES ('mock-source', 'customers', 1, 1, 0, ?, ?)"
+  ).run(JSON.stringify(["append", "update", "delete", "bulk_update"]), nowIso);
+  db.close();
+}
 
 const child = spawn(serverBinary, [], {
   env: { ...process.env, SHEET_PORT_DB: dbPath },

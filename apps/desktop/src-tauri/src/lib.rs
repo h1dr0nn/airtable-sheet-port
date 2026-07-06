@@ -24,6 +24,10 @@ pub fn run() {
             commands::reject_change,
             commands::list_audit_events,
             commands::token_status,
+            commands::get_google_config,
+            commands::set_google_client_id,
+            commands::google_connect,
+            commands::google_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Airtable - Sheet Port");

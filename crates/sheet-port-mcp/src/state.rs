@@ -1,7 +1,8 @@
 //! Shared broker state for the sidecar: the single SQLite connection plus the
 //! connector registry. rusqlite's `Connection` is Send but not Sync, so tool
-//! handlers and the heartbeat task funnel through one mutex; every operation
-//! is a short synchronous SQLite call, so contention stays negligible.
+//! handlers and the heartbeat task funnel through one mutex. Connector calls
+//! may block on HTTP (Google Sheets), which is why the server layer runs
+//! every tool body on `spawn_blocking` instead of the async runtime threads.
 
 use std::sync::Mutex;
 

@@ -36,22 +36,27 @@ Rows from `sources`, mapped to `DataSource` (id, kind, name, status).
 
 ### `list_tables(sourceId: string) -> TableRef[]`
 
-Mock source only for now: rows from `mock_tables`. Unknown sourceId -> `Ok([])`.
+Routed through the `ConnectorRegistry` by the source's kind (mock ->
+`mock_tables`, google_sheets -> Drive spreadsheet listing). Unknown
+sourceId -> `Ok([])`.
 
 ### `describe_table(sourceId: string, tableId: string) -> TableSchema`
 
-From `mock_tables.fields` JSON. Unknown table -> `Err("Unknown table ...")`.
+Routed through the `ConnectorRegistry` (mock -> `mock_tables.fields` JSON,
+google_sheets -> header row + inferred types). Unknown table ->
+`Err("Unknown ... table ...")`.
 
 ### `read_table(sourceId: string, tableId: string, limit: number | null, offset: number | null) -> TablePage`
 
 ```ts
 type TablePage = {
-  records: TableRecord[]; // ordered by position
+  records: TableRecord[]; // ordered by position (mock) / sheet row (google)
   total: number;          // total record count ignoring limit/offset
 };
 ```
 
-Default limit 100, max 500. Reads `mock_records`.
+Routed through the `ConnectorRegistry`. Default limit 100, clamp 1..=500,
+offset floors at 0.
 
 ### `list_permission_rules() -> PermissionRuleRow[]`
 
@@ -119,6 +124,41 @@ type TokenStatus = {
 ```
 
 Keyring stub only; no tokens are ever returned to the frontend or agents.
+
+## Google Sheets account
+
+### `get_google_config() -> GoogleConfig`
+
+```ts
+type GoogleConfig = {
+  clientId: string | null;       // meta key 'google_client_id'
+  connectedEmail: string | null; // parsed from the 'google-sheets' sources row name,
+                                 // null when the row is absent
+};
+```
+
+### `set_google_client_id(clientId: string) -> void`
+
+Trims and stores the OAuth desktop client id in `meta` (`google_client_id`).
+Empty -> `Err("Google client ID must not be empty")`. Audit event
+(`actor='user'`, `action='settings_updated'`, metadata `{key}` only - the id
+value is never audited).
+
+### `google_connect() -> { email: string }`
+
+Runs the full interactive OAuth flow (system browser consent + loopback
+redirect + PKCE token exchange) using the stored client id; missing id ->
+`Err("Google client ID is not configured. Set it in the desktop app settings")`.
+Blocks until the user finishes or the flow times out, so it is an async
+command executed on a blocking task with its OWN SQLite connection (the
+shared one stays free for status polling). On success the token lands in the
+OS keychain, the `google-sheets` sources row is upserted, and an audit event
+`google_connected` (actor user, metadata `{email}`) is written.
+
+### `google_disconnect() -> void`
+
+Deletes the keychain credential and the `google-sheets` sources row
+(idempotent). Audit event `google_disconnected` (actor user).
 
 ## Confirmation enforcement (cross-process)
 

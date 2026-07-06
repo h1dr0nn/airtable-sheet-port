@@ -40,6 +40,21 @@ fn respond(result: Result<String, CoreError>) -> CallToolResult {
     }
 }
 
+/// Connector calls may perform blocking HTTP (Google Sheets), so every tool
+/// body runs on `spawn_blocking` to keep the async runtime responsive. A
+/// panicked or cancelled task is reported as a normal tool error.
+async fn respond_blocking<F>(task: F) -> CallToolResult
+where
+    F: FnOnce() -> Result<String, CoreError> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(task).await {
+        Ok(result) => respond(result),
+        Err(error) => CallToolResult::error(vec![ContentBlock::text(format!(
+            "Tool task failed: {error}"
+        ))]),
+    }
+}
+
 #[tool_router]
 impl SheetPortServer {
     #[tool(
@@ -47,8 +62,9 @@ impl SheetPortServer {
         description = "List connected data sources.",
         annotations(read_only_hint = true)
     )]
-    fn list_sources(&self) -> CallToolResult {
-        respond(tools::list_sources(&self.state))
+    async fn list_sources(&self) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::list_sources(&state)).await
     }
 
     #[tool(
@@ -56,8 +72,9 @@ impl SheetPortServer {
         description = "List tables for a data source.",
         annotations(read_only_hint = true)
     )]
-    fn list_tables(&self, Parameters(args): Parameters<ListTablesArgs>) -> CallToolResult {
-        respond(tools::list_tables(&self.state, &args))
+    async fn list_tables(&self, Parameters(args): Parameters<ListTablesArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::list_tables(&state, &args)).await
     }
 
     #[tool(
@@ -65,8 +82,12 @@ impl SheetPortServer {
         description = "Describe a table schema.",
         annotations(read_only_hint = true)
     )]
-    fn describe_table(&self, Parameters(args): Parameters<SourceTableArgs>) -> CallToolResult {
-        respond(tools::describe_table(&self.state, &args))
+    async fn describe_table(
+        &self,
+        Parameters(args): Parameters<SourceTableArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::describe_table(&state, &args)).await
     }
 
     #[tool(
@@ -74,8 +95,9 @@ impl SheetPortServer {
         description = "Read bounded records from a table.",
         annotations(read_only_hint = true)
     )]
-    fn read_table(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
-        respond(tools::read_table(&self.state, &args))
+    async fn read_table(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::read_table(&state, &args)).await
     }
 
     #[tool(
@@ -83,35 +105,45 @@ impl SheetPortServer {
         description = "Find records by text query.",
         annotations(read_only_hint = true)
     )]
-    fn find_records(&self, Parameters(args): Parameters<FindRecordsArgs>) -> CallToolResult {
-        respond(tools::find_records(&self.state, &args))
+    async fn find_records(&self, Parameters(args): Parameters<FindRecordsArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::find_records(&state, &args)).await
     }
 
     #[tool(
         name = "preview_update_records",
         description = "Create a pending update change and return its diff."
     )]
-    fn preview_update_records(
+    async fn preview_update_records(
         &self,
         Parameters(args): Parameters<PreviewUpdateArgs>,
     ) -> CallToolResult {
-        respond(tools::preview_update_records(&self.state, args))
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::preview_update_records(&state, args)).await
     }
 
     #[tool(
         name = "append_records",
         description = "Create a pending append change and return its diff."
     )]
-    fn append_records(&self, Parameters(args): Parameters<AppendRecordsArgs>) -> CallToolResult {
-        respond(tools::append_records(&self.state, args))
+    async fn append_records(
+        &self,
+        Parameters(args): Parameters<AppendRecordsArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::append_records(&state, args)).await
     }
 
     #[tool(
         name = "commit_change",
         description = "Commit a pending change after policy checks."
     )]
-    fn commit_change(&self, Parameters(args): Parameters<CommitChangeArgs>) -> CallToolResult {
-        respond(tools::commit_change(&self.state, &args))
+    async fn commit_change(
+        &self,
+        Parameters(args): Parameters<CommitChangeArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::commit_change(&state, &args)).await
     }
 
     #[tool(
@@ -119,8 +151,9 @@ impl SheetPortServer {
         description = "Return recent audit events.",
         annotations(read_only_hint = true)
     )]
-    fn get_audit_log(&self, Parameters(args): Parameters<GetAuditLogArgs>) -> CallToolResult {
-        respond(tools::get_audit_log(&self.state, &args))
+    async fn get_audit_log(&self, Parameters(args): Parameters<GetAuditLogArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::get_audit_log(&state, &args)).await
     }
 }
 
