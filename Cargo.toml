@@ -1,0 +1,28 @@
+# Rust workspace for the Airtable - Sheet Port broker.
+# crates/sheet-port-core owns all broker logic (permissions, changes, audit,
+# connectors, shared SQLite state); crates/sheet-port-mcp is the stdio MCP
+# sidecar; apps/desktop/src-tauri is a thin Tauri shell.
+
+[workspace]
+members = [
+    "crates/sheet-port-core",
+    "crates/sheet-port-mcp",
+    "apps/desktop/src-tauri",
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# "bundled" compiles SQLite from source so no process depends on a system SQLite.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# chrono chosen over `time` for RFC 3339 parsing of sidecar-written timestamps.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4"] }
+# Platform credential stores; tokens never leave the OS keychain.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# MCP stdio sidecar stack (crates/sheet-port-mcp).
+rmcp = { version = "2.1", features = ["server", "macros", "transport-io"], default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+# Must stay semver-compatible with the schemars version rmcp derives against.
+schemars = "1"

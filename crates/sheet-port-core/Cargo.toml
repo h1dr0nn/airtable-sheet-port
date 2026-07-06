@@ -1,0 +1,14 @@
+[package]
+name = "sheet-port-core"
+version = "0.1.0"
+description = "Airtable - Sheet Port broker core: shared SQLite state, permission rules, pending changes, audit log, and table connectors."
+authors = ["Airtable - Sheet Port"]
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+keyring = { workspace = true }

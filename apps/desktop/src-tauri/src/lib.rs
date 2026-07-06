@@ -1,15 +1,12 @@
 mod commands;
-mod db;
-mod models;
-mod queries;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // Opens (or creates) the SQLite DB shared with the MCP sidecar and
+            // Opens (or creates) the SQLite DB shared with the MCP server and
             // applies schema + seed; see docs/ipc.md for the shared-state model.
-            let state = db::DbState::init().map_err(std::io::Error::other)?;
+            let state = commands::DbState::init().map_err(std::io::Error::other)?;
             tauri::Manager::manage(app, state);
             Ok(())
         })
