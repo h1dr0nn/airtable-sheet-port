@@ -213,9 +213,10 @@ fn cline_path() -> Option<PathBuf> {
     )
 }
 
-/// Antigravity: `~/.gemini/config/mcp_config.json` (same on every OS). The
-/// Antigravity 2.0 app, IDE, and CLI all read this single file, so one entry
-/// covers them all.
+/// Antigravity: `~/.gemini/config/mcp_config.json` (same on every OS). Google's
+/// docs state the Antigravity 2.0 app and the IDE both read this single file;
+/// they are listed as two separate clients for familiarity, but configuring
+/// either one writes the same shared file.
 fn antigravity_path() -> Option<PathBuf> {
     Some(
         home()?
@@ -277,8 +278,15 @@ fn registry() -> Vec<ClientDef> {
             config_path: cline_path,
         },
         ClientDef {
-            id: "antigravity",
-            display_name: "Antigravity",
+            id: "antigravity-2",
+            display_name: "Antigravity 2.0",
+            shape: ConfigShape::McpServers,
+            detectable: true,
+            config_path: antigravity_path,
+        },
+        ClientDef {
+            id: "antigravity-ide",
+            display_name: "Antigravity IDE",
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: antigravity_path,

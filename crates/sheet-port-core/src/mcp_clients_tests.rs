@@ -199,12 +199,12 @@ fn configure_undetectable_client_is_unsupported() {
 fn registry_covers_antigravity_and_codex() {
     let clients = detect_clients();
     let ids: Vec<&str> = clients.iter().map(|c| c.id.as_str()).collect();
-    for expected in ["antigravity", "codex"] {
+    for expected in ["antigravity-2", "antigravity-ide", "codex"] {
         assert!(ids.contains(&expected), "missing client {expected}");
     }
-    // Both are detectable (their paths resolve on every OS via home()).
+    // Detectable clients resolve their paths on every OS via home().
     for client in &clients {
-        if client.id == "antigravity" || client.id == "codex" {
+        if client.id.starts_with("antigravity") || client.id == "codex" {
             assert!(client.detectable, "{} should be detectable", client.id);
         }
     }
