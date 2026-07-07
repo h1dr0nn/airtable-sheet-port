@@ -20,6 +20,12 @@ use crate::tools;
 const SERVER_NAME: &str = "sheet-port";
 const SERVER_VERSION: &str = "0.3.0";
 
+/// Guidance returned in `initialize` so agents reliably choose these tools and
+/// pass a pasted spreadsheet link straight through as the tableId. Kept
+/// accurate to the connector behavior (URL / id / id:gid / id:SheetName
+/// resolution, preview -> commit writes, tokens held by the desktop app).
+const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port exposes safe tools to read and edit the user's connected Google Sheets (and future providers). When the user mentions a Google Sheets link or a spreadsheet, use these tools instead of guessing: call list_sources to find the connected account, then read_table or find_records. read_table and the other table tools accept a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName as the tableId - so you can pass a pasted spreadsheet link directly, and the exact tab is selected from the gid or sheet name (no selector reads the first tab). All writes are staged: preview_update_records or append_records return a changeId, then commit_change applies it (some changes need the user to approve in the desktop app first). Never fabricate spreadsheet contents; read them with these tools. Never ask for or handle OAuth tokens - the desktop app holds them.";
+
 pub struct SheetPortServer {
     state: Arc<BrokerState>,
 }
@@ -59,7 +65,7 @@ where
 impl SheetPortServer {
     #[tool(
         name = "list_sources",
-        description = "List connected data sources.",
+        description = "List the user's connected data sources (Google Sheets accounts and other providers). Call this first to get the sourceId for the connected Google account before reading or editing a spreadsheet.",
         annotations(read_only_hint = true)
     )]
     async fn list_sources(&self) -> CallToolResult {
@@ -69,7 +75,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "list_tables",
-        description = "List tables for a data source.",
+        description = "List the spreadsheets (tables) in a source. For a Google Sheets account each spreadsheet is one entry; the tableId is the spreadsheet id. To target a specific tab, pass a Google Sheets URL, spreadsheetId:gid, or spreadsheetId:SheetName as the tableId to the read tools instead.",
         annotations(read_only_hint = true)
     )]
     async fn list_tables(&self, Parameters(args): Parameters<ListTablesArgs>) -> CallToolResult {
@@ -79,7 +85,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "describe_table",
-        description = "Describe a table schema.",
+        description = "Describe a table's field schema (column names and inferred types). For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab; without a selector the first tab is used.",
         annotations(read_only_hint = true)
     )]
     async fn describe_table(
@@ -92,7 +98,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "read_table",
-        description = "Read bounded records from a table.",
+        description = "Read bounded records (rows) from a table. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab; without a selector the first tab is used. Paste a spreadsheet link directly to read the exact sheet the user shared.",
         annotations(read_only_hint = true)
     )]
     async fn read_table(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
@@ -102,7 +108,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "find_records",
-        description = "Find records by text query.",
+        description = "Find records by case-insensitive text search across all field values. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab; without a selector the first tab is used.",
         annotations(read_only_hint = true)
     )]
     async fn find_records(&self, Parameters(args): Parameters<FindRecordsArgs>) -> CallToolResult {
@@ -112,7 +118,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "preview_update_records",
-        description = "Create a pending update change and return its diff."
+        description = "Stage an update to existing records and return its diff (before/after). This does NOT write anything: it returns a changeId you then pass to commit_change. Some changes require the user to approve them in the desktop app before commit_change will apply them. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab."
     )]
     async fn preview_update_records(
         &self,
@@ -124,7 +130,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "append_records",
-        description = "Create a pending append change and return its diff."
+        description = "Stage new rows to append to a table and return the pending change. This does NOT write anything: it returns a changeId you then pass to commit_change. Some changes require the user to approve them in the desktop app before commit_change will apply them. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab."
     )]
     async fn append_records(
         &self,
@@ -136,7 +142,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "commit_change",
-        description = "Commit a pending change after policy checks."
+        description = "Apply a change previously staged by preview_update_records or append_records, identified by its changeId. This is the only tool that writes to a spreadsheet. If the change requires confirmation and the user has not approved it in the desktop app, the commit is refused with an error telling you to ask the user to approve."
     )]
     async fn commit_change(
         &self,
@@ -148,7 +154,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "get_audit_log",
-        description = "Return recent audit events.",
+        description = "Return recent audit events (reads, previews, commits, and user approvals), newest first, so you can review what has been done in this workspace.",
         annotations(read_only_hint = true)
     )]
     async fn get_audit_log(&self, Parameters(args): Parameters<GetAuditLogArgs>) -> CallToolResult {
@@ -162,6 +168,7 @@ impl ServerHandler for SheetPortServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info = Implementation::new(SERVER_NAME, SERVER_VERSION);
+        info.instructions = Some(SERVER_INSTRUCTIONS.to_string());
         info
     }
 }

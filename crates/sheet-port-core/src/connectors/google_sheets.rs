@@ -32,6 +32,19 @@ const RECORD_ID_PREFIX: &str = "row_";
 /// Values API `valueInputOption`: write cell values exactly as sent.
 const VALUE_INPUT_RAW: &str = "RAW";
 
+/// Separator between a spreadsheet id and a sheet selector in a tableId
+/// (`{spreadsheetId}:{gid}` or `{spreadsheetId}:{SheetName}`).
+const TABLE_ID_SELECTOR_SEPARATOR: char = ':';
+/// Path segment that precedes the spreadsheet id in a Google Sheets URL
+/// (`https://docs.google.com/spreadsheets/d/{ID}/edit`).
+const SHEETS_URL_ID_MARKER: &str = "/d/";
+/// Query/fragment key carrying the tab id in a Google Sheets URL (`gid=0`).
+const SHEETS_URL_GID_KEY: &str = "gid";
+/// Google document ids are URL-safe base64-ish tokens; this bounds what the
+/// parser will treat as a plausible id so junk / hostnames are rejected before
+/// any request is built. Real ids are ~44 chars, so 20 is a comfortable floor.
+const MIN_SPREADSHEET_ID_LEN: usize = 20;
+
 #[derive(Default)]
 pub struct GoogleSheetsConnector;
 
@@ -40,12 +53,12 @@ impl GoogleSheetsConnector {
         Self
     }
 
-    /// Header cells of the first visible sheet as field names (row 1).
-    fn fetch_header(&self, token: &str, spreadsheet_id: &str) -> Result<Vec<String>, CoreError> {
+    /// Header cells of the resolved sheet as field names (row 1).
+    fn fetch_header(&self, token: &str, sheet: &ResolvedSheet) -> Result<Vec<String>, CoreError> {
         let rows = fetch_values(
             token,
-            spreadsheet_id,
-            &format!("A{HEADER_ROW}:{LAST_COLUMN}{HEADER_ROW}"),
+            &sheet.spreadsheet_id,
+            &sheet.range(&format!("A{HEADER_ROW}:{LAST_COLUMN}{HEADER_ROW}")),
         )?;
         Ok(rows
             .first()
@@ -57,13 +70,13 @@ impl GoogleSheetsConnector {
     fn read_all(
         &self,
         token: &str,
-        spreadsheet_id: &str,
+        sheet: &ResolvedSheet,
         header: &[String],
     ) -> Result<Vec<TableRecord>, CoreError> {
         let rows = fetch_values(
             token,
-            spreadsheet_id,
-            &format!("A{FIRST_DATA_ROW}:{LAST_COLUMN}"),
+            &sheet.spreadsheet_id,
+            &sheet.range(&format!("A{FIRST_DATA_ROW}:{LAST_COLUMN}")),
         )?;
         Ok(records_from_rows(header, &rows, FIRST_DATA_ROW))
     }
@@ -133,18 +146,18 @@ impl TableConnector for GoogleSheetsConnector {
         table_id: &str,
     ) -> Result<TableSchema, CoreError> {
         let token = google::access_token(conn, source_id)?;
-        let title = fetch_spreadsheet_title(&token, table_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
         let rows = fetch_values(
             &token,
-            table_id,
-            &format!("A{HEADER_ROW}:{LAST_COLUMN}{FIRST_DATA_ROW}"),
+            &sheet.spreadsheet_id,
+            &sheet.range(&format!("A{HEADER_ROW}:{LAST_COLUMN}{FIRST_DATA_ROW}")),
         )?;
         let header = rows.first().cloned().unwrap_or_default();
         let first_data_row = rows.get(1).map(Vec::as_slice);
         Ok(TableSchema {
             source_id: source_id.to_string(),
             table_id: table_id.to_string(),
-            name: title,
+            name: sheet.display_name(),
             fields: schema_from_rows(&header, first_data_row),
         })
     }
@@ -157,7 +170,8 @@ impl TableConnector for GoogleSheetsConnector {
         options: ReadOptions,
     ) -> Result<Vec<TableRecord>, CoreError> {
         let token = google::access_token(conn, source_id)?;
-        let header = self.fetch_header(&token, table_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
         if header.is_empty() {
             return Ok(Vec::new());
         }
@@ -169,7 +183,7 @@ impl TableConnector for GoogleSheetsConnector {
             Some(limit) => format!("A{start_row}:{LAST_COLUMN}{}", start_row + limit - 1),
             None => format!("A{start_row}:{LAST_COLUMN}"),
         };
-        let rows = fetch_values(&token, table_id, &range)?;
+        let rows = fetch_values(&token, &sheet.spreadsheet_id, &sheet.range(&range))?;
         Ok(records_from_rows(&header, &rows, start_row))
     }
 
@@ -210,10 +224,12 @@ impl TableConnector for GoogleSheetsConnector {
             return Ok(Vec::new());
         }
         let token = google::access_token(conn, source_id)?;
-        let header = self.fetch_header(&token, table_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
         if header.is_empty() {
             return Err(CoreError::InvalidInput(format!(
-                "Spreadsheet {table_id} has no header row to map fields onto"
+                "Spreadsheet {} has no header row to map fields onto",
+                sheet.spreadsheet_id
             )));
         }
 
@@ -221,10 +237,11 @@ impl TableConnector for GoogleSheetsConnector {
             .iter()
             .map(|fields| row_values(&header, fields))
             .collect();
-        let url = format!(
-            "{SHEETS_ENDPOINT}/{table_id}/values/A{HEADER_ROW}:append?valueInputOption={VALUE_INPUT_RAW}&insertDataOption=INSERT_ROWS"
-        );
-        let body = google::post_json(&token, &url, &json!({ "values": values }))?;
+        let url = values_append_url(
+            &sheet.spreadsheet_id,
+            &sheet.range(&format!("A{HEADER_ROW}")),
+        )?;
+        let body = google::post_json(&token, url.as_str(), &json!({ "values": values }))?;
 
         let start_row = body["updates"]["updatedRange"]
             .as_str()
@@ -258,13 +275,15 @@ impl TableConnector for GoogleSheetsConnector {
             return Ok(Vec::new());
         }
         let token = google::access_token(conn, source_id)?;
-        let header = self.fetch_header(&token, table_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
         if header.is_empty() {
             return Err(CoreError::InvalidInput(format!(
-                "Spreadsheet {table_id} has no header row to map fields onto"
+                "Spreadsheet {} has no header row to map fields onto",
+                sheet.spreadsheet_id
             )));
         }
-        let current = self.read_all(&token, table_id, &header)?;
+        let current = self.read_all(&token, &sheet, &header)?;
 
         let mut updated = Vec::new();
         let mut data_entries = Vec::new();
@@ -280,7 +299,7 @@ impl TableConnector for GoogleSheetsConnector {
                 merged.insert(key.clone(), value.clone());
             }
             data_entries.push(json!({
-                "range": format!("A{row_number}"),
+                "range": sheet.range(&format!("A{row_number}")),
                 "values": [row_values(&header, &merged)],
             }));
             updated.push(TableRecord {
@@ -292,10 +311,10 @@ impl TableConnector for GoogleSheetsConnector {
             return Ok(updated);
         }
 
-        let url = format!("{SHEETS_ENDPOINT}/{table_id}/values:batchUpdate");
+        let url = values_batch_update_url(&sheet.spreadsheet_id)?;
         google::post_json(
             &token,
-            &url,
+            url.as_str(),
             &json!({ "valueInputOption": VALUE_INPUT_RAW, "data": data_entries }),
         )?;
         Ok(updated)
@@ -303,17 +322,290 @@ impl TableConnector for GoogleSheetsConnector {
 }
 
 // ---------------------------------------------------------------------------
+// tableId parsing and sheet resolution
+// ---------------------------------------------------------------------------
+
+/// How a tableId names a tab within a spreadsheet. Parsing only extracts this
+/// from the input; it never carries a host or endpoint (SSRF defense).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SheetSelector {
+    /// No tab named: use the spreadsheet's first sheet (current behavior).
+    First,
+    /// Numeric tab id (`gid`) from a URL fragment/query or `id:gid` form.
+    Gid(i64),
+    /// A sheet tab title from the `id:SheetName` form.
+    Title(String),
+}
+
+/// A tableId decomposed into a spreadsheet id and a tab selector. The id is
+/// validated to look like a Google document id so a URL/host can never leak
+/// into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedTableId {
+    spreadsheet_id: String,
+    selector: SheetSelector,
+}
+
+impl ParsedTableId {
+    /// Accepts a full Google Sheets URL, a bare spreadsheet id,
+    /// `{spreadsheetId}:{gid}` (numeric), or `{spreadsheetId}:{SheetName}`.
+    /// Only the spreadsheet id and the tab selector are extracted; the id is
+    /// checked against [`is_plausible_spreadsheet_id`] so non-Google hosts,
+    /// paths, or junk are rejected before any request is built.
+    fn parse(table_id: &str) -> Result<Self, CoreError> {
+        let trimmed = table_id.trim();
+        if trimmed.is_empty() {
+            return Err(invalid_table_id(table_id));
+        }
+
+        // A URL is anything with a scheme marker; parse it structurally rather
+        // than string-splitting so only the id + gid are ever pulled out.
+        if trimmed.contains("://") {
+            return Self::from_url(trimmed).ok_or_else(|| invalid_table_id(table_id));
+        }
+
+        // `id:selector` - split on the FIRST separator so sheet titles that
+        // themselves contain ':' stay intact.
+        if let Some((raw_id, raw_selector)) = trimmed.split_once(TABLE_ID_SELECTOR_SEPARATOR) {
+            let spreadsheet_id = raw_id.trim();
+            if !is_plausible_spreadsheet_id(spreadsheet_id) {
+                return Err(invalid_table_id(table_id));
+            }
+            let selector = selector_from_str(raw_selector.trim());
+            return Ok(Self {
+                spreadsheet_id: spreadsheet_id.to_string(),
+                selector,
+            });
+        }
+
+        // Bare id.
+        if !is_plausible_spreadsheet_id(trimmed) {
+            return Err(invalid_table_id(table_id));
+        }
+        Ok(Self {
+            spreadsheet_id: trimmed.to_string(),
+            selector: SheetSelector::First,
+        })
+    }
+
+    /// Extracts the id from the `/d/{ID}/` segment and the gid from the `gid`
+    /// query or fragment of a Google Sheets URL. The host is not trusted for
+    /// routing (all requests go to the fixed endpoint), but a wrong-shaped or
+    /// non-Google URL still fails here so junk cannot masquerade as an id.
+    fn from_url(raw: &str) -> Option<Self> {
+        let url = url::Url::parse(raw).ok()?;
+        if !is_google_docs_host(url.host_str()?) {
+            return None;
+        }
+        let path = url.path();
+        let after_marker = path.split_once(SHEETS_URL_ID_MARKER)?.1;
+        let spreadsheet_id = after_marker.split('/').next()?.trim();
+        if !is_plausible_spreadsheet_id(spreadsheet_id) {
+            return None;
+        }
+        let gid = gid_from_query(url.query()).or_else(|| gid_from_fragment(url.fragment()));
+        Some(Self {
+            spreadsheet_id: spreadsheet_id.to_string(),
+            selector: gid.map(SheetSelector::Gid).unwrap_or(SheetSelector::First),
+        })
+    }
+}
+
+/// A spreadsheet id plus the concrete sheet-tab title to qualify every range
+/// with. `None` title means the first sheet (no explicit prefix needed).
+struct ResolvedSheet {
+    spreadsheet_id: String,
+    /// The spreadsheet's own title (for `describe_table.name`).
+    spreadsheet_title: String,
+    /// Resolved tab title, or `None` when reading the first sheet.
+    sheet_title: Option<String>,
+}
+
+impl ResolvedSheet {
+    /// Parses the tableId, then fetches spreadsheet metadata to turn a gid or
+    /// title selector into a concrete tab title (validating that it exists).
+    /// The metadata call always targets the fixed Sheets endpoint for the
+    /// connected account's token.
+    fn resolve(token: &str, table_id: &str) -> Result<Self, CoreError> {
+        let parsed = ParsedTableId::parse(table_id)?;
+        let meta = fetch_spreadsheet_meta(token, &parsed.spreadsheet_id)?;
+        let sheet_title = resolve_sheet_title(&parsed, &meta)?;
+        Ok(Self {
+            spreadsheet_id: parsed.spreadsheet_id,
+            spreadsheet_title: meta.title,
+            sheet_title,
+        })
+    }
+
+    /// Qualifies an A1 range with the resolved sheet title when one was chosen,
+    /// e.g. `A1:ZZ1` -> `'Sheet Name'!A1:ZZ1`. The first-sheet case keeps the
+    /// bare range (matches the prior behavior and needs no title).
+    fn range(&self, a1: &str) -> String {
+        match &self.sheet_title {
+            Some(title) => format!("{}!{a1}", quote_sheet_title(title)),
+            None => a1.to_string(),
+        }
+    }
+
+    /// Human-facing name for `describe_table`: the tab title when a specific
+    /// tab was selected, otherwise the spreadsheet title.
+    fn display_name(&self) -> String {
+        self.sheet_title
+            .clone()
+            .unwrap_or_else(|| self.spreadsheet_title.clone())
+    }
+}
+
+/// Minimal spreadsheet metadata: the spreadsheet title and its tabs.
+struct SpreadsheetMeta {
+    title: String,
+    sheets: Vec<SheetProperties>,
+}
+
+struct SheetProperties {
+    sheet_id: i64,
+    title: String,
+}
+
+/// `GET {SHEETS_ENDPOINT}/{id}?fields=properties.title,sheets.properties(sheetId,title)`.
+/// Fixed endpoint + token; the id only selects the resource.
+fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<SpreadsheetMeta, CoreError> {
+    let mut url = sheets_base_url(spreadsheet_id)?;
+    url.query_pairs_mut().append_pair(
+        "fields",
+        "properties.title,sheets.properties(sheetId,title)",
+    );
+    let body = google::get_json(token, url.as_str())?;
+    let title = body["properties"]["title"]
+        .as_str()
+        .unwrap_or(spreadsheet_id)
+        .to_string();
+    let sheets = body["sheets"]
+        .as_array()
+        .map(|sheets| {
+            sheets
+                .iter()
+                .filter_map(|sheet| {
+                    let properties = &sheet["properties"];
+                    Some(SheetProperties {
+                        sheet_id: properties["sheetId"].as_i64()?,
+                        title: properties["title"].as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(SpreadsheetMeta { title, sheets })
+}
+
+/// Maps a parsed selector onto a concrete tab title using the metadata:
+/// - `First` -> `None` (bare range, first sheet).
+/// - `Gid` -> the tab whose sheetId equals the gid, else NotFound.
+/// - `Title` -> the exact tab title if it exists, else NotFound.
+fn resolve_sheet_title(
+    parsed: &ParsedTableId,
+    meta: &SpreadsheetMeta,
+) -> Result<Option<String>, CoreError> {
+    match &parsed.selector {
+        SheetSelector::First => Ok(None),
+        SheetSelector::Gid(gid) => meta
+            .sheets
+            .iter()
+            .find(|sheet| sheet.sheet_id == *gid)
+            .map(|sheet| Some(sheet.title.clone()))
+            .ok_or_else(|| {
+                CoreError::NotFound(format!(
+                    "Spreadsheet {} has no tab with gid {gid}",
+                    parsed.spreadsheet_id
+                ))
+            }),
+        SheetSelector::Title(title) => meta
+            .sheets
+            .iter()
+            .find(|sheet| sheet.title == *title)
+            .map(|sheet| Some(sheet.title.clone()))
+            .ok_or_else(|| {
+                CoreError::NotFound(format!(
+                    "Spreadsheet {} has no tab named '{title}'",
+                    parsed.spreadsheet_id
+                ))
+            }),
+    }
+}
+
+/// A selector string is a gid when it is all digits, otherwise a sheet title.
+fn selector_from_str(raw: &str) -> SheetSelector {
+    if raw.is_empty() {
+        return SheetSelector::First;
+    }
+    match raw.parse::<i64>() {
+        Ok(gid) => SheetSelector::Gid(gid),
+        Err(_) => SheetSelector::Title(raw.to_string()),
+    }
+}
+
+/// Quotes a sheet title for an A1 range. Titles are wrapped in single quotes
+/// (required when they contain spaces or punctuation), and any embedded single
+/// quote is doubled per the Sheets A1 grammar.
+fn quote_sheet_title(title: &str) -> String {
+    format!("'{}'", title.replace('\'', "''"))
+}
+
+/// Plausible Google document id: URL-safe base64 alphabet (`A-Za-z0-9_-`) and
+/// long enough to be a real id. This is the SSRF/junk guard - a hostname, path,
+/// or arbitrary string fails it, so a tableId can never smuggle a URL host into
+/// the fixed endpoint.
+fn is_plausible_spreadsheet_id(candidate: &str) -> bool {
+    candidate.len() >= MIN_SPREADSHEET_ID_LEN
+        && candidate.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
+}
+
+/// Accepts only Google's document hosts for URL parsing.
+fn is_google_docs_host(host: &str) -> bool {
+    host == "docs.google.com" || host == "drive.google.com"
+}
+
+/// `gid=123` from a query string, if present and numeric.
+fn gid_from_query(query: Option<&str>) -> Option<i64> {
+    gid_from_pairs(query?)
+}
+
+/// `#gid=123` (or `#...&gid=123`) from a URL fragment, if present and numeric.
+fn gid_from_fragment(fragment: Option<&str>) -> Option<i64> {
+    gid_from_pairs(fragment?)
+}
+
+/// Scans `key=value&key=value` pairs for a numeric `gid`.
+fn gid_from_pairs(pairs: &str) -> Option<i64> {
+    pairs
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == SHEETS_URL_GID_KEY)
+        .and_then(|(_, value)| value.parse::<i64>().ok())
+}
+
+fn invalid_table_id(table_id: &str) -> CoreError {
+    CoreError::InvalidInput(format!(
+        "'{table_id}' is not a Google Sheets URL, spreadsheet id, or spreadsheetId:tab selector"
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Pure helpers (unit-tested without network access)
 // ---------------------------------------------------------------------------
 
-/// `values.get` for a range on the first visible sheet (no sheet prefix).
+/// `values.get` for an A1 range that may be sheet-qualified (e.g.
+/// `'My Sheet'!A1:ZZ1`). The range becomes a single path segment; the `url`
+/// crate percent-encodes it so spaces, quotes, and the `!` separator survive.
 fn fetch_values(
     token: &str,
     spreadsheet_id: &str,
     range: &str,
 ) -> Result<Vec<Vec<Value>>, CoreError> {
-    let url = format!("{SHEETS_ENDPOINT}/{spreadsheet_id}/values/{range}");
-    let body = google::get_json(token, &url)?;
+    let url = values_get_url(spreadsheet_id, range)?;
+    let body = google::get_json(token, url.as_str())?;
     let rows = body["values"].as_array().cloned().unwrap_or_default();
     Ok(rows
         .into_iter()
@@ -321,13 +613,49 @@ fn fetch_values(
         .collect())
 }
 
-fn fetch_spreadsheet_title(token: &str, spreadsheet_id: &str) -> Result<String, CoreError> {
-    let url = format!("{SHEETS_ENDPOINT}/{spreadsheet_id}?fields=properties.title");
-    let body = google::get_json(token, &url)?;
-    Ok(body["properties"]["title"]
-        .as_str()
-        .unwrap_or(spreadsheet_id)
-        .to_string())
+/// `{SHEETS_ENDPOINT}/{id}/values/{range}` with the id and range pushed as
+/// path segments so both are percent-encoded. The host and base path stay
+/// fixed - the id/range only choose the resource, never the endpoint.
+fn values_get_url(spreadsheet_id: &str, range: &str) -> Result<url::Url, CoreError> {
+    let mut url = sheets_base_url(spreadsheet_id)?;
+    push_segments(&mut url, &["values", range])?;
+    Ok(url)
+}
+
+/// Base spreadsheet URL (`{SHEETS_ENDPOINT}/{id}`) with the id percent-encoded
+/// as a path segment. Parsing the constant endpoint (never the caller's input)
+/// guarantees the host is always Google's Sheets API.
+fn sheets_base_url(spreadsheet_id: &str) -> Result<url::Url, CoreError> {
+    let mut url = url::Url::parse(SHEETS_ENDPOINT)
+        .map_err(|error| CoreError::Storage(format!("Could not build the Sheets URL: {error}")))?;
+    push_segments(&mut url, &[spreadsheet_id])?;
+    Ok(url)
+}
+
+fn push_segments(url: &mut url::Url, segments: &[&str]) -> Result<(), CoreError> {
+    url.path_segments_mut()
+        .map_err(|_| CoreError::Storage("Sheets endpoint cannot be a base URL".to_string()))?
+        .extend(segments);
+    Ok(())
+}
+
+/// `values/{range}:append` URL with the RAW input and insert-rows options.
+/// The `:append` verb is part of the final path segment, so it is pushed
+/// together with the range (both percent-encoded as one segment).
+fn values_append_url(spreadsheet_id: &str, range: &str) -> Result<url::Url, CoreError> {
+    let mut url = sheets_base_url(spreadsheet_id)?;
+    push_segments(&mut url, &["values", &format!("{range}:append")])?;
+    url.query_pairs_mut()
+        .append_pair("valueInputOption", VALUE_INPUT_RAW)
+        .append_pair("insertDataOption", "INSERT_ROWS");
+    Ok(url)
+}
+
+/// `values:batchUpdate` URL. The `:batchUpdate` verb is the last path segment.
+fn values_batch_update_url(spreadsheet_id: &str) -> Result<url::Url, CoreError> {
+    let mut url = sheets_base_url(spreadsheet_id)?;
+    push_segments(&mut url, &["values:batchUpdate"])?;
+    Ok(url)
 }
 
 /// Header row -> FieldSchema list; types inferred from the first data row.
@@ -542,5 +870,201 @@ mod tests {
         let values = row_values(&names, &fields);
 
         assert_eq!(values, vec![json!("Aurora"), json!(""), json!(true)]);
+    }
+
+    // A realistic 44-char Google document id used across the parser tests.
+    const SAMPLE_ID: &str = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
+
+    #[test]
+    fn parse_full_url_with_gid_in_fragment_and_query() {
+        let parsed = ParsedTableId::parse(&format!(
+            "https://docs.google.com/spreadsheets/d/{SAMPLE_ID}/edit?gid=1234567#gid=1234567"
+        ))
+        .expect("valid url");
+        assert_eq!(parsed.spreadsheet_id, SAMPLE_ID);
+        assert_eq!(parsed.selector, SheetSelector::Gid(1234567));
+    }
+
+    #[test]
+    fn parse_url_gid_zero_from_fragment_only() {
+        let parsed = ParsedTableId::parse(&format!(
+            "https://docs.google.com/spreadsheets/d/{SAMPLE_ID}/edit#gid=0"
+        ))
+        .expect("valid url");
+        assert_eq!(parsed.spreadsheet_id, SAMPLE_ID);
+        assert_eq!(parsed.selector, SheetSelector::Gid(0));
+    }
+
+    #[test]
+    fn parse_url_without_gid_selects_first_sheet() {
+        let parsed = ParsedTableId::parse(&format!(
+            "https://docs.google.com/spreadsheets/d/{SAMPLE_ID}/edit"
+        ))
+        .expect("valid url");
+        assert_eq!(parsed.spreadsheet_id, SAMPLE_ID);
+        assert_eq!(parsed.selector, SheetSelector::First);
+    }
+
+    #[test]
+    fn parse_bare_id_selects_first_sheet() {
+        let parsed = ParsedTableId::parse(SAMPLE_ID).expect("valid id");
+        assert_eq!(parsed.spreadsheet_id, SAMPLE_ID);
+        assert_eq!(parsed.selector, SheetSelector::First);
+    }
+
+    #[test]
+    fn parse_id_colon_gid() {
+        let parsed = ParsedTableId::parse(&format!("{SAMPLE_ID}:42")).expect("valid id:gid");
+        assert_eq!(parsed.spreadsheet_id, SAMPLE_ID);
+        assert_eq!(parsed.selector, SheetSelector::Gid(42));
+    }
+
+    #[test]
+    fn parse_id_colon_sheet_name() {
+        let parsed =
+            ParsedTableId::parse(&format!("{SAMPLE_ID}:Q3 Summary")).expect("valid id:name");
+        assert_eq!(parsed.spreadsheet_id, SAMPLE_ID);
+        assert_eq!(
+            parsed.selector,
+            SheetSelector::Title("Q3 Summary".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_id_colon_name_keeps_colons_in_title() {
+        let parsed =
+            ParsedTableId::parse(&format!("{SAMPLE_ID}:10:30 report")).expect("valid id:name");
+        assert_eq!(
+            parsed.selector,
+            SheetSelector::Title("10:30 report".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_junk_and_non_google_hosts() {
+        // Non-Google host: never treated as a spreadsheet URL (SSRF guard).
+        assert!(ParsedTableId::parse("https://evil.example.com/spreadsheets/d/xxx/edit").is_err());
+        // A Google host but the id is too short to be plausible.
+        assert!(ParsedTableId::parse("https://docs.google.com/spreadsheets/d/short/edit").is_err());
+        // Arbitrary strings and hostnames.
+        assert!(ParsedTableId::parse("not-a-real-id").is_err());
+        assert!(ParsedTableId::parse("sheets.googleapis.com").is_err());
+        assert!(ParsedTableId::parse("").is_err());
+        assert!(ParsedTableId::parse("   ").is_err());
+        // Short id with a selector is still rejected on the id.
+        assert!(ParsedTableId::parse("short:0").is_err());
+    }
+
+    #[test]
+    fn plausible_id_guard_rejects_url_characters() {
+        assert!(is_plausible_spreadsheet_id(SAMPLE_ID));
+        assert!(!is_plausible_spreadsheet_id("has/slash/aaaaaaaaaaaaaaaaa"));
+        assert!(!is_plausible_spreadsheet_id("has spaces aaaaaaaaaaaaaaa"));
+        assert!(!is_plausible_spreadsheet_id("docs.google.com"));
+    }
+
+    #[test]
+    fn range_qualifies_with_quoted_sheet_title_only_when_selected() {
+        let first = ResolvedSheet {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            spreadsheet_title: "Book".to_string(),
+            sheet_title: None,
+        };
+        assert_eq!(first.range("A1:ZZ1"), "A1:ZZ1");
+
+        let named = ResolvedSheet {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            spreadsheet_title: "Book".to_string(),
+            sheet_title: Some("My Sheet".to_string()),
+        };
+        assert_eq!(named.range("A2:ZZ"), "'My Sheet'!A2:ZZ");
+
+        // Embedded single quotes are doubled per the A1 grammar.
+        let quoted = ResolvedSheet {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            spreadsheet_title: "Book".to_string(),
+            sheet_title: Some("Bob's Tab".to_string()),
+        };
+        assert_eq!(quoted.range("A1"), "'Bob''s Tab'!A1");
+    }
+
+    #[test]
+    fn resolve_sheet_title_maps_gid_and_title_or_errors() {
+        let meta = SpreadsheetMeta {
+            title: "Workbook".to_string(),
+            sheets: vec![
+                SheetProperties {
+                    sheet_id: 0,
+                    title: "Sheet1".to_string(),
+                },
+                SheetProperties {
+                    sheet_id: 987,
+                    title: "Data".to_string(),
+                },
+            ],
+        };
+        let gid = ParsedTableId {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            selector: SheetSelector::Gid(987),
+        };
+        assert_eq!(
+            resolve_sheet_title(&gid, &meta).unwrap(),
+            Some("Data".to_string())
+        );
+
+        let title = ParsedTableId {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            selector: SheetSelector::Title("Sheet1".to_string()),
+        };
+        assert_eq!(
+            resolve_sheet_title(&title, &meta).unwrap(),
+            Some("Sheet1".to_string())
+        );
+
+        let first = ParsedTableId {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            selector: SheetSelector::First,
+        };
+        assert_eq!(resolve_sheet_title(&first, &meta).unwrap(), None);
+
+        let missing_gid = ParsedTableId {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            selector: SheetSelector::Gid(555),
+        };
+        assert!(matches!(
+            resolve_sheet_title(&missing_gid, &meta),
+            Err(CoreError::NotFound(_))
+        ));
+
+        let missing_title = ParsedTableId {
+            spreadsheet_id: SAMPLE_ID.to_string(),
+            selector: SheetSelector::Title("Nope".to_string()),
+        };
+        assert!(matches!(
+            resolve_sheet_title(&missing_title, &meta),
+            Err(CoreError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn url_builders_target_the_fixed_sheets_endpoint_with_encoded_range() {
+        let get = values_get_url(SAMPLE_ID, "'My Sheet'!A1:ZZ1").expect("get url");
+        assert_eq!(get.host_str(), Some("sheets.googleapis.com"));
+        assert!(get.as_str().starts_with(SHEETS_ENDPOINT));
+        assert!(get.as_str().contains(SAMPLE_ID));
+        // Spaces in the range are percent-encoded so they cannot break the URL
+        // path (`!`, `'`, and `:` are valid path characters the Sheets API
+        // accepts unencoded, so they may remain literal).
+        assert!(!get.path().contains(' '));
+        assert!(get.path().contains("%20"));
+
+        let append = values_append_url(SAMPLE_ID, "'My Sheet'!A1").expect("append url");
+        assert_eq!(append.host_str(), Some("sheets.googleapis.com"));
+        assert!(append.as_str().contains("valueInputOption=RAW"));
+        assert!(append.as_str().contains("insertDataOption=INSERT_ROWS"));
+
+        let batch = values_batch_update_url(SAMPLE_ID).expect("batch url");
+        assert_eq!(batch.host_str(), Some("sheets.googleapis.com"));
+        assert!(batch.as_str().ends_with("values:batchUpdate"));
     }
 }

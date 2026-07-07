@@ -37,6 +37,36 @@ source `mock-source` ("Demo Workspace") with table `customers`, and a permission
 that allows read + write and requires confirmation for `append`, `update`, `delete`,
 and `bulk_update`.
 
+## Google Sheets `tableId` forms
+
+For a Google Sheets source, every table tool (`describe_table`, `read_table`,
+`find_records`, `preview_update_records`, `append_records`) accepts the `tableId` in any
+of these forms. This lets an agent paste a spreadsheet link the user shared and read the
+exact tab without extra lookups:
+
+| Form | Example | Tab selected |
+|---|---|---|
+| Full Google Sheets URL | `https://docs.google.com/spreadsheets/d/1BxiMVs.../edit?gid=1234567#gid=1234567` | the tab whose gid matches |
+| URL without a gid | `https://docs.google.com/spreadsheets/d/1BxiMVs.../edit` | the first tab |
+| Bare spreadsheet id | `1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms` | the first tab |
+| `spreadsheetId:gid` | `1BxiMVs...:1234567` | the tab whose gid matches |
+| `spreadsheetId:SheetName` | `1BxiMVs...:Q3 Summary` | the tab with that exact title |
+
+Resolution fetches the spreadsheet metadata once
+(`GET {SHEETS_ENDPOINT}/{id}?fields=properties.title,sheets.properties(sheetId,title)`)
+to map a gid to its tab title or validate a tab name; every subsequent read/write range is
+qualified by the resolved title (e.g. `'Q3 Summary'!A1:ZZ`). A gid or name that does not
+exist returns a `NotFound` tool error. Only the spreadsheet id and tab selector are ever
+extracted from a URL - the HTTP host and endpoint are fixed to the Google Sheets API for
+the connected account's token (see `docs/security.md`, "Google Sheets URL parsing"). Ids
+that do not look like a Google document id (too short, or containing URL/host characters)
+are rejected before any request is made.
+
+`list_tables` returns one entry per spreadsheet (the tableId is the spreadsheet id,
+resolving to the first tab). To target a non-first tab, pass one of the tab-qualified
+forms above rather than expecting a separate entry per tab; this keeps `list_tables`
+bounded to a single Drive listing instead of one metadata call per spreadsheet.
+
 ## `list_sources`
 
 Purpose: list connected data sources (read-only).
@@ -68,7 +98,9 @@ Sheets and provider placeholder rows are visible in the desktop UI but not here.
 
 ## `list_tables`
 
-Purpose: list tables for a data source (read-only).
+Purpose: list the spreadsheets (tables) in a data source (read-only). For Google Sheets
+each spreadsheet is one entry and its `tableId` is the spreadsheet id; use a tab-qualified
+`tableId` (see "Google Sheets `tableId` forms") to read a specific tab.
 
 Input schema:
 
@@ -98,7 +130,9 @@ Example response:
 
 ## `describe_table`
 
-Purpose: return the field schema of a table (read-only).
+Purpose: return the field schema of a table (read-only). For Google Sheets, `tableId` may
+be a URL, spreadsheet id, or `spreadsheetId:gid` / `spreadsheetId:SheetName`; `name`
+reflects the resolved tab (or the spreadsheet title when no tab is selected).
 
 Input schema:
 
@@ -138,7 +172,9 @@ Example response:
 
 ## `read_table`
 
-Purpose: read bounded records from a table (read-only).
+Purpose: read bounded records from a table (read-only). For Google Sheets, `tableId` may
+be a URL, spreadsheet id, or `spreadsheetId:gid` / `spreadsheetId:SheetName` (see "Google
+Sheets `tableId` forms").
 
 Input schema:
 
@@ -172,7 +208,9 @@ Example response:
 
 ## `find_records`
 
-Purpose: case-insensitive text search across all field values (read-only).
+Purpose: case-insensitive text search across all field values (read-only). For Google
+Sheets, `tableId` may be a URL, spreadsheet id, or `spreadsheetId:gid` /
+`spreadsheetId:SheetName` (see "Google Sheets `tableId` forms").
 
 Input schema:
 
@@ -205,7 +243,8 @@ Example response:
 ## `preview_update_records`
 
 Purpose: create a pending update change and return its diff. Nothing is written to the
-table until `commit_change`.
+table until `commit_change`. For Google Sheets, `tableId` may be a URL, spreadsheet id, or
+`spreadsheetId:gid` / `spreadsheetId:SheetName` (see "Google Sheets `tableId` forms").
 
 Input schema:
 
@@ -269,7 +308,8 @@ Example response:
 ## `append_records`
 
 Purpose: create a pending append change and return its diff. Nothing is written to the
-table until `commit_change`.
+table until `commit_change`. For Google Sheets, `tableId` may be a URL, spreadsheet id, or
+`spreadsheetId:gid` / `spreadsheetId:SheetName` (see "Google Sheets `tableId` forms").
 
 Input schema:
 
@@ -447,5 +487,5 @@ Example response:
 
 - No delete tool exists; delete changes are typed in the schema but rejected by the
   change pipeline.
-- Only the mock connector is functional; calls against non-mock sources fail with a
-  routing error.
+- The mock and Google Sheets connectors are functional; the `provider` connector is still
+  a stub and calls against it fail with a routing error.

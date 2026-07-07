@@ -91,6 +91,29 @@ therefore blocks commits of already-previewed changes.
 diff contains the current (before) values of the patched records. A write-only rule
 cannot be used to exfiltrate table contents through previews.
 
+## Google Sheets URL Parsing (No SSRF)
+
+A Google Sheets `tableId` may be a full spreadsheet URL, a bare spreadsheet id, or
+`spreadsheetId:gid` / `spreadsheetId:SheetName` (see `docs/mcp-tools.md`). Parsing this
+input is strictly an extraction step and never chooses where a request goes:
+
+- The parser only pulls the spreadsheet id and a tab selector (a numeric `gid` or a sheet
+  title) out of the input. It never derives an HTTP host, port, path, or endpoint from it.
+  Every Sheets/Drive call is built from the fixed `SHEETS_ENDPOINT`
+  (`https://sheets.googleapis.com/v4/spreadsheets`) and the connected account's token, with
+  the id and range pushed as percent-encoded path segments via the `url` crate. There is no
+  code path where a tableId (or the host in a pasted URL) can redirect a request to another
+  origin, so a malicious link cannot be used for SSRF or to reach an internal service.
+- URLs are only accepted when the host is a Google document host (`docs.google.com` /
+  `drive.google.com`); any other host is rejected rather than followed. The host is used
+  solely as a validation gate, not for routing.
+- The extracted spreadsheet id must look like a Google document id (URL-safe base64
+  alphabet `A-Za-z0-9_-`, and long enough). Ids containing `/`, `:`, spaces, or other URL
+  syntax, and short/junk strings, are rejected before any request is built.
+- A `gid` or sheet name that does not exist in the spreadsheet surfaces as a `NotFound`
+  tool error after a single metadata lookup against the fixed endpoint; it cannot widen the
+  request surface.
+
 ## Token Handling
 
 - Secrets live in the OS keychain under service `sheet-port`, accessed through the
