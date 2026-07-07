@@ -206,6 +206,7 @@ export const en = {
   "workbench.findInSheet": "Find in sheet",
   "workbench.refresh": "Refresh",
   "workbench.addRow": "Add Row",
+  "workbench.sheetTabs": "Sheet Tabs",
   "workbench.selectPromptTitle": "Select or add a spreadsheet",
   "workbench.selectPromptDescription":
     "Choose a spreadsheet from the left, or add one to get started.",
@@ -704,6 +705,7 @@ const vi: Dictionary = {
   "workbench.findInSheet": "Tìm trong trang tính",
   "workbench.refresh": "Làm mới",
   "workbench.addRow": "Thêm hàng",
+  "workbench.sheetTabs": "Thẻ trang tính",
   "workbench.selectPromptTitle": "Chọn hoặc thêm một bảng tính",
   "workbench.selectPromptDescription":
     "Chọn một bảng tính ở bên trái, hoặc thêm một bảng tính để bắt đầu.",

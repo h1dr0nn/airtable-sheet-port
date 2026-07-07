@@ -1,4 +1,5 @@
 import { cn, FOCUS_RING } from "@sheet-port/ui";
+import { useTranslation } from "../../i18n/useTranslation.js";
 import type { SheetTab } from "../../lib/ipc.js";
 
 type SheetTabsBarProps = {
@@ -12,10 +13,12 @@ type SheetTabsBarProps = {
  * active sheet but does not create, rename, or reorder tabs.
  */
 export function SheetTabsBar({ tabs, activeGid, onSelect }: SheetTabsBarProps) {
+  const { t } = useTranslation();
+
   return (
     <div
       role="tablist"
-      aria-label="Sheet tabs"
+      aria-label={t("workbench.sheetTabs")}
       className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-t border-edge bg-surface px-2 py-1"
     >
       {tabs.map((tab) => {

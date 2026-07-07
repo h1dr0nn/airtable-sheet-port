@@ -42,6 +42,9 @@ export function App() {
   const [isCloseDialogOpen, setIsCloseDialogOpen] = useState(false);
   const { collapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const Screen = SCREENS[screen];
+  // The Workbench (Tables) fills the whole content area edge to edge; every
+  // other screen keeps the centered, padded reading column.
+  const isFullBleed = screen === "tables";
 
   // The backend emits "close-requested" when the window close button is hit
   // while close_behavior is "ask"; open the tray/quit prompt in response. Never
@@ -76,15 +79,25 @@ export function App() {
         />
         <div className="flex min-h-0 flex-1">
           <Sidebar active={screen} onNavigate={setScreen} update={update} collapsed={collapsed} />
-          <main className="min-w-0 flex-1 overflow-y-auto">
-            <div className="app-scale mx-auto max-w-6xl px-8 py-8">
-              <AnimatedScreen screenKey={screen}>
+          {isFullBleed ? (
+            <main className="min-w-0 flex-1 overflow-hidden">
+              <div className="app-scale h-full">
                 <ErrorBoundary resetKey={screen}>
                   <Screen onNavigate={setScreen} />
                 </ErrorBoundary>
-              </AnimatedScreen>
-            </div>
-          </main>
+              </div>
+            </main>
+          ) : (
+            <main className="min-w-0 flex-1 overflow-y-auto">
+              <div className="app-scale mx-auto max-w-6xl px-8 py-8">
+                <AnimatedScreen screenKey={screen}>
+                  <ErrorBoundary resetKey={screen}>
+                    <Screen onNavigate={setScreen} />
+                  </ErrorBoundary>
+                </AnimatedScreen>
+              </div>
+            </main>
+          )}
         </div>
         <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} onNavigate={setScreen} />
         <CloseBehaviorDialog open={isCloseDialogOpen} onOpenChange={setIsCloseDialogOpen} />

@@ -28,7 +28,7 @@ export function Tables() {
   );
 
   return (
-    <div className="app-workbench flex h-[calc(100dvh-var(--titlebar-h)-4rem)] min-h-[420px] overflow-hidden rounded-card border border-edge bg-bg shadow-card">
+    <div className="app-workbench flex h-full w-full overflow-hidden bg-bg">
       <WorkbenchSidebar
         folders={folders}
         items={items}

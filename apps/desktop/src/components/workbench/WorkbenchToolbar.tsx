@@ -73,10 +73,20 @@ export function WorkbenchToolbar({
         <TooltipContent>{t("workbench.refresh")}</TooltipContent>
       </Tooltip>
 
-      <Button size="sm" onClick={onAddRow} disabled={!canAddRow}>
-        <Plus size={14} strokeWidth={2} aria-hidden />
-        <span className="hidden sm:inline">{t("workbench.addRow")}</span>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="sm"
+            onClick={onAddRow}
+            disabled={!canAddRow}
+            aria-label={t("workbench.addRow")}
+          >
+            <Plus size={14} strokeWidth={2} aria-hidden />
+            <span className="hidden sm:inline">{t("workbench.addRow")}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("workbench.addRow")}</TooltipContent>
+      </Tooltip>
 
       <p className="ml-auto hidden max-w-[45%] items-center gap-1 truncate text-[12px] text-ink-muted md:flex">
         <span className="truncate font-medium text-ink">{spreadsheetName}</span>

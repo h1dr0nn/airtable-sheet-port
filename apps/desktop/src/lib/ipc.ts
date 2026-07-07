@@ -139,9 +139,8 @@ export type SidecarStatus = {
 // Workbench (Google-Sheets-like curated workspace)
 //
 // The Workbench is a user-curated tree of spreadsheets grouped into folders,
-// distinct from the raw `list_tables` read path. The methods below are wired to
-// the in-memory demo backend for the browser preview; the Tauri path throws a
-// clear "not wired yet" error until the real backend lands in a later wave.
+// distinct from the raw `list_tables` read path. The Tauri path invokes the
+// Rust workbench commands; the browser preview falls back to the in-memory demo.
 // ---------------------------------------------------------------------------
 
 /** A user-created folder that groups spreadsheets in the Workbench tree. */
@@ -293,12 +292,6 @@ export interface IpcApi {
   ): Promise<{ rowIndex: number }>;
 }
 
-/** Shared rejection for Workbench methods until the real backend is wired up. */
-const WORKBENCH_NOT_WIRED = "The workbench backend is not wired yet";
-const workbenchNotWired = (): never => {
-  throw new Error(WORKBENCH_NOT_WIRED);
-};
-
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const tauriIpc: IpcApi = {
@@ -350,19 +343,26 @@ const tauriIpc: IpcApi = {
   mcpConfigureAll: () => invoke<void>("mcp_configure_all"),
   mcpServerStart: () => invoke<SidecarStatus>("mcp_server_start"),
   mcpServerStop: () => invoke<SidecarStatus>("mcp_server_stop"),
-  // Workbench: no Rust commands exist yet. Reject clearly rather than calling a
-  // missing command; these get real implementations in a later backend wave.
-  workbenchTree: workbenchNotWired,
-  createFolder: workbenchNotWired,
-  renameFolder: workbenchNotWired,
-  deleteFolder: workbenchNotWired,
-  addSpreadsheet: workbenchNotWired,
-  removeWorkbenchItem: workbenchNotWired,
-  moveWorkbenchItem: workbenchNotWired,
-  listSheetTabs: workbenchNotWired,
-  readSheet: workbenchNotWired,
-  updateCell: workbenchNotWired,
-  appendSheetRow: workbenchNotWired
+  // Workbench: wired to the Rust workbench commands (see src-tauri/commands.rs).
+  workbenchTree: () =>
+    invoke<{ folders: WorkbenchFolder[]; items: WorkbenchItem[] }>("workbench_tree"),
+  createFolder: (name) => invoke<WorkbenchFolder>("create_workbench_folder", { name }),
+  renameFolder: (id, name) => invoke<void>("rename_workbench_folder", { id, name }),
+  deleteFolder: (id) => invoke<void>("delete_workbench_folder", { id }),
+  addSpreadsheet: (input) =>
+    invoke<WorkbenchItem>("add_workbench_spreadsheet", {
+      folderId: input.folderId,
+      urlOrId: input.urlOrId
+    }),
+  removeWorkbenchItem: (id) => invoke<void>("remove_workbench_item", { id }),
+  moveWorkbenchItem: (id, folderId) => invoke<void>("move_workbench_item", { id, folderId }),
+  listSheetTabs: (itemId) => invoke<SheetTab[]>("list_workbench_sheet_tabs", { itemId }),
+  readSheet: (itemId, gid, limit, offset) =>
+    invoke<GridData>("read_workbench_sheet", { itemId, gid, limit, offset }),
+  updateCell: (itemId, gid, rowIndex, columnId, value) =>
+    invoke<void>("update_workbench_cell", { itemId, gid, rowIndex, columnId, value }),
+  appendSheetRow: (itemId, gid, values) =>
+    invoke<{ rowIndex: number }>("append_workbench_row", { itemId, gid, values })
 };
 
 // Plain-browser dev preview falls back to clickable in-memory fixtures.
