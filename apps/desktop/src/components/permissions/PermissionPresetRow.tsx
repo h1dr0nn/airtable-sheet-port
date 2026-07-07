@@ -82,10 +82,7 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
       <div className="flex items-center justify-between gap-4">
         {/* Source info stretches left; the preset control stays right-aligned. */}
         <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-x-2">
-            <span className="truncate text-[13px] font-medium text-ink">{source.name}</span>
-            <span className="shrink-0 font-mono text-[11.5px] text-ink-faint">{source.id}/*</span>
-          </div>
+          <span className="block truncate text-[13px] font-medium text-ink">{source.name}</span>
           {rule ? (
             <p className="mt-0.5 text-[12px] text-ink-muted">
               Updated <RelativeTime iso={rule.updatedAt} />

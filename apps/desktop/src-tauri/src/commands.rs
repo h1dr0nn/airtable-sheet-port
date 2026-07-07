@@ -719,9 +719,16 @@ pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSt
         ));
     }
 
+    // Pipe stdin and keep the Child (which owns the write end) alive so the
+    // stdio transport never sees EOF and exits: a desktop-launched GUI process
+    // has no console stdin, so an inherited/null stdin would close immediately
+    // and the sidecar would stop heartbeating. stdout/stderr are discarded.
     let child = std::process::Command::new(&bin)
         .env(ENV_MCP_TRANSPORT, transport)
         .env(ENV_MCP_PORT, port.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|error| format!("Could not start the MCP server: {error}"))?;
     let pid = child.id();

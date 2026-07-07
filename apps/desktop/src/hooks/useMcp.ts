@@ -9,7 +9,10 @@ import { queryKeys } from "../lib/queryKeys.js";
 export function useMcpConfig() {
   return useQuery({
     queryKey: queryKeys.mcpConfig,
-    queryFn: () => ipc.getMcpConfig()
+    queryFn: () => ipc.getMcpConfig(),
+    // Poll so the running state reflects the sidecar heartbeat shortly after a
+    // Start/Stop (the child writes its first heartbeat asynchronously).
+    refetchInterval: 4000
   });
 }
 
