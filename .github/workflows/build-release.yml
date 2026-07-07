@@ -89,7 +89,9 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # No explicit version: pnpm is pinned by the packageManager field in
+          # package.json (pnpm@9.15.4). Setting both here trips
+          # ERR_PNPM_BAD_PM_VERSION on the runner.
           run_install: false
 
       - name: Setup Node.js
