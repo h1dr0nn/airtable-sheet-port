@@ -122,6 +122,13 @@ jobs:
       - name: Install Frontend Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build Workspace Packages
+        # tauri's beforeBuildCommand runs the desktop `tsc -p`, which references
+        # @sheet-port/shared and @sheet-port/ui but does not build them, so a
+        # clean checkout has no dist and hits TS6305. Build every workspace
+        # package (topological order) first so the referenced dist exists.
+        run: pnpm -r build
+
       - name: Prepare Signing Key
         shell: bash
         run: |
