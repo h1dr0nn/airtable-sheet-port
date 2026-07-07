@@ -149,11 +149,13 @@ type AppSettings = {
   autoApproveWrites: boolean;                 // meta key 'auto_approve_writes' === '1'
   fontScale: "small" | "normal" | "large";    // meta key 'ui_font_scale', default 'normal'
   fontFamily: "classic" | "modern" | "system"; // meta key 'ui_font_family', default 'modern'
+  language: "en" | "vi";                       // meta key 'ui_language', default 'en'
 };
 ```
 
-`fontScale` / `fontFamily` are appearance preferences the frontend applies to
-the UI. Absent (or out-of-contract) meta values read back as their defaults.
+`fontScale` / `fontFamily` / `language` are appearance preferences the frontend
+applies to the UI. Absent (or out-of-contract) meta values read back as their
+defaults.
 
 ### `set_auto_approve(enabled: boolean) -> void`
 
@@ -175,12 +177,19 @@ Persists `ui_font_family`. Rejects any other value. Audit event
 (`actor='user'`, `action='settings_updated'`, metadata
 `{key:'ui_font_family', value}`).
 
+### `set_language(language: "en" | "vi") -> void`
+
+Persists `ui_language`. Rejects any other value with a clear error; an
+out-of-contract stored value reads back as the default (`'en'`). Audit event
+(`actor='user'`, `action='settings_updated'`, metadata
+`{key:'ui_language', value}`).
+
 ### `reset_settings() -> void`
 
 Resets app-managed preferences to their defaults: deletes the
-`auto_approve_writes`, `ui_font_scale`, and `ui_font_family` meta keys.
-Prefs-only - does NOT touch Google tokens, the client id/secret, permission
-rules, sources, pending changes, or the audit log. Audit event
+`auto_approve_writes`, `ui_font_scale`, `ui_font_family`, and `ui_language` meta
+keys. Prefs-only - does NOT touch Google tokens, the client id/secret,
+permission rules, sources, pending changes, or the audit log. Audit event
 (`actor='user'`, `action='settings_reset'`).
 
 ## MCP transport

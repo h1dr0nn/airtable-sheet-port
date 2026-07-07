@@ -19,6 +19,8 @@ import {
   useGoogleDisconnect
 } from "../hooks/useGoogleConfig.js";
 import { useSources } from "../hooks/useSources.js";
+import { useTranslation } from "../i18n/useTranslation.js";
+import type { TranslationKey } from "../i18n/translations.js";
 import type { GoogleAccount } from "../lib/ipc.js";
 import type { ScreenId } from "../lib/nav.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
@@ -30,10 +32,10 @@ const STATUS_VARIANTS: Record<SourceStatus, BadgeVariant> = {
   error: "danger"
 };
 
-const STATUS_LABELS: Record<SourceStatus, string> = {
-  connected: "Connected",
-  placeholder: "Placeholder",
-  error: "Error"
+const STATUS_LABEL_KEYS: Record<SourceStatus, TranslationKey> = {
+  connected: "sources.statusConnected",
+  placeholder: "sources.statusPlaceholder",
+  error: "sources.statusError"
 };
 
 type SourceCardShellProps = {
@@ -59,13 +61,14 @@ function SourceCardShell({ overline, badge, children, footer }: SourceCardShellP
 /** One connected Google account: its email plus a confirmed Disconnect. */
 function GoogleAccountCard({ account }: { account: GoogleAccount }) {
   const disconnect = useGoogleDisconnect();
+  const { t } = useTranslation();
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   return (
     <>
       <SourceCardShell
         overline="google_sheets"
-        badge={<Badge variant="success">Connected</Badge>}
+        badge={<Badge variant="success">{t("common.connected")}</Badge>}
         footer={
           <Tooltip>
             <TooltipTrigger asChild>
@@ -75,24 +78,24 @@ function GoogleAccountCard({ account }: { account: GoogleAccount }) {
                 disabled={disconnect.isPending}
                 onClick={() => setIsConfirmOpen(true)}
               >
-                Disconnect
+                {t("sources.disconnect")}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Remove this account and its stored token</TooltipContent>
+            <TooltipContent>{t("sources.disconnectTooltip")}</TooltipContent>
           </Tooltip>
         }
       >
-        <p className="text-[15px] font-semibold text-ink">Google Sheets</p>
-        <p className="mt-1 text-[13px] leading-5 text-ink-muted">
-          Linked to <span className="font-mono text-[12.5px] text-ink">{account.email}</span>
+        <p className="text-[15px] font-semibold text-ink">{t("sources.googleSheets")}</p>
+        <p className="mt-1 font-mono text-[12.5px] leading-5 text-ink-muted">
+          {t("sources.linkedTo", { email: account.email })}
         </p>
       </SourceCardShell>
       <ConfirmDialog
         open={isConfirmOpen}
         onOpenChange={setIsConfirmOpen}
-        title="Disconnect Google Account?"
-        description="Agents lose access to this account's spreadsheets and the stored token is removed from the OS keychain. You can reconnect at any time."
-        confirmLabel="Disconnect"
+        title={t("sources.disconnectTitle")}
+        description={t("sources.disconnectDescription")}
+        confirmLabel={t("sources.disconnect")}
         isPending={disconnect.isPending}
         onConfirm={() =>
           disconnect.mutate(account.sourceId, { onSettled: () => setIsConfirmOpen(false) })
@@ -107,6 +110,7 @@ function GoogleAccountCard({ account }: { account: GoogleAccount }) {
 function AddGoogleAccountCard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { data: config } = useGoogleConfig();
   const connect = useGoogleConnect();
+  const { t } = useTranslation();
 
   const hasClientId = (config?.clientId ?? null) !== null;
   const hasClientSecret = config?.hasClientSecret ?? false;
@@ -133,12 +137,12 @@ function AddGoogleAccountCard({ onNavigate }: { onNavigate: (screen: ScreenId) =
         <Plus size={20} aria-hidden />
       )}
       <span className="text-[13px] font-medium">
-        {isBusy ? "Connecting..." : "Add Google Account"}
+        {isBusy ? t("sources.connecting") : t("sources.addGoogleAccount")}
       </span>
       <span className="max-w-56 text-[12px] leading-4">
         {isBusy
-          ? "Finish signing in with Google in your browser"
-          : "Link another Google account so agents can reach more spreadsheets"}
+          ? t("sources.finishSignIn")
+          : t("sources.addGoogleAccountHint")}
       </span>
     </button>
   );
@@ -156,8 +160,8 @@ function AddGoogleAccountCard({ onNavigate }: { onNavigate: (screen: ScreenId) =
         </TooltipTrigger>
         <TooltipContent>
           {hasClientId
-            ? "Save the OAuth client secret in Settings first"
-            : "Set the OAuth client ID in Settings first"}
+            ? t("sources.saveSecretFirst")
+            : t("sources.setClientIdFirst")}
         </TooltipContent>
       </Tooltip>
       <button
@@ -168,17 +172,18 @@ function AddGoogleAccountCard({ onNavigate }: { onNavigate: (screen: ScreenId) =
           FOCUS_RING
         )}
       >
-        Configure Google in Settings
+        {t("sources.configureGoogle")}
       </button>
     </div>
   );
 }
 
 function ProviderCard() {
+  const { t } = useTranslation();
   return (
     <SourceCardShell
       overline="provider"
-      badge={<Badge variant="muted">Coming Soon</Badge>}
+      badge={<Badge variant="muted">{t("sources.comingSoon")}</Badge>}
       footer={
         <>
           <Tooltip>
@@ -186,19 +191,19 @@ function ProviderCard() {
               {/* Span wrapper so the tooltip still fires over a disabled button. */}
               <span className="inline-flex">
                 <Button variant="outline" size="sm" disabled>
-                  Connect
+                  {t("sources.connect")}
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>Available once the connector ships</TooltipContent>
+            <TooltipContent>{t("sources.connectTooltip")}</TooltipContent>
           </Tooltip>
-          <span className="text-[12px] text-ink-muted">Not available yet</span>
+          <span className="text-[12px] text-ink-muted">{t("sources.notAvailableYet")}</span>
         </>
       }
     >
-      <p className="text-[15px] font-semibold text-ink">Additional Provider</p>
+      <p className="text-[15px] font-semibold text-ink">{t("sources.additionalProvider")}</p>
       <p className="mt-1 text-[13px] leading-5 text-ink-muted">
-        A second table provider lands here once its connector ships
+        {t("sources.additionalProviderHint")}
       </p>
     </SourceCardShell>
   );
@@ -206,28 +211,31 @@ function ProviderCard() {
 
 /** Any already-persisted source without dedicated connect UI (e.g. mock). */
 function GenericSourceCard({ source }: { source: DataSource }) {
+  const { t } = useTranslation();
   const status = source.status ?? "placeholder";
+  const statusLabel = t(STATUS_LABEL_KEYS[status]);
   return (
     <SourceCardShell
       overline={source.kind}
-      badge={<Badge variant={STATUS_VARIANTS[status]}>{STATUS_LABELS[status]}</Badge>}
+      badge={<Badge variant={STATUS_VARIANTS[status]}>{statusLabel}</Badge>}
       footer={
         <Button variant="secondary" size="sm" disabled>
-          {STATUS_LABELS[status]}
+          {statusLabel}
         </Button>
       }
     >
       <p className="text-[15px] font-semibold text-ink">{source.name}</p>
       <p className="mt-1 text-[13px] leading-5 text-ink-muted">
         {status === "connected"
-          ? "Available to agents through permission rules"
-          : "Connector scaffolded; authentication is not wired up yet"}
+          ? t("sources.genericConnected")
+          : t("sources.genericPlaceholder")}
       </p>
     </SourceCardShell>
   );
 }
 
 export function DataSources({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
+  const { t } = useTranslation();
   const { data: sources, isPending: isSourcesPending } = useSources();
   const { data: accounts, isPending: isAccountsPending } = useGoogleAccounts();
   const isPending = isSourcesPending || isAccountsPending;
@@ -240,8 +248,8 @@ export function DataSources({ onNavigate }: { onNavigate: (screen: ScreenId) => 
   return (
     <>
       <ScreenHeader
-        title="Data Sources"
-        description="Connect table providers here; agents only ever see what permission rules allow"
+        title={t("screen.sources.title")}
+        description={t("screen.sources.description")}
       />
       {isPending ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

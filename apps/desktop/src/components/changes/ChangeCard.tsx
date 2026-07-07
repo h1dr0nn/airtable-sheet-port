@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  cn,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -8,6 +9,9 @@ import {
 } from "@sheet-port/ui";
 import type { ChangeStatus, ChangeType, PendingChange } from "@sheet-port/shared";
 import { useApproveChange, useRejectChange } from "../../hooks/useChanges.js";
+import { useTranslation } from "../../i18n/useTranslation.js";
+import type { TranslationKey } from "../../i18n/translations.js";
+import { formatRelativeTime } from "../../lib/format.js";
 import { RelativeTime } from "../RelativeTime.js";
 import { DiffViewer } from "./DiffViewer.js";
 
@@ -20,11 +24,11 @@ const STATUS_VARIANTS: Record<ChangeStatus, BadgeVariant> = {
   rejected: "danger"
 };
 
-const STATUS_LABELS: Record<ChangeStatus, string> = {
-  pending: "Pending",
-  approved: "Approved",
-  committed: "Committed",
-  rejected: "Rejected"
+const STATUS_LABEL_KEYS: Record<ChangeStatus, TranslationKey> = {
+  pending: "changes.statusPending",
+  approved: "changes.statusApproved",
+  committed: "changes.statusCommitted",
+  rejected: "changes.statusRejected"
 };
 
 const TYPE_VARIANTS: Record<ChangeType, BadgeVariant> = {
@@ -34,35 +38,37 @@ const TYPE_VARIANTS: Record<ChangeType, BadgeVariant> = {
 };
 
 function ChangeOutcome({ change }: { change: PendingChange }) {
+  const { t } = useTranslation();
   const baseClass = "text-[12.5px] text-ink-muted";
   if (change.status === "committed" && change.committedAt) {
+    const time = formatRelativeTime(change.committedAt);
     return (
       <p className={baseClass}>
-        Committed <RelativeTime iso={change.committedAt} className="text-ink" />
-        {change.decidedBy ? ` by ${change.decidedBy}` : null}
+        {change.decidedBy
+          ? t("changes.committedBy", { time, who: change.decidedBy })
+          : t("changes.committed", { time })}
       </p>
     );
   }
   if (change.status === "rejected" && change.decidedAt) {
     return (
-      <p className={baseClass}>
-        <span className="font-medium text-danger">Rejected</span>{" "}
-        <RelativeTime iso={change.decidedAt} className="text-danger" />
+      <p className={cn(baseClass, "font-medium text-danger")}>
+        {t("changes.rejected", { time: formatRelativeTime(change.decidedAt) })}
       </p>
     );
   }
   if (change.status === "approved" && change.decidedAt) {
     return (
       <p className={baseClass}>
-        Approved <RelativeTime iso={change.decidedAt} className="text-ink" /> · waiting for the agent
-        to commit
+        {t("changes.approvedWaiting", { time: formatRelativeTime(change.decidedAt) })}
       </p>
     );
   }
-  return <p className={baseClass}>Auto-commit · no confirmation required by policy</p>;
+  return <p className={baseClass}>{t("changes.autoCommit")}</p>;
 }
 
 export function ChangeCard({ change }: { change: PendingChange }) {
+  const { t } = useTranslation();
   const approve = useApproveChange();
   const reject = useRejectChange();
   const isDeciding = approve.isPending || reject.isPending;
@@ -82,15 +88,15 @@ export function ChangeCard({ change }: { change: PendingChange }) {
           <Tooltip>
             <TooltipTrigger asChild>
               <span tabIndex={0}>
-                <Badge variant="warning">Needs Confirmation</Badge>
+                <Badge variant="warning">{t("changes.needsConfirmation")}</Badge>
               </span>
             </TooltipTrigger>
-            <TooltipContent>Policy requires user confirmation before commit</TooltipContent>
+            <TooltipContent>{t("changes.needsConfirmationTooltip")}</TooltipContent>
           </Tooltip>
         ) : null}
         <span className="ml-auto flex items-center gap-2.5">
           <RelativeTime iso={change.createdAt} className="font-mono text-[11px] text-ink-muted" />
-          <Badge variant={STATUS_VARIANTS[change.status]}>{STATUS_LABELS[change.status]}</Badge>
+          <Badge variant={STATUS_VARIANTS[change.status]}>{t(STATUS_LABEL_KEYS[change.status])}</Badge>
         </span>
       </header>
 
@@ -101,7 +107,7 @@ export function ChangeCard({ change }: { change: PendingChange }) {
       <footer className="flex items-center justify-between gap-3 border-t border-edge px-5 py-3">
         {needsDecision ? (
           <>
-            <p className="text-[13px] font-medium text-warning">Awaiting your decision</p>
+            <p className="text-[13px] font-medium text-warning">{t("changes.awaitingDecision")}</p>
             <div className="flex items-center gap-2">
               <Button
                 variant="destructive"
@@ -109,10 +115,10 @@ export function ChangeCard({ change }: { change: PendingChange }) {
                 disabled={isDeciding}
                 onClick={() => reject.mutate(change.id)}
               >
-                {reject.isPending ? "Rejecting..." : "Reject"}
+                {reject.isPending ? t("changes.rejecting") : t("changes.reject")}
               </Button>
               <Button size="sm" disabled={isDeciding} onClick={() => approve.mutate(change.id)}>
-                {approve.isPending ? "Approving..." : "Approve"}
+                {approve.isPending ? t("changes.approving") : t("changes.approve")}
               </Button>
             </div>
           </>

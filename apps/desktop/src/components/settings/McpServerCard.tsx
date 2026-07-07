@@ -22,28 +22,32 @@ import {
   useStopMcpServer
 } from "../../hooks/useMcp.js";
 import type { McpTransport } from "../../lib/ipc.js";
+import { useTranslation } from "../../i18n/useTranslation.js";
+import type { TranslationKey } from "../../i18n/translations.js";
 import { MCP_PORT_MAX, MCP_PORT_MIN, buildMcpHttpUrl } from "../../lib/constants.js";
 import { CopyButton } from "../CopyButton.js";
 import { SegmentedControl, type SegmentedOption } from "../SegmentedControl.js";
 
-const TRANSPORT_OPTIONS: ReadonlyArray<SegmentedOption<McpTransport>> = [
-  { value: "stdio", label: "Stdio" },
-  { value: "http", label: "Local HTTP" }
-];
+type PortValidation =
+  | { port: number }
+  | { errorKey: TranslationKey; params?: Record<string, number> };
 
-/** Validates the port draft against the backend bounds. Returns an error string
+/** Validates the port draft against the backend bounds. Returns an error key
  * when invalid so the field can explain why Save stays disabled. */
-function validatePort(draft: string): { port: number } | { error: string } {
+function validatePort(draft: string): PortValidation {
   const trimmed = draft.trim();
   if (trimmed === "") {
-    return { error: "Enter a port" };
+    return { errorKey: "settings.mcpServer.enterPort" };
   }
   const port = Number(trimmed);
   if (!Number.isInteger(port)) {
-    return { error: "Port must be a whole number" };
+    return { errorKey: "settings.mcpServer.portWholeNumber" };
   }
   if (port < MCP_PORT_MIN || port > MCP_PORT_MAX) {
-    return { error: `Port must be between ${MCP_PORT_MIN} and ${MCP_PORT_MAX}` };
+    return {
+      errorKey: "settings.mcpServer.portRange",
+      params: { min: MCP_PORT_MIN, max: MCP_PORT_MAX }
+    };
   }
   return { port };
 }
@@ -55,6 +59,7 @@ type PortFieldProps = {
 /** Port input shown only for Local HTTP; dirty-checked against the saved port. */
 function PortField({ savedPort }: PortFieldProps) {
   const setPort = useSetMcpPort();
+  const { t } = useTranslation();
   // null draft = "not edited yet"; the input then mirrors the saved port.
   const [draft, setDraft] = useState<string | null>(null);
 
@@ -65,9 +70,9 @@ function PortField({ savedPort }: PortFieldProps) {
   const canSave = isDirty && !setPort.isPending;
 
   const disabledReason = !isValid
-    ? result.error
+    ? t(result.errorKey, result.params)
     : !isDirty
-      ? "No changes to save"
+      ? t("common.noChangesToSave")
       : "";
 
   const save = () => {
@@ -79,14 +84,14 @@ function PortField({ savedPort }: PortFieldProps) {
 
   const saveButton = (
     <Button size="sm" disabled={!canSave} onClick={save}>
-      {setPort.isPending ? "Saving..." : "Save"}
+      {setPort.isPending ? t("common.saving") : t("common.save")}
     </Button>
   );
 
   return (
     <div className="space-y-1.5">
       <label className="text-[12px] font-medium text-ink-muted" htmlFor="mcp-port">
-        HTTP Port
+        {t("settings.mcpServer.httpPort")}
       </label>
       <div className="flex items-center gap-2">
         <Input
@@ -113,7 +118,7 @@ function PortField({ savedPort }: PortFieldProps) {
         )}
       </div>
       <p className="text-[12px] leading-4 text-ink-muted">
-        Loopback port for the local HTTP endpoint. Range {MCP_PORT_MIN}-{MCP_PORT_MAX}.
+        {t("settings.mcpServer.httpPortHint", { min: MCP_PORT_MIN, max: MCP_PORT_MAX })}
       </p>
     </div>
   );
@@ -125,16 +130,17 @@ function PortField({ savedPort }: PortFieldProps) {
 function ServerControl({ isRunning, isHttp }: { isRunning: boolean; isHttp: boolean }) {
   const start = useStartMcpServer();
   const stop = useStopMcpServer();
+  const { t } = useTranslation();
   const isBusy = start.isPending || stop.isPending;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-edge pt-4">
       <div className="min-w-0">
-        <p className="text-[13px] font-medium text-ink">Server Process</p>
+        <p className="text-[13px] font-medium text-ink">{t("settings.mcpServer.serverProcess")}</p>
         <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">
           {isHttp
-            ? "Runs the shared HTTP endpoint as a desktop-managed process."
-            : "MCP clients usually launch their own instance; this runs a local managed one."}
+            ? t("settings.mcpServer.serverProcessHttp")
+            : t("settings.mcpServer.serverProcessStdio")}
         </p>
       </div>
       {isRunning ? (
@@ -147,10 +153,10 @@ function ServerControl({ isRunning, isHttp }: { isRunning: boolean; isHttp: bool
           {stop.isPending ? (
             <>
               <Loader2 size={14} aria-hidden className="animate-spin" />
-              Stopping...
+              {t("settings.mcpServer.stopping")}
             </>
           ) : (
-            "Stop"
+            t("settings.mcpServer.stop")
           )}
         </Button>
       ) : (
@@ -158,10 +164,10 @@ function ServerControl({ isRunning, isHttp }: { isRunning: boolean; isHttp: bool
           {start.isPending ? (
             <>
               <Loader2 size={14} aria-hidden className="animate-spin" />
-              Starting...
+              {t("settings.mcpServer.starting")}
             </>
           ) : (
-            "Start"
+            t("settings.mcpServer.start")
           )}
         </Button>
       )}
@@ -174,6 +180,11 @@ function ServerControl({ isRunning, isHttp }: { isRunning: boolean; isHttp: bool
 export function McpServerCard() {
   const { data: config, isPending } = useMcpConfig();
   const setTransport = useSetMcpTransport();
+  const { t } = useTranslation();
+  const transportOptions: ReadonlyArray<SegmentedOption<McpTransport>> = [
+    { value: "stdio", label: t("settings.mcpServer.transportStdio") },
+    { value: "http", label: t("settings.mcpServer.transportHttp") }
+  ];
 
   const isRunning = config?.running ?? false;
   const transport = config?.transport ?? "stdio";
@@ -183,12 +194,12 @@ export function McpServerCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>MCP Server</CardTitle>
+        <CardTitle>{t("settings.mcpServer.title")}</CardTitle>
         {isPending || !config ? null : (
           <div className="flex items-center gap-1.5">
             <StatusDot status={isRunning ? "live" : "idle"} />
             <Badge variant={isRunning ? "success" : "muted"}>
-              {isRunning ? "Running" : "Offline"}
+              {isRunning ? t("common.running") : t("common.offline")}
             </Badge>
           </div>
         )}
@@ -200,16 +211,16 @@ export function McpServerCard() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
               <div className="min-w-0">
-                <p className="text-[13px] font-medium text-ink">Transport</p>
+                <p className="text-[13px] font-medium text-ink">{t("settings.mcpServer.transport")}</p>
                 <p className="mt-0.5 text-[12.5px] leading-4 text-ink-muted">
-                  Stdio spawns the sidecar per client; Local HTTP serves one shared endpoint.
+                  {t("settings.mcpServer.transportDescription")}
                 </p>
               </div>
               <SegmentedControl
-                options={TRANSPORT_OPTIONS}
+                options={transportOptions}
                 value={transport}
                 onChange={(next) => setTransport.mutate(next)}
-                ariaLabel="MCP Transport"
+                ariaLabel={t("settings.mcpServer.transportAria")}
               />
             </div>
 
@@ -219,15 +230,15 @@ export function McpServerCard() {
 
             {isHttp ? (
               <div className="space-y-1.5 border-t border-edge pt-4">
-                <p className="text-[12px] font-medium text-ink-muted">Endpoint URL</p>
+                <p className="text-[12px] font-medium text-ink-muted">{t("settings.mcpServer.endpointUrl")}</p>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 truncate rounded-md border border-edge bg-surface px-2.5 py-1.5 font-mono text-[12.5px] text-ink">
                     {buildMcpHttpUrl(port)}
                   </code>
-                  <CopyButton value={buildMcpHttpUrl(port)} label="Copy endpoint URL" />
+                  <CopyButton value={buildMcpHttpUrl(port)} label={t("settings.mcpServer.copyEndpoint")} />
                 </div>
                 <p className="text-[12px] leading-4 text-ink-muted">
-                  Changing the transport or port requires restarting the sidecar to take effect.
+                  {t("settings.mcpServer.restartHint")}
                 </p>
               </div>
             ) : null}

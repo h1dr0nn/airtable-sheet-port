@@ -74,6 +74,7 @@ pub fn run() {
             commands::set_auto_approve,
             commands::set_font_scale,
             commands::set_font_family,
+            commands::set_language,
             commands::set_close_behavior,
             commands::reset_settings,
             commands::get_mcp_config,

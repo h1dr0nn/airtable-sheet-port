@@ -1,5 +1,6 @@
 import { cn } from "@sheet-port/ui";
 import type { PendingChange } from "@sheet-port/shared";
+import { useTranslation } from "../../i18n/useTranslation.js";
 import {
   isFieldChanged,
   parseAppendDiff,
@@ -59,11 +60,12 @@ function AppendDiffTable({ diff }: { diff: AppendDiff }) {
 }
 
 function UpdateEntryTable({ entry }: { entry: UpdateDiffEntry }) {
+  const { t } = useTranslation();
   const fields = Object.keys(entry.after);
   return (
     <div className="overflow-x-auto rounded-lg border border-edge">
       <p className="border-b border-edge bg-surface px-3 py-2 text-[11px] font-medium text-ink-muted">
-        Record <span className="font-mono text-ink">{entry.recordId}</span>
+        {t("changes.recordLabel", { id: entry.recordId })}
       </p>
       <table className="w-full border-collapse">
         <tbody>

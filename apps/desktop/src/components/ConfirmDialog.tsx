@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle
 } from "@sheet-port/ui";
+import { useTranslation } from "../i18n/useTranslation.js";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   isPending = false,
   onConfirm
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -37,10 +39,10 @@ export function ConfirmDialog({
         </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button variant="destructive" onClick={onConfirm} disabled={isPending}>
-            {isPending ? "Working..." : confirmLabel}
+            {isPending ? t("common.working") : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

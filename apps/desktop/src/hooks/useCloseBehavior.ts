@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { ipc, isTauri, type CloseBehavior } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
 
@@ -10,11 +11,12 @@ import { queryKeys } from "../lib/queryKeys.js";
  */
 export function useSetCloseBehavior() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (behavior: CloseBehavior) => ipc.setCloseBehavior(behavior),
     onError: (error: unknown) => {
-      toast.error("Close behavior not updated", { description: getErrorMessage(error) });
+      toast.error(t("toast.closeBehaviorError"), { description: getErrorMessage(error) });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
@@ -37,14 +39,15 @@ export function useAutostartEnabled() {
 /** Toggles launch-at-login (autostart), then refreshes the query. */
 export function useSetAutostartEnabled() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (enabled: boolean) => ipc.setAutostartEnabled(enabled),
     onError: (error: unknown) => {
-      toast.error("Launch at login not updated", { description: getErrorMessage(error) });
+      toast.error(t("toast.launchAtLoginError"), { description: getErrorMessage(error) });
     },
     onSuccess: (_result, enabled) => {
-      toast.success(enabled ? "Launch at login enabled" : "Launch at login disabled");
+      toast.success(enabled ? t("toast.launchAtLoginEnabled") : t("toast.launchAtLoginDisabled"));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.autostart });

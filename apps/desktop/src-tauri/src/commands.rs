@@ -13,7 +13,8 @@ use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
     HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
     META_CLOSE_BEHAVIOR, META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT,
-    META_UI_FONT_FAMILY, META_UI_FONT_SCALE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
+    META_UI_FONT_FAMILY, META_UI_FONT_SCALE, META_UI_LANGUAGE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
+    READ_LIMIT_MIN,
 };
 use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
@@ -251,6 +252,8 @@ pub struct AppSettings {
     pub font_scale: String,
     /// UI font family: "classic" | "modern" | "system" (default "modern").
     pub font_family: String,
+    /// UI language: "en" | "vi" (default "en").
+    pub language: String,
     /// Window close behavior: "ask" | "tray" | "quit" (default "ask").
     /// Autostart is intentionally NOT here; it lives in the OS launcher, so the
     /// UI reads it via `get_autostart_enabled`.
@@ -269,13 +272,33 @@ pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
         == Some(META_FLAG_ON);
     let font_scale = db::get_ui_font_scale(&conn).map_err(|error| error.to_string())?;
     let font_family = db::get_ui_font_family(&conn).map_err(|error| error.to_string())?;
+    let language = db::get_language(&conn).map_err(|error| error.to_string())?;
     let close_behavior = db::get_close_behavior(&conn).map_err(|error| error.to_string())?;
     Ok(AppSettings {
         auto_approve_writes,
         font_scale,
         font_family,
+        language,
         close_behavior,
     })
+}
+
+/// Sets the UI language ("en" | "vi"); rejects any other value. Audit event
+/// `settings_updated` with the persisted value.
+#[tauri::command]
+pub fn set_language(state: Db<'_>, language: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    db::set_language(&conn, &language).map_err(|error| error.to_string())?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        SETTINGS_UPDATED_ACTION,
+        None,
+        None,
+        Some(&json!({ "key": META_UI_LANGUAGE, "value": language })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Sets the UI font scale ("small" | "normal" | "large"); rejects any other
@@ -365,6 +388,7 @@ pub fn reset_settings(state: Db<'_>) -> Result<(), String> {
     db::delete_meta(&conn, META_AUTO_APPROVE_WRITES).map_err(|error| error.to_string())?;
     db::delete_meta(&conn, META_UI_FONT_SCALE).map_err(|error| error.to_string())?;
     db::delete_meta(&conn, META_UI_FONT_FAMILY).map_err(|error| error.to_string())?;
+    db::delete_meta(&conn, META_UI_LANGUAGE).map_err(|error| error.to_string())?;
     audit::record(
         &conn,
         AuditActor::User,

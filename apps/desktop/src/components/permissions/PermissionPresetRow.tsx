@@ -9,6 +9,7 @@ import {
 import type { DataSource } from "@sheet-port/shared";
 import { useSavePermissionRule } from "../../hooks/usePermissions.js";
 import { useSetAutoApprove } from "../../hooks/useSettings.js";
+import { useTranslation } from "../../i18n/useTranslation.js";
 import type { PermissionRuleRow, SavePermissionRule } from "../../lib/ipc.js";
 import {
   PERMISSION_PRESETS,
@@ -54,6 +55,7 @@ type PermissionPresetRowProps = {
 export function PermissionPresetRow({ source, rule, autoApproveWrites }: PermissionPresetRowProps) {
   const save = useSavePermissionRule();
   const setAutoApprove = useSetAutoApprove();
+  const { t } = useTranslation();
   const [pendingBypass, setPendingBypass] = useState<PermissionPresetId | null>(null);
 
   const activePreset = derivePreset(rule, autoApproveWrites);
@@ -85,7 +87,7 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
           <span className="block truncate text-[13px] font-medium text-ink">{source.name}</span>
           {rule ? (
             <p className="mt-0.5 text-[12px] text-ink-muted">
-              Updated <RelativeTime iso={rule.updatedAt} />
+              {t("settings.permissions.updatedPrefix")} <RelativeTime iso={rule.updatedAt} />
             </p>
           ) : null}
         </div>
@@ -93,14 +95,14 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
         <Select value={activePreset ?? undefined} onValueChange={handleChange} disabled={isBusy}>
           <SelectTrigger
             className="w-44 shrink-0"
-            aria-label={`Permission preset for ${source.name}`}
+            aria-label={t("settings.permissions.presetAria", { name: source.name })}
           >
-            <SelectValue placeholder="Custom" />
+            <SelectValue placeholder={t("settings.permissions.custom")} />
           </SelectTrigger>
           <SelectContent>
             {PERMISSION_PRESETS.map((preset) => (
               <SelectItem key={preset.id} value={preset.id}>
-                {preset.label}
+                {t(preset.labelKey)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -109,8 +111,8 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
 
       <p className="mt-2 text-[12px] leading-4 text-ink-muted">
         {activePreset
-          ? getPreset(activePreset).description
-          : "This source uses a custom rule. Pick a preset to normalize it."}
+          ? t(getPreset(activePreset).descriptionKey)
+          : t("settings.permissions.customHint")}
       </p>
 
       <ConfirmDialog
@@ -120,9 +122,9 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
             setPendingBypass(null);
           }
         }}
-        title="Bypass Permission?"
-        description="Agents get full access including deletes, with no approval gate, and global auto-approve is turned on. Only choose this if you fully trust every connected agent."
-        confirmLabel="Enable Bypass"
+        title={t("settings.permissions.bypassTitle")}
+        description={t("settings.permissions.bypassDescription")}
+        confirmLabel={t("settings.permissions.enableBypass")}
         isPending={isBusy}
         onConfirm={() => {
           if (pendingBypass) {

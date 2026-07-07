@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { ipc } from "../lib/ipc.js";
 import type { McpTransport } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
@@ -32,14 +33,15 @@ function invalidateMcpConfig(queryClient: QueryClient): void {
 
 export function useSetMcpTransport() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (transport: McpTransport) => ipc.setMcpTransport(transport),
     onError: (error: unknown) => {
-      toast.error("Transport not updated", { description: getErrorMessage(error) });
+      toast.error(t("toast.transportError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("MCP transport saved", { description: "Restart the sidecar to apply" });
+      toast.success(t("toast.transportSaved"), { description: t("toast.restartToApply") });
     },
     onSettled: () => {
       invalidateMcpConfig(queryClient);
@@ -49,14 +51,15 @@ export function useSetMcpTransport() {
 
 export function useSetMcpPort() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (port: number) => ipc.setMcpPort(port),
     onError: (error: unknown) => {
-      toast.error("Port not saved", { description: getErrorMessage(error) });
+      toast.error(t("toast.portError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("MCP port saved", { description: "Restart the sidecar to apply" });
+      toast.success(t("toast.portSaved"), { description: t("toast.restartToApply") });
     },
     onSettled: () => {
       invalidateMcpConfig(queryClient);
@@ -66,14 +69,15 @@ export function useSetMcpPort() {
 
 export function useConfigureMcpClient() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (id: string) => ipc.mcpConfigureClient(id),
     onError: (error: unknown) => {
-      toast.error("Client not configured", { description: getErrorMessage(error) });
+      toast.error(t("toast.clientConfigError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("MCP client configured");
+      toast.success(t("toast.clientConfigured"));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.mcpClients });
@@ -83,14 +87,15 @@ export function useConfigureMcpClient() {
 
 export function useUnregisterMcpClient() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (id: string) => ipc.mcpUnregisterClient(id),
     onError: (error: unknown) => {
-      toast.error("Client not unregistered", { description: getErrorMessage(error) });
+      toast.error(t("toast.clientUnregisterError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("MCP client unregistered");
+      toast.success(t("toast.clientUnregistered"));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.mcpClients });
@@ -101,14 +106,15 @@ export function useUnregisterMcpClient() {
 /** Starts the desktop-managed HTTP sidecar, then refreshes the running state. */
 export function useStartMcpServer() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: () => ipc.mcpServerStart(),
     onError: (error: unknown) => {
-      toast.error("MCP server not started", { description: getErrorMessage(error) });
+      toast.error(t("toast.serverStartError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("MCP server started");
+      toast.success(t("toast.serverStarted"));
     },
     onSettled: () => {
       invalidateMcpConfig(queryClient);
@@ -119,14 +125,15 @@ export function useStartMcpServer() {
 /** Stops the desktop-managed sidecar, then refreshes the running state. */
 export function useStopMcpServer() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: () => ipc.mcpServerStop(),
     onError: (error: unknown) => {
-      toast.error("MCP server not stopped", { description: getErrorMessage(error) });
+      toast.error(t("toast.serverStopError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("MCP server stopped");
+      toast.success(t("toast.serverStopped"));
     },
     onSettled: () => {
       invalidateMcpConfig(queryClient);
@@ -136,14 +143,15 @@ export function useStopMcpServer() {
 
 export function useConfigureAllMcpClients() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: () => ipc.mcpConfigureAll(),
     onError: (error: unknown) => {
-      toast.error("Clients not configured", { description: getErrorMessage(error) });
+      toast.error(t("toast.clientsConfigError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("Detected MCP clients configured");
+      toast.success(t("toast.clientsConfigured"));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.mcpClients });

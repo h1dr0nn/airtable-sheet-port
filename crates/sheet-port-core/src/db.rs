@@ -12,8 +12,9 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::constants::{
     CLOSE_BEHAVIOR_DEFAULT, CLOSE_BEHAVIOR_VALUES, MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN,
     MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_CLOSE_BEHAVIOR, META_MCP_PORT,
-    META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE, UI_FONT_FAMILY_DEFAULT,
-    UI_FONT_FAMILY_VALUES, UI_FONT_SCALE_DEFAULT, UI_FONT_SCALE_VALUES,
+    META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE, META_UI_LANGUAGE,
+    UI_FONT_FAMILY_DEFAULT, UI_FONT_FAMILY_VALUES, UI_FONT_SCALE_DEFAULT, UI_FONT_SCALE_VALUES,
+    UI_LANGUAGE_DEFAULT, UI_LANGUAGE_VALUES,
 };
 use crate::error::{db_error, CoreError};
 
@@ -216,6 +217,23 @@ pub fn set_ui_font_family(conn: &Connection, value: &str) -> Result<(), CoreErro
     set_meta(conn, META_UI_FONT_FAMILY, validated)
 }
 
+/// The stored UI language ("en" | "vi"), or the default ("en") when the key is
+/// absent or holds an out-of-contract value.
+pub fn get_language(conn: &Connection) -> Result<String, CoreError> {
+    read_enum_meta(
+        conn,
+        META_UI_LANGUAGE,
+        &UI_LANGUAGE_VALUES,
+        UI_LANGUAGE_DEFAULT,
+    )
+}
+
+/// Persists the UI language after validating it against the allow-list.
+pub fn set_language(conn: &Connection, value: &str) -> Result<(), CoreError> {
+    let validated = validate_enum(value, &UI_LANGUAGE_VALUES, "ui_language")?;
+    set_meta(conn, META_UI_LANGUAGE, validated)
+}
+
 /// The stored window close behavior ("ask" | "tray" | "quit"), or the default
 /// ("ask") when the key is absent or holds an out-of-contract value.
 pub fn get_close_behavior(conn: &Connection) -> Result<String, CoreError> {
@@ -396,7 +414,7 @@ mod tests {
     use super::*;
     use crate::constants::{
         MCP_PORT_DEFAULT, MCP_PORT_MIN, META_CLOSE_BEHAVIOR, META_GOOGLE_CLIENT_ID,
-        META_MCP_TRANSPORT,
+        META_MCP_TRANSPORT, META_UI_LANGUAGE,
     };
 
     fn count(conn: &Connection, table: &str) -> i64 {
@@ -607,6 +625,27 @@ INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALU
         // default so the UI never gets an out-of-contract token.
         set_meta(&conn, META_CLOSE_BEHAVIOR, "explode").expect("force junk");
         assert_eq!(get_close_behavior(&conn).expect("get"), "ask");
+    }
+
+    #[test]
+    fn language_defaults_and_round_trips_valid_values() {
+        let conn = test_support::open_temp_db();
+        assert_eq!(get_language(&conn).expect("default"), "en");
+
+        set_language(&conn, "vi").expect("set vi");
+        assert_eq!(get_language(&conn).expect("get"), "vi");
+        set_language(&conn, "en").expect("set en");
+        assert_eq!(get_language(&conn).expect("get"), "en");
+    }
+
+    #[test]
+    fn language_rejects_unknown_values_and_ignores_stored_junk() {
+        let conn = test_support::open_temp_db();
+        assert!(set_language(&conn, "fr").is_err());
+        // A value written outside the validated setter still reads back as the
+        // default so the UI never gets an out-of-contract token.
+        set_meta(&conn, META_UI_LANGUAGE, "fr").expect("force junk");
+        assert_eq!(get_language(&conn).expect("get"), "en");
     }
 
     #[test]

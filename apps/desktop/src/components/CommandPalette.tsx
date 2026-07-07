@@ -11,15 +11,18 @@ import {
 } from "@sheet-port/ui";
 import { useSources } from "../hooks/useSources.js";
 import { useTheme } from "../hooks/useTheme.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { ipc } from "../lib/ipc.js";
 import { NAV, type ScreenId } from "../lib/nav.js";
 import { queryKeys } from "../lib/queryKeys.js";
 import type { ThemeSetting } from "../lib/theme.js";
 
-const THEME_ACTIONS: ReadonlyArray<{ value: ThemeSetting; label: string }> = [
-  { value: "light", label: "Theme: Light" },
-  { value: "dark", label: "Theme: Dark" },
-  { value: "system", label: "Theme: System" }
+import type { TranslationKey } from "../i18n/translations.js";
+
+const THEME_ACTIONS: ReadonlyArray<{ value: ThemeSetting; labelKey: TranslationKey }> = [
+  { value: "light", labelKey: "palette.themeLight" },
+  { value: "dark", labelKey: "palette.themeDark" },
+  { value: "system", labelKey: "palette.themeSystem" }
 ];
 
 /** True when some other modal dialog already owns the screen. Radix mounts
@@ -45,6 +48,7 @@ type CommandPaletteProps = {
  * Opened from the titlebar search button or Ctrl/Cmd+K anywhere. */
 export function CommandPalette({ open, onOpenChange, onNavigate }: CommandPaletteProps) {
   const { setSetting } = useTheme();
+  const { t } = useTranslation();
   const { data: sources } = useSources();
   const sourceList = sources ?? [];
   const tableQueries = useQueries({
@@ -102,24 +106,27 @@ export function CommandPalette({ open, onOpenChange, onNavigate }: CommandPalett
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="Command Palette">
       <Command>
-        <CommandInput placeholder="Type a command or search..." />
+        <CommandInput placeholder={t("palette.placeholder")} />
         <CommandList>
-          <CommandEmpty>No results found</CommandEmpty>
-          <CommandGroup heading="Screens">
-            {NAV.map((item) => (
-              <CommandItem
-                key={item.id}
-                value={`screen-${item.id}`}
-                keywords={[item.label]}
-                onSelect={() => runAndClose(() => onNavigate(item.screen))}
-              >
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                <span className="shrink-0 text-[11px] text-ink-faint">Screen</span>
-              </CommandItem>
-            ))}
+          <CommandEmpty>{t("palette.noResults")}</CommandEmpty>
+          <CommandGroup heading={t("palette.screens")}>
+            {NAV.map((item) => {
+              const label = t(item.labelKey);
+              return (
+                <CommandItem
+                  key={item.id}
+                  value={`screen-${item.id}`}
+                  keywords={[label]}
+                  onSelect={() => runAndClose(() => onNavigate(item.screen))}
+                >
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  <span className="shrink-0 text-[11px] text-ink-faint">{t("palette.screen")}</span>
+                </CommandItem>
+              );
+            })}
           </CommandGroup>
           {tables.length > 0 ? (
-            <CommandGroup heading="Tables">
+            <CommandGroup heading={t("palette.tables")}>
               {tables.map((table) => (
                 <CommandItem
                   key={table.key}
@@ -133,23 +140,26 @@ export function CommandPalette({ open, onOpenChange, onNavigate }: CommandPalett
               ))}
             </CommandGroup>
           ) : null}
-          <CommandGroup heading="Actions">
-            {THEME_ACTIONS.map((action) => (
-              <CommandItem
-                key={action.value}
-                value={`theme-${action.value}`}
-                keywords={[action.label]}
-                onSelect={() => runAndClose(() => setSetting(action.value))}
-              >
-                {action.label}
-              </CommandItem>
-            ))}
+          <CommandGroup heading={t("palette.actions")}>
+            {THEME_ACTIONS.map((action) => {
+              const label = t(action.labelKey);
+              return (
+                <CommandItem
+                  key={action.value}
+                  value={`theme-${action.value}`}
+                  keywords={[label]}
+                  onSelect={() => runAndClose(() => setSetting(action.value))}
+                >
+                  {label}
+                </CommandItem>
+              );
+            })}
             <CommandItem
               value="connect-google-sheets"
-              keywords={["Connect Google Sheets"]}
+              keywords={[t("palette.connectGoogleSheets")]}
               onSelect={() => runAndClose(() => onNavigate("sources"))}
             >
-              Connect Google Sheets
+              {t("palette.connectGoogleSheets")}
             </CommandItem>
           </CommandGroup>
         </CommandList>

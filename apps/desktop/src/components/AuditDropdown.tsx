@@ -11,6 +11,7 @@ import {
 } from "@sheet-port/ui";
 import type { AuditEvent } from "@sheet-port/shared";
 import { useAuditEvents, useClearAuditEvents } from "../hooks/useAuditEvents.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { AUDIT_DROPDOWN_PAGE_SIZE } from "../lib/constants.js";
 import { formatRelativeTime } from "../lib/format.js";
 
@@ -21,6 +22,7 @@ const ACTOR_VARIANTS: Record<AuditEvent["actor"], BadgeVariant> = {
 };
 
 function AuditRow({ event }: { event: AuditEvent }) {
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
   const hasMetadata = event.metadata !== undefined && Object.keys(event.metadata).length > 0;
   const target = [event.sourceId, event.tableId].filter(Boolean).join("/");
@@ -30,7 +32,7 @@ function AuditRow({ event }: { event: AuditEvent }) {
       <div className="flex items-start gap-2.5">
         <button
           type="button"
-          aria-label={isExpanded ? "Collapse metadata" : "Expand metadata"}
+          aria-label={isExpanded ? t("activity.collapseMetadata") : t("activity.expandMetadata")}
           aria-expanded={isExpanded}
           disabled={!hasMetadata}
           onClick={() => setIsExpanded((current) => !current)}
@@ -81,6 +83,7 @@ type AuditDropdownProps = {
  * fixed width, internally scrollable, with offset-based "Load More". */
 export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
   const { data, isPending, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useAuditEvents(AUDIT_DROPDOWN_PAGE_SIZE);
   const clearAudit = useClearAuditEvents();
@@ -122,21 +125,21 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
     <div
       ref={panelRef}
       role="dialog"
-      aria-label="Activity"
+      aria-label={t("activity.title")}
       // Rides the dropdown layer (see --z-dropdown) so activity opened from the
       // titlebar is never occluded by an in-flight toast stack.
       style={{ zIndex: "var(--z-dropdown)" }}
       className="absolute right-2 top-full mt-1 flex max-h-[70vh] w-[380px] flex-col overflow-hidden rounded-lg border border-edge bg-raised shadow-pop motion-safe:animate-scale-in"
     >
       <div className="flex shrink-0 items-center justify-between border-b border-edge px-3 py-2.5">
-        <h2 className="text-[13px] font-semibold text-ink">Activity</h2>
+        <h2 className="text-[13px] font-semibold text-ink">{t("activity.title")}</h2>
         <Button
           variant="ghost"
           size="sm"
           disabled={isEmpty || clearAudit.isPending}
           onClick={() => clearAudit.mutate()}
         >
-          Clear
+          {t("activity.clear")}
         </Button>
       </div>
 
@@ -150,8 +153,8 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
         ) : events.length === 0 ? (
           <div className="p-4">
             <EmptyState
-              title="No Activity Yet"
-              description="Agent activity is recorded here as soon as it happens"
+              title={t("activity.emptyTitle")}
+              description={t("activity.emptyDescription")}
             />
           </div>
         ) : (
@@ -169,7 +172,7 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
                   disabled={isFetchingNextPage}
                   onClick={() => void fetchNextPage()}
                 >
-                  {isFetchingNextPage ? "Loading..." : "Load More"}
+                  {isFetchingNextPage ? t("activity.loading") : t("activity.loadMore")}
                 </Button>
               </div>
             ) : null}

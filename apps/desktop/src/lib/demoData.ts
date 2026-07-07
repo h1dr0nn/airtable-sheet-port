@@ -16,6 +16,7 @@ import type {
   GoogleConfig,
   GoogleConnectResult,
   IpcApi,
+  Language,
   McpClient,
   McpClientState,
   McpConfigView,
@@ -80,6 +81,9 @@ const DEMO_GOOGLE_CLIENT_ID = "000000000000-demo.apps.googleusercontent.com";
 // Default UI font preferences; mirror core::db defaults (normal + modern).
 const DEFAULT_FONT_SCALE: FontScale = "normal";
 const DEFAULT_FONT_FAMILY: FontFamily = "modern";
+
+// Default UI language; mirrors core::db default ("en").
+const DEFAULT_LANGUAGE: Language = "en";
 
 // Default window close behavior; mirrors core::db default ("ask").
 const DEFAULT_CLOSE_BEHAVIOR: CloseBehavior = "ask";
@@ -158,6 +162,8 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   // UI font preferences; mirror the backend defaults, cleared on reset.
   let fontScale: FontScale = DEFAULT_FONT_SCALE;
   let fontFamily: FontFamily = DEFAULT_FONT_FAMILY;
+  // UI language; mirrors the backend default, cleared on reset.
+  let language: Language = DEFAULT_LANGUAGE;
   // Window close behavior; mirrors the backend default, cleared on reset.
   let closeBehavior: CloseBehavior = DEFAULT_CLOSE_BEHAVIOR;
   // Launch-at-login mirror; off by default in the preview.
@@ -434,7 +440,7 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     },
     async getSettings(): Promise<AppSettings> {
       await delay();
-      return { autoApproveWrites, fontScale, fontFamily, closeBehavior };
+      return { autoApproveWrites, fontScale, fontFamily, language, closeBehavior };
     },
     async setAutoApprove(enabled: boolean): Promise<void> {
       await delay();
@@ -461,6 +467,15 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         actor: "user",
         action: "settings_updated",
         metadata: { key: "ui_font_family", family }
+      });
+    },
+    async setLanguage(next: Language): Promise<void> {
+      await delay();
+      language = next;
+      pushAudit({
+        actor: "user",
+        action: "settings_updated",
+        metadata: { key: "ui_language", value: next }
       });
     },
     async setCloseBehavior(behavior: CloseBehavior): Promise<void> {
@@ -501,6 +516,7 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       autoApproveWrites = false;
       fontScale = DEFAULT_FONT_SCALE;
       fontFamily = DEFAULT_FONT_FAMILY;
+      language = DEFAULT_LANGUAGE;
       closeBehavior = DEFAULT_CLOSE_BEHAVIOR;
       pushAudit({ actor: "user", action: "settings_reset" });
     },

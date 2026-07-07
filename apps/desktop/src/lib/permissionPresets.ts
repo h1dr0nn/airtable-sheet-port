@@ -1,4 +1,5 @@
 import type { ConfirmationAction } from "@sheet-port/shared";
+import type { TranslationKey } from "../i18n/translations.js";
 import type { PermissionRuleRow } from "./ipc.js";
 
 /**
@@ -16,8 +17,10 @@ export type PermissionPresetId =
 
 export type PermissionPreset = {
   id: PermissionPresetId;
-  label: string;
-  description: string;
+  /** Translation key for the preset display label. */
+  labelKey: TranslationKey;
+  /** Translation key for the preset description. */
+  descriptionKey: TranslationKey;
   read: boolean;
   write: boolean;
   deleteRecords: boolean;
@@ -38,8 +41,8 @@ const ASK_CONFIRMATIONS: readonly ConfirmationAction[] = [
 export const PERMISSION_PRESETS: readonly PermissionPreset[] = [
   {
     id: "read_only",
-    label: "Read Only",
-    description: "Agents can read records but cannot write, update, or delete.",
+    labelKey: "preset.readOnly.label",
+    descriptionKey: "preset.readOnly.description",
     read: true,
     write: false,
     deleteRecords: false,
@@ -48,8 +51,8 @@ export const PERMISSION_PRESETS: readonly PermissionPreset[] = [
   },
   {
     id: "ask",
-    label: "Ask Permissions",
-    description: "Agents can write, but appends, updates, and deletes wait for your approval.",
+    labelKey: "preset.ask.label",
+    descriptionKey: "preset.ask.description",
     read: true,
     write: true,
     deleteRecords: false,
@@ -58,8 +61,8 @@ export const PERMISSION_PRESETS: readonly PermissionPreset[] = [
   },
   {
     id: "auto_approve",
-    label: "Auto Approve",
-    description: "Agents write without asking. Deletes stay blocked. Enables global auto-approve.",
+    labelKey: "preset.autoApprove.label",
+    descriptionKey: "preset.autoApprove.description",
     read: true,
     write: true,
     deleteRecords: false,
@@ -68,8 +71,8 @@ export const PERMISSION_PRESETS: readonly PermissionPreset[] = [
   },
   {
     id: "bypass",
-    label: "Bypass Permission",
-    description: "Full access including deletes, with no approval gate. Enables global auto-approve.",
+    labelKey: "preset.bypass.label",
+    descriptionKey: "preset.bypass.description",
     read: true,
     write: true,
     deleteRecords: true,

@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Button, toast, Tooltip, TooltipContent, TooltipTrigger } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 
 const COPIED_RESET_MS = 1500;
 
@@ -13,6 +14,7 @@ type CopyButtonProps = {
 };
 
 export function CopyButton({ value, label, children }: CopyButtonProps) {
+  const { t } = useTranslation();
   const [isCopied, setIsCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
 
@@ -25,7 +27,7 @@ export function CopyButton({ value, label, children }: CopyButtonProps) {
       }
       resetTimerRef.current = window.setTimeout(() => setIsCopied(false), COPIED_RESET_MS);
     } catch (error: unknown) {
-      toast.error("Copy failed", { description: getErrorMessage(error) });
+      toast.error(t("copy.failed"), { description: getErrorMessage(error) });
     }
   };
 
@@ -39,10 +41,10 @@ export function CopyButton({ value, label, children }: CopyButtonProps) {
           className="min-w-16 px-2"
           onClick={() => void handleCopy()}
         >
-          {isCopied ? "Copied" : children ?? "Copy"}
+          {isCopied ? t("copy.copied") : children ?? t("copy.copy")}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{isCopied ? "Copied" : "Copy"}</TooltipContent>
+      <TooltipContent>{isCopied ? t("copy.copied") : t("copy.copy")}</TooltipContent>
     </Tooltip>
   );
 }

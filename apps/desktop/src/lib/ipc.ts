@@ -113,6 +113,7 @@ export type GoogleConnectResult = {
 
 export type FontScale = "small" | "normal" | "large";
 export type FontFamily = "classic" | "modern" | "system";
+export type Language = "en" | "vi";
 
 /** What happens when the user clicks the window close button. */
 export type CloseBehavior =
@@ -124,6 +125,7 @@ export type AppSettings = {
   autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1', off by default
   fontScale: FontScale;       // meta key 'ui_font_scale', 'normal' by default
   fontFamily: FontFamily;     // meta key 'ui_font_family', 'modern' by default
+  language: Language;         // meta key 'ui_language', 'en' by default
   closeBehavior: CloseBehavior; // meta key 'close_behavior', 'ask' by default
 };
 
@@ -172,6 +174,8 @@ export interface IpcApi {
   setFontScale(scale: FontScale): Promise<void>;
   /** Persists the UI font-family preference. */
   setFontFamily(family: FontFamily): Promise<void>;
+  /** Persists the UI language preference ("en" | "vi"). */
+  setLanguage(language: Language): Promise<void>;
   /** Persists the window close behavior; "ask" restores the close dialog. */
   setCloseBehavior(behavior: CloseBehavior): Promise<void>;
   /** Hides the main window to the system tray, keeping the app running. */
@@ -235,6 +239,7 @@ const tauriIpc: IpcApi = {
   setAutoApprove: (enabled) => invoke<void>("set_auto_approve", { enabled }),
   setFontScale: (scale) => invoke<void>("set_font_scale", { scale }),
   setFontFamily: (family) => invoke<void>("set_font_family", { family }),
+  setLanguage: (language) => invoke<void>("set_language", { language }),
   setCloseBehavior: (behavior) => invoke<void>("set_close_behavior", { behavior }),
   windowHideToTray: () => invoke<void>("window_hide_to_tray"),
   windowQuit: () => invoke<void>("window_quit"),

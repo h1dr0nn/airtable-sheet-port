@@ -10,6 +10,7 @@ import {
   toast
 } from "@sheet-port/ui";
 import { useUpdate } from "../../hooks/useUpdate.js";
+import { useTranslation } from "../../i18n/useTranslation.js";
 
 /**
  * Ghost "Check for Updates" control for the About card header. Manual checks
@@ -22,6 +23,7 @@ import { useUpdate } from "../../hooks/useUpdate.js";
  */
 export function CheckForUpdatesButton() {
   const update = useUpdate();
+  const { t } = useTranslation();
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   // check() returns the outcome synchronously, so we branch on the result
@@ -34,10 +36,10 @@ export function CheckForUpdatesButton() {
           setIsConfirmOpen(true);
           break;
         case "up-to-date":
-          toast.success("You're on the latest version");
+          toast.success(t("settings.about.upToDate"));
           break;
         case "error":
-          toast.error("Update check failed", { description: result.message });
+          toast.error(t("settings.about.updateCheckFailed"), { description: result.message });
           break;
       }
     })();
@@ -57,23 +59,23 @@ export function CheckForUpdatesButton() {
         disabled={update.checking || update.downloading}
         onClick={onClickCheck}
       >
-        {update.checking ? "Checking..." : "Check for Updates"}
+        {update.checking ? t("settings.about.checking") : t("settings.about.checkUpdates")}
       </Button>
 
       <Dialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Update Available</DialogTitle>
+            <DialogTitle>{t("settings.about.updateAvailableTitle")}</DialogTitle>
             <DialogDescription>
               {update.version
-                ? `Version ${update.version} will be downloaded and installed. The app will restart to finish.`
-                : "A newer version will be downloaded and installed. The app will restart to finish."}
+                ? t("settings.about.updateAvailableVersion", { version: update.version })
+                : t("settings.about.updateAvailableGeneric")}
             </DialogDescription>
           </DialogHeader>
           {update.notes ? (
             <div className="max-h-40 overflow-y-auto rounded-md border border-edge bg-surface p-3">
               <p className="mb-1 text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted">
-                Release Notes
+                {t("settings.about.releaseNotes")}
               </p>
               <p className="whitespace-pre-wrap text-[12px] leading-5 text-ink-muted">
                 {update.notes}
@@ -86,10 +88,10 @@ export function CheckForUpdatesButton() {
               disabled={update.downloading}
               onClick={() => setIsConfirmOpen(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button disabled={update.downloading} onClick={handleConfirmInstall}>
-              {update.downloading ? "Installing..." : "Install"}
+              {update.downloading ? t("settings.about.installing") : t("settings.about.install")}
             </Button>
           </DialogFooter>
         </DialogContent>

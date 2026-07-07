@@ -1,3 +1,4 @@
+import type { TFunction } from "../i18n/useTranslation.js";
 import { NAV, type ScreenId } from "./nav.js";
 import type { ThemeSetting } from "./theme.js";
 
@@ -35,42 +36,45 @@ export type AppMenuDeps = {
   themeSetting: ThemeSetting;
   setTheme: (setting: ThemeSetting) => void;
   copyVersion: () => void;
+  /** Active-language translator, so menu labels track the language setting. */
+  t: TFunction;
 };
 
-const THEME_LABELS: ReadonlyArray<{ value: ThemeSetting; label: string }> = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" }
+const THEME_LABELS: ReadonlyArray<{ value: ThemeSetting; labelKey: "theme.light" | "theme.dark" | "theme.system" }> = [
+  { value: "light", labelKey: "theme.light" },
+  { value: "dark", labelKey: "theme.dark" },
+  { value: "system", labelKey: "theme.system" }
 ];
 
 export function buildAppMenu(deps: AppMenuDeps): readonly MenuEntry[] {
+  const { t } = deps;
   const fileItems: MenuEntry[] = [
-    { kind: "action", id: "reload-data", label: "Reload Data", run: deps.reloadData }
+    { kind: "action", id: "reload-data", label: t("menu.reloadData"), run: deps.reloadData }
   ];
   if (deps.quit !== null) {
     const quit = deps.quit;
     fileItems.push(
       { kind: "separator", id: "file-sep" },
-      { kind: "action", id: "quit", label: "Quit", run: quit }
+      { kind: "action", id: "quit", label: t("menu.quit"), run: quit }
     );
   }
 
   return [
-    { kind: "submenu", id: "file", label: "File", items: fileItems },
+    { kind: "submenu", id: "file", label: t("menu.file"), items: fileItems },
     {
       kind: "submenu",
       id: "view",
-      label: "View",
+      label: t("menu.view"),
       items: [
         {
           kind: "submenu",
           id: "theme",
-          label: "Theme",
+          label: t("menu.theme"),
           items: THEME_LABELS.map(
-            ({ value, label }): MenuActionEntry => ({
+            ({ value, labelKey }): MenuActionEntry => ({
               kind: "action",
               id: `theme-${value}`,
-              label,
+              label: t(labelKey),
               checked: deps.themeSetting === value,
               run: () => deps.setTheme(value)
             })
@@ -81,7 +85,7 @@ export function buildAppMenu(deps: AppMenuDeps): readonly MenuEntry[] {
           (item): MenuActionEntry => ({
             kind: "action",
             id: `nav-${item.id}`,
-            label: item.label,
+            label: t(item.labelKey),
             run: () => deps.navigate(item.screen)
           })
         )
@@ -90,15 +94,15 @@ export function buildAppMenu(deps: AppMenuDeps): readonly MenuEntry[] {
     {
       kind: "submenu",
       id: "help",
-      label: "Help",
+      label: t("menu.help"),
       items: [
         {
           kind: "action",
           id: "about",
-          label: "About",
+          label: t("menu.about"),
           run: () => deps.navigate("settings")
         },
-        { kind: "action", id: "copy-version", label: "Copy Version", run: deps.copyVersion }
+        { kind: "action", id: "copy-version", label: t("menu.copyVersion"), run: deps.copyVersion }
       ]
     }
   ];

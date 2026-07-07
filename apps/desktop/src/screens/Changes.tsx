@@ -2,37 +2,54 @@ import { useState } from "react";
 import { EmptyState, Skeleton } from "@sheet-port/ui";
 import type { ChangeStatus } from "@sheet-port/shared";
 import { useChanges } from "../hooks/useChanges.js";
+import { useTranslation } from "../i18n/useTranslation.js";
+import type { TranslationKey } from "../i18n/translations.js";
 import { ChangeCard } from "../components/changes/ChangeCard.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
 
 type FilterValue = ChangeStatus | "all";
 
-const FILTERS: ReadonlyArray<SegmentedOption<FilterValue>> = [
-  { value: "all", label: "All" },
-  { value: "pending", label: "Pending" },
-  { value: "approved", label: "Approved" },
-  { value: "committed", label: "Committed" },
-  { value: "rejected", label: "Rejected" }
+// Label keys are resolved through t() at render so filters follow the language.
+const FILTER_LABEL_KEYS: Record<FilterValue, TranslationKey> = {
+  all: "changes.filterAll",
+  pending: "changes.filterPending",
+  approved: "changes.filterApproved",
+  committed: "changes.filterCommitted",
+  rejected: "changes.filterRejected"
+};
+
+const FILTER_ORDER: readonly FilterValue[] = [
+  "all",
+  "pending",
+  "approved",
+  "committed",
+  "rejected"
 ];
 
 export function Changes() {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<FilterValue>("all");
   const { data: changes, isPending } = useChanges(filter === "all" ? null : filter);
   const list = changes ?? [];
-  const filterLabel = FILTERS.find((option) => option.value === filter)?.label ?? filter;
+
+  const filters: ReadonlyArray<SegmentedOption<FilterValue>> = FILTER_ORDER.map((value) => ({
+    value,
+    label: t(FILTER_LABEL_KEYS[value])
+  }));
+  const filterLabel = t(FILTER_LABEL_KEYS[filter]);
 
   return (
     <>
       <ScreenHeader
-        title="Changes"
-        description="Every agent write lands here as a preview before it can commit"
+        title={t("screen.changes.title")}
+        description={t("screen.changes.description")}
         actions={
           <SegmentedControl
-            options={FILTERS}
+            options={filters}
             value={filter}
             onChange={setFilter}
-            ariaLabel="Filter changes by status"
+            ariaLabel={t("changes.filterAria")}
           />
         }
       />
@@ -44,8 +61,8 @@ export function Changes() {
         </div>
       ) : list.length === 0 ? (
         <EmptyState
-          title={filter === "all" ? "No Changes Yet" : `No ${filterLabel} Changes`}
-          description="When an agent previews a write it appears here for review"
+          title={filter === "all" ? t("changes.emptyAll") : t("changes.emptyFiltered", { filter: filterLabel })}
+          description={t("changes.emptyDescription")}
         />
       ) : (
         <div className="space-y-4">

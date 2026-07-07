@@ -30,12 +30,15 @@ import {
   useResetSettings,
   useSetFontFamily,
   useSetFontScale,
+  useSetLanguage,
   useSettings
 } from "../hooks/useSettings.js";
 import { useSources } from "../hooks/useSources.js";
 import { useTheme } from "../hooks/useTheme.js";
+import { useTranslation } from "../i18n/useTranslation.js";
+import type { TranslationKey } from "../i18n/translations.js";
 import { APP_AUTHOR, APP_NAME } from "../lib/constants.js";
-import { isTauri, type CloseBehavior, type FontFamily, type FontScale } from "../lib/ipc.js";
+import { isTauri, type CloseBehavior, type FontFamily, type FontScale, type Language } from "../lib/ipc.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { GoogleJsonImport } from "../components/settings/GoogleJsonImport.js";
@@ -46,33 +49,47 @@ import { SegmentedControl, type SegmentedOption } from "../components/SegmentedC
 import { McpServerCard } from "../components/settings/McpServerCard.js";
 import { McpClientsCard } from "../components/settings/McpClientsCard.js";
 
-const THEME_OPTIONS: ReadonlyArray<SegmentedOption<ThemeSetting>> = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" }
+// Option value/labelKey tables; labels resolve through t() per language.
+const THEME_OPTIONS: ReadonlyArray<{ value: ThemeSetting; labelKey: TranslationKey }> = [
+  { value: "light", labelKey: "theme.light" },
+  { value: "dark", labelKey: "theme.dark" },
+  { value: "system", labelKey: "theme.system" }
 ];
 
-const FONT_SCALE_OPTIONS: ReadonlyArray<SegmentedOption<FontScale>> = [
-  { value: "small", label: "Small" },
-  { value: "normal", label: "Normal" },
-  { value: "large", label: "Large" }
+const FONT_SCALE_OPTIONS: ReadonlyArray<{ value: FontScale; labelKey: TranslationKey }> = [
+  { value: "small", labelKey: "settings.appearance.fontSizeSmall" },
+  { value: "normal", labelKey: "settings.appearance.fontSizeNormal" },
+  { value: "large", labelKey: "settings.appearance.fontSizeLarge" }
 ];
 
-const FONT_FAMILY_OPTIONS: ReadonlyArray<SegmentedOption<FontFamily>> = [
-  { value: "classic", label: "Classic" },
-  { value: "modern", label: "Modern" },
-  { value: "system", label: "System" }
+const FONT_FAMILY_OPTIONS: ReadonlyArray<{ value: FontFamily; labelKey: TranslationKey }> = [
+  { value: "classic", labelKey: "settings.appearance.fontClassic" },
+  { value: "modern", labelKey: "settings.appearance.fontModern" },
+  { value: "system", labelKey: "settings.appearance.fontSystem" }
 ];
 
-const CLOSE_BEHAVIOR_OPTIONS: ReadonlyArray<SegmentedOption<CloseBehavior>> = [
-  { value: "ask", label: "Ask" },
-  { value: "tray", label: "Run in Background" },
-  { value: "quit", label: "Quit" }
+const LANGUAGE_OPTIONS: ReadonlyArray<{ value: Language; labelKey: TranslationKey }> = [
+  { value: "en", labelKey: "settings.appearance.languageEnglish" },
+  { value: "vi", labelKey: "settings.appearance.languageVietnamese" }
 ];
 
-const RESOLVED_LABELS: Record<"light" | "dark", string> = {
-  light: "light",
-  dark: "dark"
+const CLOSE_BEHAVIOR_OPTIONS: ReadonlyArray<{ value: CloseBehavior; labelKey: TranslationKey }> = [
+  { value: "ask", labelKey: "settings.general.closeAsk" },
+  { value: "tray", labelKey: "settings.general.closeTray" },
+  { value: "quit", labelKey: "settings.general.closeQuit" }
+];
+
+/** Builds SegmentedControl options by resolving each labelKey through t(). */
+function toOptions<T extends string>(
+  entries: ReadonlyArray<{ value: T; labelKey: TranslationKey }>,
+  t: (id: TranslationKey) => string
+): ReadonlyArray<SegmentedOption<T>> {
+  return entries.map((entry) => ({ value: entry.value, label: t(entry.labelKey) }));
+}
+
+const RESOLVED_LABEL_KEYS: Record<"light" | "dark", TranslationKey> = {
+  light: "theme.light",
+  dark: "theme.dark"
 };
 
 type SaveButtonProps = {
@@ -86,9 +103,10 @@ type SaveButtonProps = {
 /** Save button that explains via tooltip why it is disabled (nothing to save).
  * While pending it stays plain since the "Saving..." label is self-explanatory. */
 function SaveButton({ canSave, isPending, onClick, disabledReason }: SaveButtonProps) {
+  const { t } = useTranslation();
   const button = (
     <Button size="sm" disabled={!canSave} onClick={onClick}>
-      {isPending ? "Saving..." : "Save"}
+      {isPending ? t("common.saving") : t("common.save")}
     </Button>
   );
 
@@ -131,61 +149,80 @@ function AppearanceRow({
 function AppearanceCard() {
   const { setting, resolved, setSetting } = useTheme();
   const { data: settings } = useSettings();
+  const { t } = useTranslation();
   const setFontScale = useSetFontScale();
   const setFontFamily = useSetFontFamily();
+  const setLanguage = useSetLanguage();
 
   const fontScale = settings?.fontScale ?? "normal";
   const fontFamily = settings?.fontFamily ?? "modern";
+  const language = settings?.language ?? "en";
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Appearance</CardTitle>
+        <CardTitle>{t("settings.appearance.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="divide-y divide-edge">
           <div className="pb-4 first:pt-0">
             <AppearanceRow
-              title="Theme"
+              title={t("settings.appearance.theme")}
               description={
                 setting === "system"
-                  ? `Follows your system preference (currently ${RESOLVED_LABELS[resolved]})`
-                  : "Fixed for this device"
+                  ? t("settings.appearance.themeFollowsSystem", {
+                      mode: t(RESOLVED_LABEL_KEYS[resolved])
+                    })
+                  : t("settings.appearance.themeFixed")
               }
               control={
                 <SegmentedControl
-                  options={THEME_OPTIONS}
+                  options={toOptions(THEME_OPTIONS, t)}
                   value={setting}
                   onChange={setSetting}
-                  ariaLabel="Theme"
+                  ariaLabel={t("settings.appearance.theme")}
                 />
               }
             />
           </div>
           <div className="py-4">
             <AppearanceRow
-              title="Font Size"
-              description="Scales the whole interface up or down."
+              title={t("settings.appearance.fontSize")}
+              description={t("settings.appearance.fontSizeDescription")}
               control={
                 <SegmentedControl
-                  options={FONT_SCALE_OPTIONS}
+                  options={toOptions(FONT_SCALE_OPTIONS, t)}
                   value={fontScale}
                   onChange={(next) => setFontScale.mutate(next)}
-                  ariaLabel="Font Size"
+                  ariaLabel={t("settings.appearance.fontSize")}
+                />
+              }
+            />
+          </div>
+          <div className="py-4">
+            <AppearanceRow
+              title={t("settings.appearance.font")}
+              description={t("settings.appearance.fontDescription")}
+              control={
+                <SegmentedControl
+                  options={toOptions(FONT_FAMILY_OPTIONS, t)}
+                  value={fontFamily}
+                  onChange={(next) => setFontFamily.mutate(next)}
+                  ariaLabel={t("settings.appearance.font")}
                 />
               }
             />
           </div>
           <div className="pt-4 last:pb-0">
             <AppearanceRow
-              title="Font"
-              description="Classic is a serif face, Modern is Inter, System uses your OS UI font."
+              title={t("settings.appearance.language")}
+              description={t("settings.appearance.languageDescription")}
               control={
                 <SegmentedControl
-                  options={FONT_FAMILY_OPTIONS}
-                  value={fontFamily}
-                  onChange={(next) => setFontFamily.mutate(next)}
-                  ariaLabel="Font"
+                  options={toOptions(LANGUAGE_OPTIONS, t)}
+                  value={language}
+                  onChange={(next) => setLanguage.mutate(next)}
+                  ariaLabel={t("settings.appearance.language")}
                 />
               }
             />
@@ -198,6 +235,7 @@ function AppearanceCard() {
 
 function ClientIdField({ storedClientId }: { storedClientId: string }) {
   const saveClientId = useSetGoogleClientId();
+  const { t } = useTranslation();
   // null draft = "not edited yet"; the input then mirrors the stored value.
   const [draft, setDraft] = useState<string | null>(null);
 
@@ -213,7 +251,7 @@ function ClientIdField({ storedClientId }: { storedClientId: string }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[12px] font-medium text-ink-muted" htmlFor="google-client-id">
-        OAuth Client ID
+        {t("settings.google.clientId")}
       </label>
       <div className="flex items-center gap-2">
         <Input
@@ -229,11 +267,11 @@ function ClientIdField({ storedClientId }: { storedClientId: string }) {
           canSave={canSave}
           isPending={saveClientId.isPending}
           onClick={save}
-          disabledReason="No changes to save"
+          disabledReason={t("common.noChangesToSave")}
         />
       </div>
       <p className="text-[12px] leading-4 text-ink-muted">
-        Desktop-app client ID from Google Cloud Console.
+        {t("settings.google.clientIdHint")}
       </p>
     </div>
   );
@@ -241,6 +279,7 @@ function ClientIdField({ storedClientId }: { storedClientId: string }) {
 
 function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
   const saveSecret = useSetGoogleClientSecret();
+  const { t } = useTranslation();
   const [draft, setDraft] = useState("");
   // Replace flow: a stored secret stays masked until the user opts to swap it.
   const [isReplacing, setIsReplacing] = useState(false);
@@ -273,7 +312,7 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[12px] font-medium text-ink-muted" htmlFor="google-client-secret">
-        OAuth Client Secret
+        {t("settings.google.clientSecret")}
       </label>
       {showInput ? (
         <div className="flex items-center gap-2">
@@ -291,7 +330,7 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
             canSave={canSave}
             isPending={saveSecret.isPending}
             onClick={save}
-            disabledReason="No changes to save"
+            disabledReason={t("common.noChangesToSave")}
           />
           {isReplacing ? (
             <Button
@@ -303,17 +342,17 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
                 setIsReplacing(false);
               }}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
           ) : null}
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex-1 truncate font-mono text-[12.5px] text-ink-muted">
-            •••••••• Stored in OS keychain
+            {t("settings.google.storedInKeychain")}
           </span>
           <Button variant="outline" size="sm" onClick={() => setIsReplacing(true)}>
-            Replace
+            {t("settings.google.replace")}
           </Button>
           <Button
             variant="outline"
@@ -321,20 +360,19 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
             disabled={saveSecret.isPending}
             onClick={() => setIsClearConfirmOpen(true)}
           >
-            Clear
+            {t("settings.google.clear")}
           </Button>
         </div>
       )}
       <p className="text-[12px] leading-4 text-ink-muted">
-        Google requires the Desktop-app client secret when exchanging the sign-in code; it never
-        leaves the keychain.
+        {t("settings.google.clientSecretHint")}
       </p>
       <ConfirmDialog
         open={isClearConfirmOpen}
         onOpenChange={setIsClearConfirmOpen}
-        title="Clear Client Secret?"
-        description="The client secret is removed from the OS keychain. Google sign-in will fail until a new secret is saved."
-        confirmLabel="Clear"
+        title={t("settings.google.clearSecretTitle")}
+        description={t("settings.google.clearSecretDescription")}
+        confirmLabel={t("settings.google.clear")}
         isPending={saveSecret.isPending}
         onConfirm={clear}
       />
@@ -345,13 +383,14 @@ function ClientSecretField({ hasClientSecret }: { hasClientSecret: boolean }) {
 function GoogleSheetsCard() {
   const { data: config, isPending } = useGoogleConfig();
   const { data: accounts } = useGoogleAccounts();
+  const { t } = useTranslation();
 
   const accountCount = accounts?.length ?? 0;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Google Sheets</CardTitle>
+        <CardTitle>{t("settings.google.title")}</CardTitle>
         <GoogleJsonImport />
       </CardHeader>
       <CardContent>
@@ -365,12 +404,12 @@ function GoogleSheetsCard() {
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-edge pt-4">
               <div className="flex min-w-0 items-center gap-2">
                 <Badge variant={accountCount > 0 ? "success" : "muted"}>
-                  {accountCount > 0 ? "Connected" : "Not connected"}
+                  {accountCount > 0 ? t("common.connected") : t("common.notConnected")}
                 </Badge>
                 <span className="text-[12.5px] text-ink-muted">
                   {accountCount > 0
-                    ? `${accountCount} account${accountCount === 1 ? "" : "s"} linked. Manage them in Data Sources.`
-                    : "Connect an account from the Data Sources screen"}
+                    ? t("settings.google.accountsLinked", { count: accountCount })
+                    : t("settings.google.connectFromSources")}
                 </span>
               </div>
             </div>
@@ -388,6 +427,7 @@ function PermissionsCard() {
   const { data: sources, isPending: isSourcesPending } = useSources();
   const { data: rules, isPending: isRulesPending } = usePermissionRules();
   const { data: settings, isPending: isSettingsPending } = useSettings();
+  const { t } = useTranslation();
   const sourceList = sources ?? [];
   const ruleList = rules ?? [];
   const autoApproveWrites = settings?.autoApproveWrites ?? false;
@@ -395,20 +435,19 @@ function PermissionsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Permissions</CardTitle>
+        <CardTitle>{t("settings.permissions.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         {isSourcesPending || isRulesPending || isSettingsPending ? (
           <Skeleton className="h-24" />
         ) : sourceList.length === 0 ? (
           <p className="rounded-md border border-edge bg-surface px-3 py-6 text-center text-[12.5px] text-ink-muted">
-            Connect a data source first
+            {t("settings.permissions.connectFirst")}
           </p>
         ) : (
           <>
             <p className="mb-1 text-[12px] leading-4 text-ink-muted">
-              Pick an access preset per source. Auto Approve and Bypass turn on global
-              auto-approve, which applies to every connected source.
+              {t("settings.permissions.hint")}
             </p>
             <div className="divide-y divide-edge">
               {sourceList.map((source) => (
@@ -431,11 +470,12 @@ function PermissionsCard() {
 
 function AboutCard() {
   const { data: status, isPending } = useAppStatus();
+  const { t } = useTranslation();
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>About</CardTitle>
+        <CardTitle>{t("settings.about.title")}</CardTitle>
         <CheckForUpdatesButton />
       </CardHeader>
       <CardContent className="py-1">
@@ -444,19 +484,19 @@ function AboutCard() {
         ) : (
           <dl className="divide-y divide-edge">
             <div className="flex h-9 items-center justify-between gap-4">
-              <dt className="text-[13px] text-ink-muted">App Name</dt>
+              <dt className="text-[13px] text-ink-muted">{t("settings.about.appName")}</dt>
               <dd className="text-[12.5px] font-medium text-ink">{APP_NAME}</dd>
             </div>
             <div className="flex h-9 items-center justify-between gap-4">
-              <dt className="text-[13px] text-ink-muted">Version</dt>
+              <dt className="text-[13px] text-ink-muted">{t("settings.about.version")}</dt>
               <dd className="font-mono text-[12.5px] text-ink">{status.appVersion}</dd>
             </div>
             <div className="flex h-9 items-center justify-between gap-4">
-              <dt className="text-[13px] text-ink-muted">Created By</dt>
+              <dt className="text-[13px] text-ink-muted">{t("settings.about.createdBy")}</dt>
               <dd className="text-[12.5px] font-medium text-ink">{APP_AUTHOR}</dd>
             </div>
             <div className="flex h-9 items-center justify-between gap-4">
-              <dt className="shrink-0 text-[13px] text-ink-muted">Database</dt>
+              <dt className="shrink-0 text-[13px] text-ink-muted">{t("settings.about.database")}</dt>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <dd className="min-w-0 truncate font-mono text-[12.5px] text-ink-muted">
@@ -480,6 +520,7 @@ function AboutCard() {
  * shown under Tauri; the browser preview hides it. */
 function GeneralCard() {
   const { data: settings } = useSettings();
+  const { t } = useTranslation();
   const setCloseBehavior = useSetCloseBehavior();
   const { data: autostartEnabled } = useAutostartEnabled();
   const setAutostart = useSetAutostartEnabled();
@@ -489,20 +530,20 @@ function GeneralCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>General</CardTitle>
+        <CardTitle>{t("settings.general.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="divide-y divide-edge">
           <div className="pb-4 first:pt-0">
             <AppearanceRow
-              title="When Closing the Window"
-              description="Ask each time, keep running in the tray, or quit the app."
+              title={t("settings.general.whenClosing")}
+              description={t("settings.general.whenClosingDescription")}
               control={
                 <SegmentedControl
-                  options={CLOSE_BEHAVIOR_OPTIONS}
+                  options={toOptions(CLOSE_BEHAVIOR_OPTIONS, t)}
                   value={closeBehavior}
                   onChange={(next) => setCloseBehavior.mutate(next)}
-                  ariaLabel="When Closing the Window"
+                  ariaLabel={t("settings.general.whenClosing")}
                 />
               }
             />
@@ -510,14 +551,14 @@ function GeneralCard() {
           {isTauri ? (
             <div className="pt-4 last:pb-0">
               <AppearanceRow
-                title="Launch at Login"
-                description="Start the app automatically when you sign in."
+                title={t("settings.general.launchAtLogin")}
+                description={t("settings.general.launchAtLoginDescription")}
                 control={
                   <Switch
                     checked={autostartEnabled ?? false}
                     onCheckedChange={(checked) => setAutostart.mutate(checked)}
                     disabled={setAutostart.isPending}
-                    aria-label="Launch at Login"
+                    aria-label={t("settings.general.launchAtLogin")}
                   />
                 }
               />
@@ -532,18 +573,18 @@ function GeneralCard() {
 /** Resets frontend prefs (theme) and app-managed prefs (auto-approve) only. */
 function ResetCard() {
   const resetSettings = useResetSettings();
+  const { t } = useTranslation();
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Reset</CardTitle>
+        <CardTitle>{t("settings.reset.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <p className="min-w-0 text-[12.5px] leading-4 text-ink-muted">
-            Restore preferences to their defaults. Your Google credentials, permission rules, and
-            data are not affected.
+            {t("settings.reset.description")}
           </p>
           <Button
             variant="outline"
@@ -551,16 +592,16 @@ function ResetCard() {
             disabled={resetSettings.isPending}
             onClick={() => setIsConfirmOpen(true)}
           >
-            Reset to Default
+            {t("settings.reset.button")}
           </Button>
         </div>
       </CardContent>
       <ConfirmDialog
         open={isConfirmOpen}
         onOpenChange={setIsConfirmOpen}
-        title="Reset to Default?"
-        description="Theme, font, and auto-approve return to their defaults. This does NOT remove your Google credentials, permission rules, or data."
-        confirmLabel="Reset to Default"
+        title={t("settings.reset.confirmTitle")}
+        description={t("settings.reset.confirmDescription")}
+        confirmLabel={t("settings.reset.button")}
         isPending={resetSettings.isPending}
         onConfirm={() => resetSettings.mutate(undefined, { onSettled: () => setIsConfirmOpen(false) })}
       />
@@ -569,11 +610,12 @@ function ResetCard() {
 }
 
 export function Settings() {
+  const { t } = useTranslation();
   return (
     <>
       <ScreenHeader
-        title="Settings"
-        description="Appearance, connections, permissions, and application details"
+        title={t("screen.settings.title")}
+        description={t("screen.settings.description")}
       />
 
       <div className="space-y-4">

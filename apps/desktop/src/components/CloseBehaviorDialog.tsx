@@ -11,6 +11,7 @@ import {
 } from "@sheet-port/ui";
 import { ipc, type CloseBehavior } from "../lib/ipc.js";
 import { useSetCloseBehavior } from "../hooks/useCloseBehavior.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 
 type CloseBehaviorDialogProps = {
   open: boolean;
@@ -23,6 +24,7 @@ type CloseBehaviorDialogProps = {
  * the picked behavior so the prompt is skipped next time.
  */
 export function CloseBehaviorDialog({ open, onOpenChange }: CloseBehaviorDialogProps) {
+  const { t } = useTranslation();
   const [remember, setRemember] = useState(false);
   const setCloseBehavior = useSetCloseBehavior();
   const [pending, setPending] = useState<CloseBehavior | null>(null);
@@ -51,10 +53,8 @@ export function CloseBehaviorDialog({ open, onOpenChange }: CloseBehaviorDialogP
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Run in Background?</DialogTitle>
-          <DialogDescription>
-            Keep the app running in the system tray, or quit it entirely.
-          </DialogDescription>
+          <DialogTitle>{t("closeDialog.title")}</DialogTitle>
+          <DialogDescription>{t("closeDialog.description")}</DialogDescription>
         </DialogHeader>
 
         <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink">
@@ -63,7 +63,7 @@ export function CloseBehaviorDialog({ open, onOpenChange }: CloseBehaviorDialogP
             onCheckedChange={(checked) => setRemember(checked === true)}
             disabled={isBusy}
           />
-          Remember My Choice
+          {t("closeDialog.rememberChoice")}
         </label>
 
         <DialogFooter>
@@ -72,10 +72,10 @@ export function CloseBehaviorDialog({ open, onOpenChange }: CloseBehaviorDialogP
             disabled={isBusy}
             onClick={() => void decide("quit")}
           >
-            {pending === "quit" ? "Quitting..." : "Quit"}
+            {pending === "quit" ? t("closeDialog.quitting") : t("closeDialog.quit")}
           </Button>
           <Button disabled={isBusy} onClick={() => void decide("tray")}>
-            {pending === "tray" ? "Minimizing..." : "Run in Background"}
+            {pending === "tray" ? t("closeDialog.minimizing") : t("closeDialog.runInBackground")}
           </Button>
         </DialogFooter>
       </DialogContent>

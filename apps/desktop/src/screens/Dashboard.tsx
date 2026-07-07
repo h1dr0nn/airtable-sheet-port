@@ -21,6 +21,7 @@ import { useAuditEvents } from "../hooks/useAuditEvents.js";
 import { useChanges } from "../hooks/useChanges.js";
 import { useSources } from "../hooks/useSources.js";
 import { useTokenStatus } from "../hooks/useTokenStatus.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { DASHBOARD_AUDIT_COUNT, DASHBOARD_CHANGES_COUNT } from "../lib/constants.js";
 import type { ScreenId } from "../lib/nav.js";
 import { CopyButton } from "../components/CopyButton.js";
@@ -60,17 +61,20 @@ function StatCard({ label, action, children }: StatCardProps) {
 
 function McpStatCard() {
   const { data: status, isPending } = useAppStatus();
+  const { t } = useTranslation();
 
   if (isPending || !status) {
     return (
-      <StatCard label="MCP Server">
+      <StatCard label={t("dashboard.mcpServer")}>
         <Skeleton className="h-16" />
       </StatCard>
     );
   }
 
+  const statusLabel = status.mcpRunning ? t("common.running") : t("common.offline");
+
   return (
-    <StatCard label="MCP Server">
+    <StatCard label={t("dashboard.mcpServer")}>
       <div className="flex items-center gap-2">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -78,11 +82,9 @@ function McpStatCard() {
               <StatusDot status={status.mcpRunning ? "live" : "idle"} />
             </span>
           </TooltipTrigger>
-          <TooltipContent>{status.mcpRunning ? "Running" : "Offline"}</TooltipContent>
+          <TooltipContent>{statusLabel}</TooltipContent>
         </Tooltip>
-        <span className="text-[15px] font-semibold text-ink">
-          {status.mcpRunning ? "Running" : "Offline"}
-        </span>
+        <span className="text-[15px] font-semibold text-ink">{statusLabel}</span>
       </div>
       {status.mcpRunning ? (
         <p className="mt-2 font-mono text-[12px] text-ink-muted">
@@ -96,7 +98,7 @@ function McpStatCard() {
         </p>
       ) : (
         <p className="mt-2 text-[12.5px] leading-5 text-ink-muted">
-          Register Sheet Port with your MCP client from Settings, then restart the client.
+          {t("dashboard.mcpOfflineHint")}
         </p>
       )}
     </StatCard>
@@ -105,10 +107,11 @@ function McpStatCard() {
 
 function PendingStatCard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { data: status, isPending } = useAppStatus();
+  const { t } = useTranslation();
   const count = status?.pendingCount ?? 0;
 
   return (
-    <StatCard label="Pending Approvals">
+    <StatCard label={t("dashboard.pendingApprovals")}>
       {isPending || !status ? (
         <Skeleton className="h-16" />
       ) : (
@@ -122,10 +125,14 @@ function PendingStatCard({ onNavigate }: { onNavigate: (screen: ScreenId) => voi
             {count}
           </p>
           <p className="mt-1.5 text-[12.5px] text-ink-muted">
-            {count === 0 ? "Nothing waiting on you" : count === 1 ? "Change awaiting review" : "Changes awaiting review"}
+            {count === 0
+              ? t("dashboard.nothingWaiting")
+              : count === 1
+                ? t("dashboard.oneChangeAwaiting")
+                : t("dashboard.changesAwaiting")}
           </p>
           <Button variant="secondary" size="sm" className="mt-3" onClick={() => onNavigate("changes")}>
-            Review Changes
+            {t("dashboard.reviewChanges")}
           </Button>
         </>
       )}
@@ -135,17 +142,20 @@ function PendingStatCard({ onNavigate }: { onNavigate: (screen: ScreenId) => voi
 
 function DatabaseStatCard() {
   const { data: status, isPending } = useAppStatus();
+  const { t } = useTranslation();
 
   return (
     <StatCard
-      label="Database"
-      action={status ? <CopyButton value={status.dbPath} label="Copy database path" /> : undefined}
+      label={t("dashboard.database")}
+      action={
+        status ? <CopyButton value={status.dbPath} label={t("dashboard.copyDatabasePath")} /> : undefined
+      }
     >
       {isPending || !status ? (
         <Skeleton className="h-16" />
       ) : (
         <>
-          <p className="text-[13px] font-medium text-ink">Shared SQLite</p>
+          <p className="text-[13px] font-medium text-ink">{t("dashboard.sharedSqlite")}</p>
           <Tooltip>
             <TooltipTrigger asChild>
               <p className="mt-1 truncate font-mono text-[12px] text-ink-muted">{status.dbPath}</p>
@@ -153,7 +163,7 @@ function DatabaseStatCard() {
             <TooltipContent className="max-w-md break-all font-mono">{status.dbPath}</TooltipContent>
           </Tooltip>
           <p className="mt-2 text-[12.5px] text-ink-muted">
-            Version <span className="font-mono text-ink">{status.appVersion}</span>
+            {t("dashboard.version")} <span className="font-mono text-ink">{status.appVersion}</span>
           </p>
         </>
       )}
@@ -163,13 +173,14 @@ function DatabaseStatCard() {
 
 function TokenVaultStatCard() {
   const { data: tokens, isPending } = useTokenStatus();
+  const { t } = useTranslation();
   const rows = [
-    { label: "Google Sheets", stored: tokens?.googleSheets ?? false },
-    { label: "Provider", stored: tokens?.provider ?? false }
+    { label: t("dashboard.googleSheets"), stored: tokens?.googleSheets ?? false },
+    { label: t("dashboard.provider"), stored: tokens?.provider ?? false }
   ];
 
   return (
-    <StatCard label="Token Vault">
+    <StatCard label={t("dashboard.tokenVault")}>
       {isPending || !tokens ? (
         <Skeleton className="h-16" />
       ) : (
@@ -178,12 +189,12 @@ function TokenVaultStatCard() {
             <div key={row.label} className="flex items-center justify-between gap-3">
               <span className="text-[12.5px] text-ink">{row.label}</span>
               <Badge variant={row.stored ? "success" : "muted"}>
-                {row.stored ? "In Keychain" : "Not Stored"}
+                {row.stored ? t("dashboard.inKeychain") : t("dashboard.notStored")}
               </Badge>
             </div>
           ))}
           <p className="pt-1 text-[12px] leading-4 text-ink-muted">
-            Tokens never leave the OS keychain.
+            {t("dashboard.tokensNeverLeave")}
           </p>
         </div>
       )}
@@ -194,6 +205,7 @@ function TokenVaultStatCard() {
 /** Nudges first-run users toward connecting Google Sheets. */
 function ConnectSourceCallout({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { data: sources, isPending } = useSources();
+  const { t } = useTranslation();
   if (isPending || (sources ?? []).length > 0) {
     return null;
   }
@@ -201,13 +213,13 @@ function ConnectSourceCallout({ onNavigate }: { onNavigate: (screen: ScreenId) =
   return (
     <section className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-card border border-accent/30 bg-accent/[0.06] px-5 py-4">
       <div className="min-w-0">
-        <p className="text-[13px] font-semibold text-ink">No Data Sources Connected</p>
+        <p className="text-[13px] font-semibold text-ink">{t("dashboard.noSourcesTitle")}</p>
         <p className="mt-0.5 text-[12.5px] text-ink-muted">
-          Connect a data source such as Google Sheets to give agents something to read.
+          {t("dashboard.noSourcesDescription")}
         </p>
       </div>
       <Button size="sm" onClick={() => onNavigate("sources")}>
-        Connect a Data Source
+        {t("dashboard.connectDataSource")}
       </Button>
     </section>
   );
@@ -219,18 +231,19 @@ function ListEmpty({ message }: { message: string }) {
 
 function RecentActivityCard() {
   const { data, isPending } = useAuditEvents();
+  const { t } = useTranslation();
   const events = (data?.pages[0] ?? []).slice(0, DASHBOARD_AUDIT_COUNT);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent Activity</CardTitle>
+        <CardTitle>{t("dashboard.recentActivity")}</CardTitle>
       </CardHeader>
       <CardContent className="py-1">
         {isPending ? (
           <Skeleton className="my-3 h-40" />
         ) : events.length === 0 ? (
-          <ListEmpty message="Agent activity shows up here as it happens." />
+          <ListEmpty message={t("dashboard.recentActivityEmpty")} />
         ) : (
           <ol className="divide-y divide-edge">
             {events.map((event) => (
@@ -249,12 +262,13 @@ function RecentActivityCard() {
 
 function RecentChangesCard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { data: changes, isPending } = useChanges(null);
+  const { t } = useTranslation();
   const recent = (changes ?? []).slice(0, DASHBOARD_CHANGES_COUNT);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent Changes</CardTitle>
+        <CardTitle>{t("dashboard.recentChanges")}</CardTitle>
         <button
           type="button"
           onClick={() => onNavigate("changes")}
@@ -263,14 +277,14 @@ function RecentChangesCard({ onNavigate }: { onNavigate: (screen: ScreenId) => v
             FOCUS_RING
           )}
         >
-          View All
+          {t("dashboard.viewAll")}
         </button>
       </CardHeader>
       <CardContent className="py-1">
         {isPending ? (
           <Skeleton className="my-3 h-40" />
         ) : recent.length === 0 ? (
-          <ListEmpty message="Agent write previews land here for review." />
+          <ListEmpty message={t("dashboard.recentChangesEmpty")} />
         ) : (
           <ol className="divide-y divide-edge">
             {recent.map((change) => (
@@ -293,11 +307,12 @@ function RecentChangesCard({ onNavigate }: { onNavigate: (screen: ScreenId) => v
 }
 
 export function Dashboard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
+  const { t } = useTranslation();
   return (
     <>
       <ScreenHeader
-        title="Dashboard"
-        description="Local capability broker between agents and your spreadsheets"
+        title={t("screen.dashboard.title")}
+        description={t("screen.dashboard.description")}
       />
       <ConnectSourceCallout onNavigate={onNavigate} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

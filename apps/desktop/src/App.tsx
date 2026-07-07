@@ -7,6 +7,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { Titlebar } from "./components/Titlebar.js";
 import { useFonts } from "./hooks/useFonts.js";
+import { TranslationProvider } from "./i18n/useTranslation.js";
 import { useSidebarCollapsed } from "./hooks/useSidebarCollapsed.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useUpdate } from "./hooks/useUpdate.js";
@@ -65,28 +66,30 @@ export function App() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-bg font-sans text-ink">
-      <Titlebar
-        onNavigate={setScreen}
-        onOpenPalette={() => setIsPaletteOpen(true)}
-        sidebarCollapsed={collapsed}
-        onToggleSidebar={toggleSidebar}
-      />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar active={screen} onNavigate={setScreen} update={update} collapsed={collapsed} />
-        <main className="min-w-0 flex-1 overflow-y-auto">
-          <div className="app-scale mx-auto max-w-6xl px-8 py-8">
-            <AnimatedScreen screenKey={screen}>
-              <ErrorBoundary resetKey={screen}>
-                <Screen onNavigate={setScreen} />
-              </ErrorBoundary>
-            </AnimatedScreen>
-          </div>
-        </main>
+    <TranslationProvider>
+      <div className="flex h-screen flex-col bg-bg font-sans text-ink">
+        <Titlebar
+          onNavigate={setScreen}
+          onOpenPalette={() => setIsPaletteOpen(true)}
+          sidebarCollapsed={collapsed}
+          onToggleSidebar={toggleSidebar}
+        />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar active={screen} onNavigate={setScreen} update={update} collapsed={collapsed} />
+          <main className="min-w-0 flex-1 overflow-y-auto">
+            <div className="app-scale mx-auto max-w-6xl px-8 py-8">
+              <AnimatedScreen screenKey={screen}>
+                <ErrorBoundary resetKey={screen}>
+                  <Screen onNavigate={setScreen} />
+                </ErrorBoundary>
+              </AnimatedScreen>
+            </div>
+          </main>
+        </div>
+        <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} onNavigate={setScreen} />
+        <CloseBehaviorDialog open={isCloseDialogOpen} onOpenChange={setIsCloseDialogOpen} />
+        <ToastViewport />
       </div>
-      <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} onNavigate={setScreen} />
-      <CloseBehaviorDialog open={isCloseDialogOpen} onOpenChange={setIsCloseDialogOpen} />
-      <ToastViewport />
-    </div>
+    </TranslationProvider>
   );
 }

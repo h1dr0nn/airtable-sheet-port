@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import type { ChangeStatus, PendingChange } from "@sheet-port/shared";
 import { getErrorMessage } from "../lib/errors.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { ipc } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
 
@@ -14,17 +15,18 @@ export function useChanges(status: ChangeStatus | null) {
 
 function useDecideChange(
   decide: (changeId: string) => Promise<PendingChange>,
-  successMessage: string
+  successKey: "toast.changeApproved" | "toast.changeRejected"
 ) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: decide,
     onError: (error: unknown) => {
-      toast.error("Change decision failed", { description: getErrorMessage(error) });
+      toast.error(t("toast.changeDecisionFailed"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success(successMessage);
+      toast.success(t(successKey));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.changesRoot });
@@ -35,9 +37,9 @@ function useDecideChange(
 }
 
 export function useApproveChange() {
-  return useDecideChange((changeId) => ipc.approveChange(changeId), "Change approved");
+  return useDecideChange((changeId) => ipc.approveChange(changeId), "toast.changeApproved");
 }
 
 export function useRejectChange() {
-  return useDecideChange((changeId) => ipc.rejectChange(changeId), "Change rejected");
+  return useDecideChange((changeId) => ipc.rejectChange(changeId), "toast.changeRejected");
 }

@@ -25,11 +25,13 @@ import {
   useUnregisterMcpClient
 } from "../../hooks/useMcp.js";
 import type { BadgeVariant } from "@sheet-port/ui";
+import { useTranslation } from "../../i18n/useTranslation.js";
+import type { TranslationKey } from "../../i18n/translations.js";
 import type { McpClient, McpClientState } from "../../lib/ipc.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 
 type StatePresentation = {
-  label: string;
+  labelKey: TranslationKey;
   dot: StatusDotStatus;
   badge: BadgeVariant;
 };
@@ -37,14 +39,14 @@ type StatePresentation = {
 // Maps the backend client state onto its dot color and badge, per the task spec:
 // Configured green, Missing config amber, Not Found muted.
 const STATE_PRESENTATION: Record<McpClientState, StatePresentation> = {
-  configured: { label: "Configured", dot: "live", badge: "success" },
-  unconfigured: { label: "Missing Config", dot: "alert", badge: "warning" },
-  not_found: { label: "Not Found", dot: "idle", badge: "muted" }
+  configured: { labelKey: "settings.mcpClients.stateConfigured", dot: "live", badge: "success" },
+  unconfigured: { labelKey: "settings.mcpClients.stateMissingConfig", dot: "alert", badge: "warning" },
+  not_found: { labelKey: "settings.mcpClients.stateNotFound", dot: "idle", badge: "muted" }
 };
 
 // Fallback so an unexpected state can never white-screen the whole app.
 const UNKNOWN_PRESENTATION: StatePresentation = {
-  label: "Unknown",
+  labelKey: "settings.mcpClients.stateUnknown",
   dot: "idle",
   badge: "muted"
 };
@@ -57,6 +59,7 @@ type ClientDetailProps = {
 function ClientDetail({ client }: ClientDetailProps) {
   const configure = useConfigureMcpClient();
   const unregister = useUnregisterMcpClient();
+  const { t } = useTranslation();
   const [isUnregisterConfirmOpen, setIsUnregisterConfirmOpen] = useState(false);
 
   const presentation = STATE_PRESENTATION[client.state] ?? UNKNOWN_PRESENTATION;
@@ -70,7 +73,7 @@ function ClientDetail({ client }: ClientDetailProps) {
       disabled={!isInstalled || isConfigured || isBusy}
       onClick={() => configure.mutate(client.id)}
     >
-      {configure.isPending ? "Configuring..." : "Configure"}
+      {configure.isPending ? t("settings.mcpClients.configuring") : t("settings.mcpClients.configure")}
     </Button>
   );
 
@@ -80,7 +83,7 @@ function ClientDetail({ client }: ClientDetailProps) {
         <div className="flex items-center gap-2">
           <StatusDot status={presentation.dot} />
           <span className="text-[13px] font-medium text-ink">{client.name}</span>
-          <Badge variant={presentation.badge}>{presentation.label}</Badge>
+          <Badge variant={presentation.badge}>{t(presentation.labelKey)}</Badge>
         </div>
         <div className="flex items-center gap-2">
           {!isInstalled ? (
@@ -88,14 +91,14 @@ function ClientDetail({ client }: ClientDetailProps) {
               <TooltipTrigger asChild>
                 <span className="inline-flex">{configureButton}</span>
               </TooltipTrigger>
-              <TooltipContent>{client.name} is not installed</TooltipContent>
+              <TooltipContent>{t("settings.mcpClients.notInstalled", { name: client.name })}</TooltipContent>
             </Tooltip>
           ) : isConfigured ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">{configureButton}</span>
               </TooltipTrigger>
-              <TooltipContent>Already configured</TooltipContent>
+              <TooltipContent>{t("settings.mcpClients.alreadyConfigured")}</TooltipContent>
             </Tooltip>
           ) : (
             configureButton
@@ -106,14 +109,14 @@ function ClientDetail({ client }: ClientDetailProps) {
             disabled={!isConfigured || isBusy}
             onClick={() => setIsUnregisterConfirmOpen(true)}
           >
-            Unregister
+            {t("settings.mcpClients.unregister")}
           </Button>
         </div>
       </div>
 
       {client.configPath ? (
         <div className="flex items-center gap-2 border-t border-edge pt-3">
-          <span className="shrink-0 text-[12px] text-ink-muted">Config file</span>
+          <span className="shrink-0 text-[12px] text-ink-muted">{t("settings.mcpClients.configFile")}</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <code className="min-w-0 truncate font-mono text-[12px] text-ink-muted">
@@ -130,9 +133,9 @@ function ClientDetail({ client }: ClientDetailProps) {
       <ConfirmDialog
         open={isUnregisterConfirmOpen}
         onOpenChange={setIsUnregisterConfirmOpen}
-        title={`Unregister From ${client.name}?`}
-        description={`This edits ${client.name}'s config file to remove the Sheet Port MCP server. You can reconfigure it at any time.`}
-        confirmLabel="Unregister"
+        title={t("settings.mcpClients.unregisterTitle", { name: client.name })}
+        description={t("settings.mcpClients.unregisterDescription", { name: client.name })}
+        confirmLabel={t("settings.mcpClients.unregister")}
         isPending={unregister.isPending}
         onConfirm={() =>
           unregister.mutate(client.id, { onSettled: () => setIsUnregisterConfirmOpen(false) })
@@ -147,6 +150,7 @@ function ClientDetail({ client }: ClientDetailProps) {
 export function McpClientsCard() {
   const { data: clients, isPending } = useMcpClients();
   const configureAll = useConfigureAllMcpClients();
+  const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const clientList = clients ?? [];
@@ -162,34 +166,34 @@ export function McpClientsCard() {
       disabled={!hasUnconfigured || configureAll.isPending}
       onClick={() => configureAll.mutate()}
     >
-      {configureAll.isPending ? "Configuring..." : "Configure All Detected Clients"}
+      {configureAll.isPending ? t("settings.mcpClients.configuring") : t("settings.mcpClients.configureAll")}
     </Button>
   );
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>MCP Clients</CardTitle>
+        <CardTitle>{t("settings.mcpClients.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         {isPending || !clients ? (
           <Skeleton className="h-40" />
         ) : clientList.length === 0 ? (
           <p className="rounded-md border border-edge bg-surface px-3 py-6 text-center text-[12.5px] text-ink-muted">
-            No supported MCP clients detected
+            {t("settings.mcpClients.noneDetected")}
           </p>
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[12px] font-medium text-ink-muted" htmlFor="mcp-client">
-                Client
+                {t("settings.mcpClients.client")}
               </label>
               <Select
                 value={selected?.id}
                 onValueChange={(value) => setSelectedId(value)}
               >
-                <SelectTrigger id="mcp-client" className="w-full" aria-label="MCP Client">
-                  <SelectValue placeholder="Select a client" />
+                <SelectTrigger id="mcp-client" className="w-full" aria-label={t("settings.mcpClients.clientAria")}>
+                  <SelectValue placeholder={t("settings.mcpClients.selectClient")} />
                 </SelectTrigger>
                 <SelectContent>
                   {clientList.map((client) => (
@@ -211,7 +215,7 @@ export function McpClientsCard() {
                   <TooltipTrigger asChild>
                     <span className="inline-flex">{configureAllButton}</span>
                   </TooltipTrigger>
-                  <TooltipContent>No detected clients need configuring</TooltipContent>
+                  <TooltipContent>{t("settings.mcpClients.noneNeedConfigure")}</TooltipContent>
                 </Tooltip>
               )}
             </div>

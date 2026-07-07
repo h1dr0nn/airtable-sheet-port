@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { ipc } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
 
@@ -33,14 +34,15 @@ function invalidateGoogleState(queryClient: QueryClient): void {
 
 export function useSetGoogleClientId() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (clientId: string) => ipc.setGoogleClientId(clientId),
     onError: (error: unknown) => {
-      toast.error("Client ID not saved", { description: getErrorMessage(error) });
+      toast.error(t("toast.clientIdError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("Google client ID saved");
+      toast.success(t("toast.clientIdSaved"));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.googleConfig });
@@ -51,17 +53,18 @@ export function useSetGoogleClientId() {
 /** Stores the OAuth client secret in the keychain; empty string clears it. */
 export function useSetGoogleClientSecret() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (clientSecret: string) => ipc.setGoogleClientSecret(clientSecret),
     onError: (error: unknown) => {
-      toast.error("Client secret not saved", { description: getErrorMessage(error) });
+      toast.error(t("toast.clientSecretError"), { description: getErrorMessage(error) });
     },
     onSuccess: (_result, clientSecret) => {
       if (clientSecret === "") {
-        toast.success("Google client secret cleared");
+        toast.success(t("toast.clientSecretCleared"));
       } else {
-        toast.success("Google client secret saved", { description: "Stored in the OS keychain" });
+        toast.success(t("toast.clientSecretSaved"), { description: t("toast.clientSecretSavedDesc") });
       }
     },
     onSettled: () => {
@@ -72,14 +75,15 @@ export function useSetGoogleClientSecret() {
 
 export function useGoogleConnect() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: () => ipc.googleConnect(),
     onError: (error: unknown) => {
-      toast.error("Google Sheets connection failed", { description: getErrorMessage(error) });
+      toast.error(t("toast.googleConnectError"), { description: getErrorMessage(error) });
     },
     onSuccess: (result) => {
-      toast.success("Google Sheets connected", { description: `Signed in as ${result.email}` });
+      toast.success(t("toast.googleConnected"), { description: t("toast.googleConnectedDesc", { email: result.email }) });
     },
     onSettled: () => {
       invalidateGoogleState(queryClient);
@@ -89,14 +93,15 @@ export function useGoogleConnect() {
 
 export function useGoogleDisconnect() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   return useMutation({
     mutationFn: (sourceId: string) => ipc.googleDisconnect(sourceId),
     onError: (error: unknown) => {
-      toast.error("Google Sheets disconnect failed", { description: getErrorMessage(error) });
+      toast.error(t("toast.googleDisconnectError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success("Google Sheets disconnected");
+      toast.success(t("toast.googleDisconnected"));
     },
     onSettled: () => {
       invalidateGoogleState(queryClient);

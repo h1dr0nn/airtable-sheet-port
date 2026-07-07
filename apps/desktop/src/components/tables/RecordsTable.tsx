@@ -9,6 +9,7 @@ import { Check } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { Badge, Button, cn } from "@sheet-port/ui";
 import type { FieldSchema, TableRecord, TableSchema } from "@sheet-port/shared";
+import { useTranslation } from "../../i18n/useTranslation.js";
 import { TABLE_PAGE_SIZE } from "../../lib/constants.js";
 import { formatValue } from "../../lib/format.js";
 import type { TablePage } from "../../lib/ipc.js";
@@ -55,12 +56,13 @@ type RecordsTableProps = {
 };
 
 export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsTableProps) {
+  const { t } = useTranslation();
   const columnHelper = createColumnHelper<TableRecord>();
   const columns = useMemo(
     () => [
       columnHelper.accessor("id", {
         id: "__record_id",
-        header: "Record",
+        header: t("records.record"),
         cell: (info) => <span className="font-mono text-[12px] text-ink-muted">{info.getValue()}</span>
       }),
       ...schema.fields.map((field) =>
@@ -72,7 +74,7 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
         })
       )
     ],
-    [columnHelper, schema.fields]
+    [columnHelper, schema.fields, t]
   );
 
   const table = useReactTable({ data: page.records, columns, getCoreRowModel: getCoreRowModel() });
@@ -128,10 +130,7 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
       </div>
       <footer className="flex items-center justify-between border-t border-edge px-4 py-2.5">
         <p className="text-[12.5px] text-ink-muted">
-          <span className="tabular-nums text-ink">
-            {firstRow}-{lastRow}
-          </span>{" "}
-          of <span className="tabular-nums text-ink">{page.total}</span> records
+          {t("records.range", { first: firstRow, last: lastRow, total: page.total })}
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -140,7 +139,7 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
             disabled={pageIndex === 0}
             onClick={() => onPageChange(pageIndex - 1)}
           >
-            Previous
+            {t("records.previous")}
           </Button>
           <span className="text-[12px] tabular-nums text-ink-muted">
             {pageIndex + 1}/{pageCount}
@@ -151,7 +150,7 @@ export function RecordsTable({ schema, page, pageIndex, onPageChange }: RecordsT
             disabled={pageIndex + 1 >= pageCount}
             onClick={() => onPageChange(pageIndex + 1)}
           >
-            Next
+            {t("records.next")}
           </Button>
         </div>
       </footer>

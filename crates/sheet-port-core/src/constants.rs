@@ -77,6 +77,17 @@ pub const UI_FONT_FAMILY_VALUES: [&str; 3] = [
 ];
 pub const UI_FONT_FAMILY_DEFAULT: &str = UI_FONT_FAMILY_MODERN;
 
+/// Meta key for the UI language preference. Absent means the default ("en").
+/// See docs/ipc.md "Settings".
+pub const META_UI_LANGUAGE: &str = "ui_language";
+
+/// Allowed `ui_language` values; the first is the default when the key is
+/// absent or invalid.
+pub const UI_LANGUAGE_EN: &str = "en";
+pub const UI_LANGUAGE_VI: &str = "vi";
+pub const UI_LANGUAGE_VALUES: [&str; 2] = [UI_LANGUAGE_EN, UI_LANGUAGE_VI];
+pub const UI_LANGUAGE_DEFAULT: &str = UI_LANGUAGE_EN;
+
 /// Meta key selecting the MCP sidecar transport. Absent or "stdio" keeps the
 /// default stdio transport; "http" serves the same tools over a loopback HTTP
 /// endpoint. See docs/architecture.md and docs/security.md.

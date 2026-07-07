@@ -11,6 +11,7 @@ import {
   toast
 } from "@sheet-port/ui";
 import { getErrorMessage } from "../../lib/errors.js";
+import { useTranslation } from "../../i18n/useTranslation.js";
 import { ipc } from "../../lib/ipc.js";
 import { queryKeys } from "../../lib/queryKeys.js";
 
@@ -95,6 +96,7 @@ function readFileAsText(file: File): Promise<string> {
  */
 export function GoogleJsonImport() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [errorProblems, setErrorProblems] = useState<string[] | null>(null);
@@ -114,8 +116,8 @@ export function GoogleJsonImport() {
     await ipc.setGoogleClientId(clientId);
     await ipc.setGoogleClientSecret(clientSecret);
     await queryClient.invalidateQueries({ queryKey: queryKeys.googleConfig });
-    toast.success("Credentials Imported", {
-      description: "Client ID and secret saved to the OS keychain"
+    toast.success(t("settings.import.successTitle"), {
+      description: t("settings.import.successDescription")
     });
   };
 
@@ -130,7 +132,7 @@ export function GoogleJsonImport() {
       }
       await applyCredentials(result.value);
     } catch (error: unknown) {
-      toast.error("Import failed", { description: getErrorMessage(error) });
+      toast.error(t("settings.import.failed"), { description: getErrorMessage(error) });
     } finally {
       setIsImporting(false);
       resetInput();
@@ -154,7 +156,7 @@ export function GoogleJsonImport() {
         onChange={onChange}
       />
       <Button variant="ghost" size="sm" disabled={isImporting} onClick={openPicker}>
-        {isImporting ? "Importing..." : "Import JSON"}
+        {isImporting ? t("settings.google.importing") : t("settings.google.importJson")}
       </Button>
 
       <Dialog
@@ -167,10 +169,8 @@ export function GoogleJsonImport() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Invalid Credentials File</DialogTitle>
-            <DialogDescription>
-              The selected file could not be used. Fix the following and try again.
-            </DialogDescription>
+            <DialogTitle>{t("settings.import.invalidTitle")}</DialogTitle>
+            <DialogDescription>{t("settings.import.invalidDescription")}</DialogDescription>
           </DialogHeader>
           <ul className="list-disc space-y-1.5 pl-5 text-[12.5px] text-ink-muted">
             {(errorProblems ?? []).map((problem) => (
@@ -179,7 +179,7 @@ export function GoogleJsonImport() {
           </ul>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setErrorProblems(null)}>
-              Close
+              {t("common.close")}
             </Button>
           </DialogFooter>
         </DialogContent>

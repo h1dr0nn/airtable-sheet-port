@@ -21,6 +21,7 @@ import {
 } from "@sheet-port/ui";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import { useTheme } from "../hooks/useTheme.js";
+import { useTranslation } from "../i18n/useTranslation.js";
 import { isTauri } from "../lib/ipc.js";
 import { buildAppMenu, type MenuEntry } from "../lib/menu.js";
 import type { ScreenId } from "../lib/nav.js";
@@ -114,13 +115,13 @@ function renderMenuEntries(entries: readonly MenuEntry[]): ReactNode {
   });
 }
 
-function WindowControls() {
+function WindowControls({ t }: { t: ReturnType<typeof useTranslation>["t"] }) {
   const appWindow = getCurrentWindow();
   return (
     <div className="flex h-full items-stretch">
       <WindowControl
-        label="Minimize window"
-        tooltip="Minimize"
+        label={t("titlebar.minimizeWindow")}
+        tooltip={t("titlebar.minimize")}
         onClick={() => void appWindow.minimize()}
       >
         <svg {...GLYPH_PROPS}>
@@ -128,8 +129,8 @@ function WindowControls() {
         </svg>
       </WindowControl>
       <WindowControl
-        label="Toggle maximize"
-        tooltip="Maximize"
+        label={t("titlebar.toggleMaximize")}
+        tooltip={t("titlebar.maximize")}
         onClick={() => void appWindow.toggleMaximize()}
       >
         <svg {...GLYPH_PROPS}>
@@ -137,8 +138,8 @@ function WindowControls() {
         </svg>
       </WindowControl>
       <WindowControl
-        label="Close window"
-        tooltip="Close"
+        label={t("titlebar.closeWindow")}
+        tooltip={t("titlebar.close")}
         isClose
         onClick={() => void appWindow.close()}
       >
@@ -172,19 +173,24 @@ export function Titlebar({
   const queryClient = useQueryClient();
   const { setting, setSetting } = useTheme();
   const { data: status } = useAppStatus();
+  const { t } = useTranslation();
   const [isActivityOpen, setIsActivityOpen] = useState(false);
 
   const copyVersion = () => {
     const version = status?.appVersion;
     if (!version) {
-      toast.error("Version unavailable", { description: "App status has not loaded yet" });
+      toast.error(t("titlebar.versionUnavailable"), {
+        description: t("titlebar.versionUnavailableDesc")
+      });
       return;
     }
     navigator.clipboard
       .writeText(version)
-      .then(() => toast.success("Version copied", { description: version }))
+      .then(() => toast.success(t("titlebar.versionCopied"), { description: version }))
       .catch((error: unknown) =>
-        toast.error("Copy failed", { description: error instanceof Error ? error.message : String(error) })
+        toast.error(t("titlebar.copyFailed"), {
+          description: error instanceof Error ? error.message : String(error)
+        })
       );
   };
 
@@ -192,12 +198,13 @@ export function Titlebar({
     navigate: onNavigate,
     reloadData: () => {
       void queryClient.invalidateQueries();
-      toast.info("Reloading data");
+      toast.info(t("titlebar.reloadingData"));
     },
     quit: isTauri ? () => void getCurrentWindow().close() : null,
     themeSetting: setting,
     setTheme: setSetting,
-    copyVersion
+    copyVersion,
+    t
   });
 
   return (
@@ -219,7 +226,7 @@ export function Titlebar({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  aria-label="Application menu"
+                  aria-label={t("titlebar.applicationMenu")}
                   className={TITLEBAR_BUTTON_CLASS}
                 >
                   <svg {...MENU_GLYPH_PROPS}>
@@ -228,7 +235,7 @@ export function Titlebar({
                 </button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Menu</TooltipContent>
+            <TooltipContent side="bottom">{t("titlebar.menu")}</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="start">{renderMenuEntries(menu)}</DropdownMenuContent>
         </DropdownMenu>
@@ -237,7 +244,7 @@ export function Titlebar({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+              aria-label={sidebarCollapsed ? t("titlebar.expandSidebar") : t("titlebar.collapseSidebar")}
               aria-pressed={sidebarCollapsed}
               onClick={onToggleSidebar}
               className={TITLEBAR_BUTTON_CLASS}
@@ -250,7 +257,7 @@ export function Titlebar({
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">
-            {sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            {sidebarCollapsed ? t("titlebar.expandSidebar") : t("titlebar.collapseSidebar")}
           </TooltipContent>
         </Tooltip>
 
@@ -258,7 +265,7 @@ export function Titlebar({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label="Open command palette"
+              aria-label={t("titlebar.commandPalette")}
               onClick={onOpenPalette}
               className={TITLEBAR_BUTTON_CLASS}
             >
@@ -269,7 +276,7 @@ export function Titlebar({
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">
-            Search
+            {t("titlebar.search")}
             <TooltipHint>Ctrl K</TooltipHint>
           </TooltipContent>
         </Tooltip>
@@ -290,7 +297,7 @@ export function Titlebar({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label="Activity"
+                aria-label={t("titlebar.activity")}
                 aria-expanded={isActivityOpen}
                 onClick={() => setIsActivityOpen((current) => !current)}
                 className={cn(TITLEBAR_BUTTON_CLASS, isActivityOpen && "bg-surface text-ink")}
@@ -298,11 +305,11 @@ export function Titlebar({
                 <Bell size={14} strokeWidth={1.5} aria-hidden />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Activity</TooltipContent>
+            <TooltipContent side="bottom">{t("titlebar.activity")}</TooltipContent>
           </Tooltip>
           <AuditDropdown open={isActivityOpen} onOpenChange={setIsActivityOpen} />
         </div>
-        {isTauri ? <WindowControls /> : null}
+        {isTauri ? <WindowControls t={t} /> : null}
       </div>
     </header>
   );

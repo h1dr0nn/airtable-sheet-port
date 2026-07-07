@@ -18,6 +18,7 @@ import {
 import type { ReactNode } from "react";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import type { UpdateState } from "../hooks/useUpdate.js";
+import { useTranslation, type TFunction } from "../i18n/useTranslation.js";
 import { NAV, type ScreenId } from "../lib/nav.js";
 
 const NAV_ICON_SIZE = 15;
@@ -67,6 +68,7 @@ type SidebarProps = {
 
 export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps) {
   const { data: status } = useAppStatus();
+  const { t } = useTranslation();
   const pendingCount = status?.pendingCount ?? 0;
   const mcpRunning = status?.mcpRunning ?? false;
 
@@ -85,8 +87,9 @@ export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps)
         {NAV.map((item) => {
           const isActive = active === item.id;
           const Icon = NAV_ICONS[item.id];
+          const label = t(item.labelKey);
           return (
-            <RailTooltip key={item.id} collapsed={collapsed} label={item.label}>
+            <RailTooltip key={item.id} collapsed={collapsed} label={label}>
               <button
                 type="button"
                 aria-current={isActive ? "page" : undefined}
@@ -115,9 +118,9 @@ export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps)
                   className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
                 />
                 {collapsed ? (
-                  <span className="sr-only">{item.label}</span>
+                  <span className="sr-only">{label}</span>
                 ) : (
-                  <span className="truncate">{item.label}</span>
+                  <span className="truncate">{label}</span>
                 )}
               </button>
             </RailTooltip>
@@ -127,13 +130,14 @@ export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps)
 
       <div className={cn("border-t border-edge py-3", collapsed ? "px-2" : "px-3")}>
         {update.available ? (
-          <UpdateCard update={update} collapsed={collapsed} />
+          <UpdateCard update={update} collapsed={collapsed} t={t} />
         ) : (
           <StatusCluster
             pendingCount={pendingCount}
             mcpRunning={mcpRunning}
             onNavigate={onNavigate}
             collapsed={collapsed}
+            t={t}
           />
         )}
       </div>
@@ -146,15 +150,19 @@ type StatusClusterProps = {
   mcpRunning: boolean;
   onNavigate: (screen: ScreenId) => void;
   collapsed: boolean;
+  t: TFunction;
 };
 
 /** Default bottom cluster: pending approvals shortcut + MCP heartbeat status.
  * Collapsed condenses both into icon+dot rail controls with tooltips. */
-function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed }: StatusClusterProps) {
+function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: StatusClusterProps) {
+  const mcpStatusLabel = mcpRunning ? t("common.running") : t("common.offline");
   if (collapsed) {
-    const mcpLabel = mcpRunning ? "MCP Server: Running" : "MCP Server: Offline";
+    const mcpLabel = `${t("dashboard.mcpServer")}: ${mcpStatusLabel}`;
     const pendingLabel =
-      pendingCount > 0 ? `Pending Approvals: ${pendingCount}` : "No Pending Approvals";
+      pendingCount > 0
+        ? `${t("dashboard.pendingApprovals")}: ${pendingCount}`
+        : t("dashboard.nothingWaiting");
     return (
       <div className="flex flex-col items-center gap-1">
         <RailTooltip collapsed label={pendingLabel}>
@@ -203,7 +211,7 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed }: Stat
           FOCUS_RING
         )}
       >
-        Pending Approvals
+        {t("dashboard.pendingApprovals")}
         <span
           className={cn(
             "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5",
@@ -216,9 +224,9 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed }: Stat
       </button>
       <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[12px]">
         <StatusDot status={mcpRunning ? "live" : "idle"} />
-        <span className="text-ink-muted">MCP Server</span>
+        <span className="text-ink-muted">{t("dashboard.mcpServer")}</span>
         <span className={cn("ml-auto font-medium", mcpRunning ? "text-success" : "text-ink-muted")}>
-          {mcpRunning ? "Running" : "Offline"}
+          {mcpStatusLabel}
         </span>
       </div>
     </>
@@ -228,12 +236,14 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed }: Stat
 /** Accent-tinted notification shown in place of the status cluster when a newer
  * version is available. The button drives update.install() (download + relaunch).
  * Collapsed shrinks to a single accent icon button that still triggers install. */
-function UpdateCard({ update, collapsed }: { update: UpdateState; collapsed: boolean }) {
+function UpdateCard({ update, collapsed, t }: { update: UpdateState; collapsed: boolean; t: TFunction }) {
   if (collapsed) {
-    const label = update.version ? `Update Available: v${update.version}` : "Update Available";
+    const label = update.version
+      ? t("sidebar.updateAvailableVersion", { version: update.version })
+      : t("sidebar.updateAvailable");
     return (
       <div className="flex justify-center">
-        <RailTooltip collapsed label={update.downloading ? "Downloading Update..." : label}>
+        <RailTooltip collapsed label={update.downloading ? t("sidebar.downloadingUpdate") : label}>
           <button
             type="button"
             aria-label={label}
@@ -258,7 +268,9 @@ function UpdateCard({ update, collapsed }: { update: UpdateState; collapsed: boo
       <div className="flex items-center gap-2">
         <ArrowUpCircle size={15} strokeWidth={1.75} aria-hidden className="shrink-0 text-accent" />
         <div className="min-w-0">
-          <p className="truncate text-[12.5px] font-semibold text-accent">Update Available</p>
+          <p className="truncate text-[12.5px] font-semibold text-accent">
+            {t("sidebar.updateAvailable")}
+          </p>
           {update.version ? (
             <p className="truncate text-[11px] text-ink-muted">v{update.version}</p>
           ) : null}
@@ -275,7 +287,7 @@ function UpdateCard({ update, collapsed }: { update: UpdateState; collapsed: boo
           FOCUS_RING
         )}
       >
-        {update.downloading ? "Downloading..." : "Update"}
+        {update.downloading ? t("sidebar.downloading") : t("sidebar.update")}
       </button>
     </div>
   );
