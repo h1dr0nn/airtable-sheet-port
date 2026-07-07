@@ -106,14 +106,17 @@ shell exposes them through four commands (see `docs/ipc.md` shapes):
   `{command,args}` stdio entry pointing at the resolved release sidecar, or a
   `{type:"sse",url}` http entry (`http://127.0.0.1:{port}/mcp`) when the HTTP transport
   is selected. If the release binary is not built yet the entry still points at the
-  expected path and the result reports `binaryExists: false`.
+  expected path and the result reports `binaryExists: false`. Codex is TOML instead of
+  JSON: the same entry is written as an `[mcp_servers.airtable-sheet-port]` table
+  (`command`+`args` for stdio, `url` for http) via `toml_edit`, preserving the user's
+  other tables, top-level keys, and comments.
 - `mcp_unregister_client(id)` - removes only our entry, leaving all other servers intact.
 - `mcp_configure_all()` - configures every detected, installed, detectable client.
 
 Every configure/unregister writes an audit event (`actor = user`,
 `action = mcp_client_configured` / `mcp_client_unregistered`, `metadata.client = <id>`).
 Writes create parent directories, keep the file otherwise byte-for-byte, and refuse to
-touch a config file that is present but not valid JSON.
+touch a config file that is present but not valid JSON (or, for Codex, not valid TOML).
 
 ### Supported clients
 
@@ -124,6 +127,8 @@ touch a config file that is present but not valid JSON.
 | Cursor | `~/.cursor/mcp.json` | `mcpServers` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
 | Cline (VS Code) | VS Code `User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | `mcpServers` |
+| Antigravity | `~/.gemini/config/mcp_config.json` | `mcpServers` |
+| Codex | `~/.codex/config.toml` | `mcp_servers` (TOML) |
 | VS Code (Copilot) | not yet supported (`detectable = false`) | `servers` |
 
 VS Code Copilot is intentionally left `detectable = false`: its workspace form

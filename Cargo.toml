@@ -28,6 +28,10 @@ url = "2"
 # PKCE code challenge (RFC 7636): SHA-256 digest, base64url without padding.
 sha2 = "0.10"
 base64 = "0.22"
+# Format-preserving TOML editing for Codex's ~/.codex/config.toml: merge/remove
+# only our [mcp_servers.airtable-sheet-port] table while keeping the user's
+# other tables, top-level keys, comments, and formatting byte-for-byte.
+toml_edit = "0.25"
 # MCP sidecar stack (crates/sheet-port-mcp). stdio is the default transport;
 # transport-streamable-http-server adds the optional 127.0.0.1 HTTP transport.
 rmcp = { version = "2.1", features = ["server", "macros", "transport-io", "transport-streamable-http-server"], default-features = false }

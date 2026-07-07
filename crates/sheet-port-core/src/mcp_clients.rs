@@ -4,7 +4,8 @@
 //! locally installed MCP clients - Claude Desktop, Claude Code, Cursor, and
 //! so on - modelled on MCP-for-Unity / adb-compass. Everything here is
 //! data-driven: [`registry`] lists the known clients with their per-OS config
-//! path and the JSON shape they expect, and the three public functions
+//! path and the config shape they expect (JSON `mcpServers`, or Codex's TOML
+//! `[mcp_servers.<name>]` tables), and the three public functions
 //! ([`detect_clients`], [`configure_client`], [`unregister_client`]) walk that
 //! registry so adding a new client is a one-line change, never new logic.
 //!
@@ -44,32 +45,48 @@ impl ServerSpec {
     }
 }
 
-/// How a client's config JSON names the map that holds server entries, and
-/// how a single entry is shaped. Most clients use the `mcpServers` object with
-/// Claude Desktop's `{command,args}` / `{type:"sse",url}` entry shape; the
-/// enum leaves room to add divergent shapes (e.g. VSCode's `servers` key)
-/// without branching in the read/write code.
+/// How a client stores its MCP server entries, on disk and per entry. Each
+/// variant carries both a file format (JSON vs TOML) and the naming/entry
+/// convention that format uses, so the read/write dispatch can branch on the
+/// shape without any per-client special-casing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigShape {
-    /// `{ "mcpServers": { "<name>": <entry> } }`. Entry is `{command,args}`
+    /// JSON `{ "mcpServers": { "<name>": <entry> } }`. Entry is `{command,args}`
     /// for stdio or `{type:"sse",url}` for http - the de-facto standard shared
-    /// by Claude Desktop, Claude Code, Cursor, Windsurf, and Cline.
+    /// by Claude Desktop, Claude Code, Cursor, Windsurf, Cline, and Antigravity.
     McpServers,
+    /// TOML with `[mcp_servers.<name>]` tables (`command`+`args` for stdio, or
+    /// `url` for http) - the Codex `~/.codex/config.toml` convention. Edited
+    /// with `toml_edit` so the user's other tables, top-level keys, comments,
+    /// and formatting are preserved.
+    Toml,
 }
 
+/// The TOML top-level table (dotted-key prefix) holding Codex's server tables.
+const TOML_SERVERS_TABLE: &str = "mcp_servers";
+
 impl ConfigShape {
-    /// The top-level object key that holds the server map for this shape.
+    /// The JSON top-level object key that holds the server map for this shape.
+    /// Only meaningful for JSON shapes; TOML uses [`TOML_SERVERS_TABLE`].
     fn servers_key(self) -> &'static str {
         match self {
             Self::McpServers => "mcpServers",
+            Self::Toml => TOML_SERVERS_TABLE,
         }
     }
 
+    /// Whether this shape is stored as TOML (dispatch to the `toml_edit` path)
+    /// rather than JSON (`serde_json` path).
+    fn is_toml(self) -> bool {
+        matches!(self, Self::Toml)
+    }
+
     /// Serializes a [`ServerSpec`] into this shape's per-entry JSON value.
+    /// JSON shapes only; TOML entries are built directly in [`toml_merge`].
     fn entry_value(self, spec: &ServerSpec) -> Value {
         match self {
             // `type: "sse"` is the http entry form the mcpServers clients read.
-            Self::McpServers => match spec {
+            Self::McpServers | Self::Toml => match spec {
                 ServerSpec::Stdio { command, args } => json!({
                     "command": command,
                     "args": args,
@@ -196,6 +213,24 @@ fn cline_path() -> Option<PathBuf> {
     )
 }
 
+/// Antigravity: `~/.gemini/config/mcp_config.json` (same on every OS). The
+/// Antigravity 2.0 app, IDE, and CLI all read this single file, so one entry
+/// covers them all.
+fn antigravity_path() -> Option<PathBuf> {
+    Some(
+        home()?
+            .join(".gemini")
+            .join("config")
+            .join("mcp_config.json"),
+    )
+}
+
+/// Codex: `~/.codex/config.toml` (same on every OS). A TOML file whose
+/// `[mcp_servers.<name>]` tables hold each server.
+fn codex_path() -> Option<PathBuf> {
+    Some(home()?.join(".codex").join("config.toml"))
+}
+
 /// The data-driven client registry. Order is the order the UI lists them.
 ///
 /// TODO(mcp-clients): VSCode Copilot is intentionally `detectable = false`.
@@ -240,6 +275,20 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: cline_path,
+        },
+        ClientDef {
+            id: "antigravity",
+            display_name: "Antigravity",
+            shape: ConfigShape::McpServers,
+            detectable: true,
+            config_path: antigravity_path,
+        },
+        ClientDef {
+            id: "codex",
+            display_name: "Codex",
+            shape: ConfigShape::Toml,
+            detectable: true,
+            config_path: codex_path,
         },
         ClientDef {
             id: "vscode-copilot",
@@ -356,12 +405,15 @@ fn servers_map<'a>(
 }
 
 /// Whether a client's config file already contains our server entry. A missing
-/// or empty file (or a read error surfaced by [`read_config_object`]) means
-/// not configured.
+/// or empty file (or a read/parse error) means not configured. Dispatches to
+/// the TOML detector for TOML shapes and the JSON one otherwise.
 fn is_configured(client: &ClientDef) -> bool {
     let Some(path) = (client.config_path)() else {
         return false;
     };
+    if client.shape.is_toml() {
+        return toml_is_configured(&path);
+    }
     let Ok(root) = read_config_object(&path) else {
         return false;
     };
@@ -399,12 +451,16 @@ pub fn detect_clients() -> Vec<DetectedClient> {
 /// Merges our server entry into the config file at `path` (shape `shape`),
 /// preserving every other server and all unrelated top-level keys. Creates the
 /// file and parent directories on first configure. Pure over the filesystem
-/// (no env/registry lookup) so it is unit-testable with temp paths.
+/// (no env/registry lookup) so it is unit-testable with temp paths. Dispatches
+/// to the `toml_edit` path for TOML shapes and `serde_json` otherwise.
 fn merge_entry_into(
     path: &std::path::Path,
     shape: ConfigShape,
     spec: &ServerSpec,
 ) -> Result<(), CoreError> {
+    if shape.is_toml() {
+        return toml_merge(path, spec);
+    }
     let mut root = read_config_object(path)?;
     let servers = servers_map(&mut root, shape, path)?;
     servers.insert(MCP_CLIENT_SERVER_NAME.to_string(), shape.entry_value(spec));
@@ -419,6 +475,9 @@ fn remove_entry_from(path: &std::path::Path, shape: ConfigShape) -> Result<bool,
     if !path.exists() {
         return Ok(false);
     }
+    if shape.is_toml() {
+        return toml_remove(path);
+    }
     let mut root = read_config_object(path)?;
     let key = shape.servers_key();
     let removed = root
@@ -431,6 +490,146 @@ fn remove_entry_from(path: &std::path::Path, shape: ConfigShape) -> Result<bool,
     }
     write_config_object(path, root)?;
     Ok(true)
+}
+
+// --- TOML path (Codex ~/.codex/config.toml) --------------------------------
+// Codex stores servers as `[mcp_servers.<name>]` tables. We edit the file with
+// `toml_edit` so the user's other tables, top-level keys, comments, and
+// formatting survive byte-for-byte; only our own table is written or removed.
+
+/// Reads a config file into a `toml_edit` document. A missing or empty file
+/// yields an empty document (first-time configure); a present-but-malformed
+/// file is an error rather than being silently overwritten, mirroring the JSON
+/// path's clobber-safety.
+fn read_toml_document(path: &std::path::Path) -> Result<toml_edit::DocumentMut, CoreError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) if text.trim().is_empty() => Ok(toml_edit::DocumentMut::new()),
+        Ok(text) => text.parse::<toml_edit::DocumentMut>().map_err(|error| {
+            CoreError::Storage(format!(
+                "Config file {} is not valid TOML: {error}",
+                path.display()
+            ))
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(toml_edit::DocumentMut::new())
+        }
+        Err(error) => Err(CoreError::Storage(format!(
+            "Could not read config file {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+/// Writes a `toml_edit` document back, creating parent directories. The
+/// document already carries a trailing newline from `toml_edit`.
+fn write_toml_document(
+    path: &std::path::Path,
+    document: &toml_edit::DocumentMut,
+) -> Result<(), CoreError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            CoreError::Storage(format!(
+                "Could not create config directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    std::fs::write(path, document.to_string()).map_err(|error| {
+        CoreError::Storage(format!(
+            "Could not write config file {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// Borrows (creating if absent) the `[mcp_servers]` table, kept implicit so it
+/// only renders as `[mcp_servers.<name>]` sub-tables. Errors if the key exists
+/// but is not a table, so we never overwrite a value the user put there.
+fn toml_servers_table<'a>(
+    document: &'a mut toml_edit::DocumentMut,
+    path: &std::path::Path,
+) -> Result<&'a mut toml_edit::Table, CoreError> {
+    let item = document
+        .as_table_mut()
+        .entry(TOML_SERVERS_TABLE)
+        .or_insert_with(|| {
+            let mut table = toml_edit::Table::new();
+            // Implicit so the parent header is not emitted on its own; only the
+            // `[mcp_servers.<name>]` sub-table headers appear.
+            table.set_implicit(true);
+            toml_edit::Item::Table(table)
+        });
+    item.as_table_mut().ok_or_else(|| {
+        CoreError::Storage(format!(
+            "Config file {} has a non-table '{TOML_SERVERS_TABLE}'",
+            path.display()
+        ))
+    })
+}
+
+/// Builds the `[mcp_servers.<name>]` table body for a [`ServerSpec`]: stdio
+/// writes `command` + `args`, http writes `url`.
+fn toml_entry_table(spec: &ServerSpec) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    match spec {
+        ServerSpec::Stdio { command, args } => {
+            table.insert("command", toml_edit::value(command.as_str()));
+            let mut array = toml_edit::Array::new();
+            for arg in args {
+                array.push(arg.as_str());
+            }
+            table.insert("args", toml_edit::value(array));
+        }
+        ServerSpec::Http { url } => {
+            table.insert("url", toml_edit::value(url.as_str()));
+        }
+    }
+    table
+}
+
+/// Merges our `[mcp_servers.airtable-sheet-port]` table into `path`, preserving
+/// every other table, top-level key, comment, and formatting. Creates the file
+/// and parent directories on first configure.
+fn toml_merge(path: &std::path::Path, spec: &ServerSpec) -> Result<(), CoreError> {
+    let mut document = read_toml_document(path)?;
+    let servers = toml_servers_table(&mut document, path)?;
+    servers.insert(
+        MCP_CLIENT_SERVER_NAME,
+        toml_edit::Item::Table(toml_entry_table(spec)),
+    );
+    write_toml_document(path, &document)
+}
+
+/// Removes only our `[mcp_servers.airtable-sheet-port]` table from `path`.
+/// Returns whether the file was actually rewritten. A missing servers table or
+/// already-absent entry is a no-op success.
+fn toml_remove(path: &std::path::Path) -> Result<bool, CoreError> {
+    let mut document = read_toml_document(path)?;
+    let removed = document
+        .as_table_mut()
+        .get_mut(TOML_SERVERS_TABLE)
+        .and_then(toml_edit::Item::as_table_mut)
+        .map(|servers| servers.remove(MCP_CLIENT_SERVER_NAME).is_some())
+        .unwrap_or(false);
+    if !removed {
+        return Ok(false);
+    }
+    write_toml_document(path, &document)?;
+    Ok(true)
+}
+
+/// Whether a Codex-style TOML config already contains our server table. A
+/// missing, empty, or malformed file means not configured.
+fn toml_is_configured(path: &std::path::Path) -> bool {
+    let Ok(document) = read_toml_document(path) else {
+        return false;
+    };
+    document
+        .as_table()
+        .get(TOML_SERVERS_TABLE)
+        .and_then(toml_edit::Item::as_table)
+        .map(|servers| servers.contains_key(MCP_CLIENT_SERVER_NAME))
+        .unwrap_or(false)
 }
 
 /// Merges our server entry (named [`MCP_CLIENT_SERVER_NAME`]) into `id`'s
