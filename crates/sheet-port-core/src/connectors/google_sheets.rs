@@ -8,14 +8,16 @@
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use super::{js_string, TableConnector};
+use super::{
+    clamp_read_window, column_id_for_index, column_index_for_id, js_string, TableConnector,
+};
 use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
 use crate::google;
 use crate::sources;
 use crate::types::{
-    DataSource, FieldSchema, JsonMap, ReadOptions, RecordPatch, SourceKind, TableRecord, TableRef,
-    TableSchema,
+    DataSource, FieldSchema, GridColumn, GridData, GridRow, JsonMap, ReadOptions, RecordPatch,
+    SheetTab, SourceKind, TableRecord, TableRef, TableSchema,
 };
 
 const DRIVE_FILES_ENDPOINT: &str = "https://www.googleapis.com/drive/v3/files";
@@ -319,6 +321,190 @@ impl TableConnector for GoogleSheetsConnector {
         )?;
         Ok(updated)
     }
+
+    /// Every tab of the spreadsheet, ordered left to right by its `index`.
+    fn list_sheet_tabs(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        spreadsheet_id: &str,
+    ) -> Result<Vec<SheetTab>, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let meta = fetch_spreadsheet_meta(&token, spreadsheet_id)?;
+        let mut tabs: Vec<SheetTab> = meta
+            .sheets
+            .iter()
+            .map(|sheet| SheetTab {
+                gid: sheet.sheet_id.to_string(),
+                title: sheet.title.clone(),
+                index: sheet.index,
+            })
+            .collect();
+        tabs.sort_by_key(|tab| tab.index);
+        Ok(tabs)
+    }
+
+    /// Header row 1 becomes the columns (id = A1 column letter, title = header
+    /// cell); each data row becomes a string-cell row keyed by column id. One
+    /// unbounded fetch keeps `totalRows` exact, then the page window is sliced
+    /// locally with the standard read bounds.
+    fn read_grid(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<GridData, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
+        if header.is_empty() {
+            return Ok(GridData {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                total_rows: 0,
+            });
+        }
+        let columns: Vec<GridColumn> = header
+            .iter()
+            .enumerate()
+            .map(|(index, name)| GridColumn {
+                id: column_id_for_index(index),
+                title: name.clone(),
+            })
+            .collect();
+        let all_rows = fetch_values(
+            &token,
+            &sheet.spreadsheet_id,
+            &sheet.range(&format!("A{FIRST_DATA_ROW}:{LAST_COLUMN}")),
+        )?;
+        let total_rows = all_rows.len() as i64;
+        let (limit, offset) = clamp_read_window(limit, offset);
+        let rows = all_rows
+            .iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .map(|row| grid_row(&header, row))
+            .collect();
+        Ok(GridData {
+            columns,
+            rows,
+            total_rows,
+        })
+    }
+
+    /// Writes one cell via `values.batchUpdate` (RAW). `row_index` is 0-based
+    /// over data rows, so the sheet row is `FIRST_DATA_ROW + row_index`; the
+    /// column id must map to an existing header column.
+    fn write_cell(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        row_index: i64,
+        column_id: &str,
+        value: &str,
+    ) -> Result<(), CoreError> {
+        if row_index < 0 {
+            return Err(CoreError::InvalidInput(format!(
+                "Row index must not be negative, got {row_index}"
+            )));
+        }
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
+        let column = column_index_for_id(column_id)
+            .filter(|index| *index < header.len())
+            .ok_or_else(|| CoreError::InvalidInput(format!("Unknown column {column_id}")))?;
+
+        let sheet_row = FIRST_DATA_ROW + row_index;
+        let cell = format!("{}{sheet_row}", column_id_for_index(column));
+        let url = values_batch_update_url(&sheet.spreadsheet_id)?;
+        google::post_json(
+            &token,
+            url.as_str(),
+            &json!({
+                "valueInputOption": VALUE_INPUT_RAW,
+                "data": [{ "range": sheet.range(&cell), "values": [[value]] }],
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// Appends one row via `values.append` (RAW). Cells are ordered by the
+    /// header; a column id absent from `values` writes an empty cell. Returns
+    /// the new 0-based data row index parsed from the API's updatedRange.
+    fn append_grid_row(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        values: &GridRow,
+    ) -> Result<i64, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
+        if header.is_empty() {
+            return Err(CoreError::InvalidInput(format!(
+                "Spreadsheet {} has no header row to map cells onto",
+                sheet.spreadsheet_id
+            )));
+        }
+        let row: Vec<Value> = (0..header.len())
+            .map(|index| {
+                Value::String(
+                    values
+                        .get(&column_id_for_index(index))
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        let url = values_append_url(
+            &sheet.spreadsheet_id,
+            &sheet.range(&format!("A{HEADER_ROW}")),
+        )?;
+        let body = google::post_json(&token, url.as_str(), &json!({ "values": [row] }))?;
+        let start_row = body["updates"]["updatedRange"]
+            .as_str()
+            .and_then(parse_start_row_from_range)
+            .ok_or_else(|| {
+                CoreError::Storage(
+                    "Google Sheets append response had no usable updatedRange".to_string(),
+                )
+            })?;
+        Ok(start_row - FIRST_DATA_ROW)
+    }
+}
+
+/// Parses a Google Sheets URL, bare spreadsheet id, or `id:selector` down to
+/// just the spreadsheet id (SSRF-guarded by the same parser the connector
+/// uses). Exposed for the Workbench add-spreadsheet flow.
+pub fn parse_spreadsheet_id(input: &str) -> Result<String, CoreError> {
+    Ok(ParsedTableId::parse(input)?.spreadsheet_id)
+}
+
+/// The spreadsheet's own title (`properties.title`), for the Workbench display
+/// name. Uses the connected account's token against the fixed Sheets endpoint.
+pub fn spreadsheet_title(
+    conn: &Connection,
+    source_id: &str,
+    spreadsheet_id: &str,
+) -> Result<String, CoreError> {
+    let token = google::access_token(conn, source_id)?;
+    Ok(fetch_spreadsheet_meta(&token, spreadsheet_id)?.title)
+}
+
+/// Builds one GridData row from a raw sheet row: every header column gets a
+/// string cell keyed by its A1 column id, empty when the row is short.
+fn grid_row(header: &[String], row: &[Value]) -> GridRow {
+    (0..header.len())
+        .map(|index| {
+            let cell = row.get(index).map(js_string).unwrap_or_default();
+            (column_id_for_index(index), cell)
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +651,8 @@ struct SpreadsheetMeta {
 struct SheetProperties {
     sheet_id: i64,
     title: String,
+    /// Tab order, left to right (`sheets[].properties.index`).
+    index: i64,
 }
 
 /// `GET {SHEETS_ENDPOINT}/{id}?fields=properties.title,sheets.properties(sheetId,title)`.
@@ -473,7 +661,7 @@ fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<Spreadshe
     let mut url = sheets_base_url(spreadsheet_id)?;
     url.query_pairs_mut().append_pair(
         "fields",
-        "properties.title,sheets.properties(sheetId,title)",
+        "properties.title,sheets.properties(sheetId,title,index)",
     );
     let body = google::get_json(token, url.as_str())?;
     let title = body["properties"]["title"]
@@ -490,6 +678,8 @@ fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<Spreadshe
                     Some(SheetProperties {
                         sheet_id: properties["sheetId"].as_i64()?,
                         title: properties["title"].as_str()?.to_string(),
+                        // The first tab may omit index in the API response.
+                        index: properties["index"].as_i64().unwrap_or(0),
                     })
                 })
                 .collect()
@@ -996,10 +1186,12 @@ mod tests {
                 SheetProperties {
                     sheet_id: 0,
                     title: "Sheet1".to_string(),
+                    index: 0,
                 },
                 SheetProperties {
                     sheet_id: 987,
                     title: "Data".to_string(),
+                    index: 1,
                 },
             ],
         };

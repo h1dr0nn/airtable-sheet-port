@@ -336,6 +336,91 @@ Removes ONE account: its keychain credential and its
 that is not a keyed Google account. Audit event `google_disconnected` (actor
 user, source = `sourceId`).
 
+## Workbench
+
+A user-curated tree of spreadsheets grouped into folders, distinct from the raw
+`list_tables` path. Folders and items live in `workbench_folders` /
+`workbench_items` (see `schema.sql`); deleting a folder falls its items back to
+Ungrouped (`folder_id` NULL) via `ON DELETE SET NULL`. Every folder/item
+mutation records an audit event (actor user). Grid reads and writes are DIRECT
+(no pending-change/approval flow): the desktop user is the approver.
+
+```ts
+type WorkbenchFolder = { id: string; name: string; position: number };
+type WorkbenchItem = {
+  id: string;
+  folderId: string | null;   // null -> Ungrouped
+  sourceId: string;          // owning Google account source id
+  spreadsheetId: string;
+  name: string;              // resolved spreadsheet title
+  position: number;
+};
+type SheetTab = { gid: string; title: string; index: number };
+type GridData = {
+  columns: { id: string; title: string }[]; // id = A1 column letter
+  rows: Record<string, string>[];            // each row keyed by column id
+  totalRows: number;                         // data rows ignoring limit/offset
+};
+```
+
+### `workbench_tree() -> { folders: WorkbenchFolder[]; items: WorkbenchItem[] }`
+
+Folders ordered by `position` then `name`; items by `position`.
+
+### `create_workbench_folder(name: string) -> WorkbenchFolder`
+
+`position = max + 1`. Name is trimmed and must not be empty. Audit
+`workbench_folder_created`.
+
+### `rename_workbench_folder(id: string, name: string) -> void`
+
+Trimmed non-empty name. Unknown id -> `Err`. Audit `workbench_folder_renamed`.
+
+### `delete_workbench_folder(id: string) -> void`
+
+Its items fall back to Ungrouped. Unknown id -> `Err`. Audit
+`workbench_folder_deleted`.
+
+### `add_workbench_spreadsheet(folderId: string | null, urlOrId: string) -> WorkbenchItem`
+
+Source = the first connected `google_sheets` source (clear error when none is
+connected). `urlOrId` is parsed to a spreadsheet id (Google URL / bare id /
+`id:selector`); the name is the spreadsheet's own title. If the same spreadsheet
+already exists in that folder the existing item is returned. `position = max + 1`
+within the folder. Audit `workbench_item_added`.
+
+### `remove_workbench_item(id: string) -> void`
+
+Removes the item (does not touch the source). Unknown id -> `Err`. Audit
+`workbench_item_removed`.
+
+### `move_workbench_item(id: string, folderId: string | null) -> void`
+
+Moves the item to the end of the destination folder (or Ungrouped when null).
+Unknown item id or non-null target folder -> `Err`. Audit `workbench_item_moved`.
+
+### `list_workbench_sheet_tabs(itemId: string) -> SheetTab[]`
+
+Resolves the item to its source + spreadsheet, then lists the tabs left to right.
+
+### `read_workbench_sheet(itemId: string, gid: string, limit: number | null, offset: number | null) -> GridData`
+
+Reads one tab (`tableId = {spreadsheetId}:{gid}`) as string cells. Columns come
+from the header row (id = A1 column letter, title = header cell). Default limit
+100, clamp 1..=500, offset floors at 0; `totalRows` counts all data rows.
+
+### `update_workbench_cell(itemId: string, gid: string, rowIndex: number, columnId: string, value: string) -> void`
+
+Writes one cell directly. `rowIndex` is 0-based over data rows (sheet row =
+header + 1 + rowIndex); `columnId` is the A1 column letter and must map to an
+existing column. Audit `workbench_cell_updated` (actor user).
+
+### `append_workbench_row(itemId: string, gid: string, values: Record<string, string>) -> { rowIndex: number }`
+
+Appends a row ordered by the header (values keyed by column id; absent columns
+write empty cells) and returns its new 0-based data row index. Audit
+`workbench_row_appended` (actor user).
+
 ## Confirmation enforcement (cross-process)
 
 1. Agent calls `preview_update_records` / `append_records` -> sidecar inserts a

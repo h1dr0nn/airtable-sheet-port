@@ -106,6 +106,38 @@ pub struct ReadOptions {
     pub offset: Option<i64>,
 }
 
+/// One tab (sheet) inside a spreadsheet, like a Google Sheets bottom tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetTab {
+    /// Provider sheet id (the Google `gid`), stringified for the frontend.
+    pub gid: String,
+    pub title: String,
+    /// Tab order, left to right.
+    pub index: i64,
+}
+
+/// A grid column: a stable id (A1 column letter) plus the header title.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GridColumn {
+    pub id: String,
+    pub title: String,
+}
+
+/// One grid row keyed by column id; every value is a string cell (v1). A
+/// `BTreeMap` keeps the JSON object deterministic for tests.
+pub type GridRow = std::collections::BTreeMap<String, String>;
+
+/// A rectangular block of string cells for one sheet tab (v1: string cells).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridData {
+    pub columns: Vec<GridColumn>,
+    pub rows: Vec<GridRow>,
+    /// Total data rows ignoring limit/offset.
+    pub total_rows: i64,
+}
+
 /// Write action evaluated against permission rules; wider than [`ChangeType`]
 /// because large updates escalate to `bulk_update`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

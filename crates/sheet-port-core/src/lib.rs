@@ -20,6 +20,7 @@ pub mod permissions;
 pub mod sources;
 pub mod types;
 pub mod vault;
+pub mod workbench;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;

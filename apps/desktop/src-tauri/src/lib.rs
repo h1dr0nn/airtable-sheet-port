@@ -96,6 +96,17 @@ pub fn run() {
             commands::google_connect,
             commands::google_list_accounts,
             commands::google_disconnect,
+            commands::workbench_tree,
+            commands::create_workbench_folder,
+            commands::rename_workbench_folder,
+            commands::delete_workbench_folder,
+            commands::add_workbench_spreadsheet,
+            commands::remove_workbench_item,
+            commands::move_workbench_item,
+            commands::list_workbench_sheet_tabs,
+            commands::read_workbench_sheet,
+            commands::update_workbench_cell,
+            commands::append_workbench_row,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Airtable - Sheet Port");

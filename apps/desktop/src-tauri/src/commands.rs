@@ -20,9 +20,11 @@ use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
 use sheet_port_core::rusqlite::Connection;
 use sheet_port_core::types::{
-    AppStatus, AuditActor, AuditEvent, DataSource, PendingChange, PermissionRuleRow, ReadOptions,
-    SavePermissionRule, TablePage, TableRef, TableSchema, TokenStatus,
+    AppStatus, AuditActor, AuditEvent, DataSource, GridData, GridRow, PendingChange,
+    PermissionRuleRow, ReadOptions, SavePermissionRule, SheetTab, TablePage, TableRef, TableSchema,
+    TokenStatus,
 };
+use sheet_port_core::workbench::{self, WorkbenchFolder, WorkbenchItem, WorkbenchTree};
 use sheet_port_core::{
     audit, changes, db, google, heartbeat, mcp_clients, permissions, sources, vault, CoreError,
 };
@@ -1100,4 +1102,179 @@ pub fn set_autostart_enabled(
     )
     .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Workbench (docs/ipc.md "Workbench"). Folder/item CRUD are quick DB ops and
+// run synchronously; the sheet-tab, grid read, and grid write commands hit the
+// connector (Google network) so they run on a blocking task like read_table.
+// Grid writes are DIRECT (no pending-change/approval flow): the desktop user is
+// the approver, so they audit as actor=user at the command boundary.
+// ---------------------------------------------------------------------------
+
+const WORKBENCH_CELL_UPDATED_ACTION: &str = "workbench_cell_updated";
+const WORKBENCH_ROW_APPENDED_ACTION: &str = "workbench_row_appended";
+
+/// The new 0-based data row index returned by `append_workbench_row`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendRowResult {
+    pub row_index: i64,
+}
+
+/// Builds `{spreadsheetId}:{gid}` - the connector tableId that names the exact
+/// sheet tab of a Workbench item.
+fn table_id_for(item: &WorkbenchItem, gid: &str) -> String {
+    format!("{}:{}", item.spreadsheet_id, gid)
+}
+
+#[tauri::command]
+pub fn workbench_tree(state: Db<'_>) -> Result<WorkbenchTree, String> {
+    let conn = lock_conn(&state)?;
+    workbench::tree(&conn).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn create_workbench_folder(state: Db<'_>, name: String) -> Result<WorkbenchFolder, String> {
+    let conn = lock_conn(&state)?;
+    workbench::create_folder(&conn, &name).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn rename_workbench_folder(state: Db<'_>, id: String, name: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    workbench::rename_folder(&conn, &id, &name).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn delete_workbench_folder(state: Db<'_>, id: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    workbench::delete_folder(&conn, &id).map_err(|error| error.to_string())
+}
+
+/// Resolves the pasted URL/id via the connected Google account and adds it.
+/// Runs on a blocking task because it fetches the spreadsheet title.
+#[tauri::command]
+pub async fn add_workbench_spreadsheet(
+    state: Db<'_>,
+    folder_id: Option<String>,
+    url_or_id: String,
+) -> Result<WorkbenchItem, String> {
+    with_conn_blocking(&state, move |conn, registry| {
+        workbench::add_spreadsheet(conn, registry, folder_id.as_deref(), &url_or_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn remove_workbench_item(state: Db<'_>, id: String) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    workbench::remove_item(&conn, &id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn move_workbench_item(
+    state: Db<'_>,
+    id: String,
+    folder_id: Option<String>,
+) -> Result<(), String> {
+    let conn = lock_conn(&state)?;
+    workbench::move_item(&conn, &id, folder_id.as_deref()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_workbench_sheet_tabs(
+    state: Db<'_>,
+    item_id: String,
+) -> Result<Vec<SheetTab>, String> {
+    with_conn_blocking(&state, move |conn, registry| {
+        let item = workbench::get_item(conn, &item_id)?;
+        registry.list_sheet_tabs(conn, &item.source_id, &item.spreadsheet_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn read_workbench_sheet(
+    state: Db<'_>,
+    item_id: String,
+    gid: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<GridData, String> {
+    with_conn_blocking(&state, move |conn, registry| {
+        let item = workbench::get_item(conn, &item_id)?;
+        registry.read_grid(
+            conn,
+            &item.source_id,
+            &table_id_for(&item, &gid),
+            limit,
+            offset,
+        )
+    })
+    .await
+}
+
+/// Writes one cell directly and audits it as a user action.
+#[tauri::command]
+pub async fn update_workbench_cell(
+    state: Db<'_>,
+    item_id: String,
+    gid: String,
+    row_index: i64,
+    column_id: String,
+    value: String,
+) -> Result<(), String> {
+    with_conn_blocking(&state, move |conn, registry| {
+        let item = workbench::get_item(conn, &item_id)?;
+        registry.write_cell(
+            conn,
+            &item.source_id,
+            &table_id_for(&item, &gid),
+            row_index,
+            &column_id,
+            &value,
+        )?;
+        audit::record(
+            conn,
+            AuditActor::User,
+            WORKBENCH_CELL_UPDATED_ACTION,
+            Some(&item.source_id),
+            Some(&item.spreadsheet_id),
+            Some(&json!({
+                "itemId": item.id,
+                "gid": gid,
+                "rowIndex": row_index,
+                "columnId": column_id,
+            })),
+        )?;
+        Ok(())
+    })
+    .await
+}
+
+/// Appends a row directly, returning its new index, and audits it as a user
+/// action.
+#[tauri::command]
+pub async fn append_workbench_row(
+    state: Db<'_>,
+    item_id: String,
+    gid: String,
+    values: GridRow,
+) -> Result<AppendRowResult, String> {
+    with_conn_blocking(&state, move |conn, registry| {
+        let item = workbench::get_item(conn, &item_id)?;
+        let row_index =
+            registry.append_grid_row(conn, &item.source_id, &table_id_for(&item, &gid), &values)?;
+        audit::record(
+            conn,
+            AuditActor::User,
+            WORKBENCH_ROW_APPENDED_ACTION,
+            Some(&item.source_id),
+            Some(&item.spreadsheet_id),
+            Some(&json!({ "itemId": item.id, "gid": gid, "rowIndex": row_index })),
+        )?;
+        Ok(AppendRowResult { row_index })
+    })
+    .await
 }

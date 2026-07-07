@@ -98,3 +98,24 @@ CREATE TABLE IF NOT EXISTS mock_records (
   position INTEGER NOT NULL,
   PRIMARY KEY (source_id, table_id, record_id)
 );
+
+-- Workbench: a user-curated tree of spreadsheets grouped into folders, distinct
+-- from the raw connector `list_tables` path. Folders and items each carry an
+-- ascending `position` for stable display ordering (new rows take max + 1).
+CREATE TABLE IF NOT EXISTS workbench_folders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workbench_items (
+  id TEXT PRIMARY KEY,
+  -- NULL means the spreadsheet is Ungrouped. Deleting its folder falls the
+  -- item back to Ungrouped rather than removing it (ON DELETE SET NULL).
+  folder_id TEXT,
+  source_id TEXT NOT NULL,
+  spreadsheet_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  FOREIGN KEY (folder_id) REFERENCES workbench_folders (id) ON DELETE SET NULL
+);
