@@ -66,7 +66,7 @@ const FONT_FAMILY_OPTIONS: ReadonlyArray<SegmentedOption<FontFamily>> = [
 
 const CLOSE_BEHAVIOR_OPTIONS: ReadonlyArray<SegmentedOption<CloseBehavior>> = [
   { value: "ask", label: "Ask" },
-  { value: "tray", label: "Minimize to Tray" },
+  { value: "tray", label: "Run in Background" },
   { value: "quit", label: "Quit" }
 ];
 

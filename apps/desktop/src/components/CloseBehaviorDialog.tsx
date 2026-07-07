@@ -75,7 +75,7 @@ export function CloseBehaviorDialog({ open, onOpenChange }: CloseBehaviorDialogP
             {pending === "quit" ? "Quitting..." : "Quit"}
           </Button>
           <Button disabled={isBusy} onClick={() => void decide("tray")}>
-            {pending === "tray" ? "Minimizing..." : "Minimize to Tray"}
+            {pending === "tray" ? "Minimizing..." : "Run in Background"}
           </Button>
         </DialogFooter>
       </DialogContent>
