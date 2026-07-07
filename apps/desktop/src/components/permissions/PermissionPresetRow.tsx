@@ -79,24 +79,26 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
 
   return (
     <article className="py-4 first:pt-0 last:pb-0">
-      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-[13px] font-medium text-ink">{source.name}</span>
-        <span className="font-mono text-[11.5px] text-ink-faint">{source.id}/*</span>
-        {rule ? (
-          <span className="ml-auto text-[12px] text-ink-muted">
-            Updated <RelativeTime iso={rule.updatedAt} />
-          </span>
-        ) : null}
-      </header>
+      <div className="flex items-center justify-between gap-4">
+        {/* Source info stretches left; the preset control stays right-aligned. */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-x-2">
+            <span className="truncate text-[13px] font-medium text-ink">{source.name}</span>
+            <span className="shrink-0 font-mono text-[11.5px] text-ink-faint">{source.id}/*</span>
+          </div>
+          {rule ? (
+            <p className="mt-0.5 text-[12px] text-ink-muted">
+              Updated <RelativeTime iso={rule.updatedAt} />
+            </p>
+          ) : null}
+        </div>
 
-      <div className="mt-3">
-        <Select
-          value={activePreset ?? undefined}
-          onValueChange={handleChange}
-          disabled={isBusy}
-        >
-          <SelectTrigger className="w-full max-w-xs" aria-label={`Permission preset for ${source.name}`}>
-            <SelectValue placeholder="Custom (choose a preset)" />
+        <Select value={activePreset ?? undefined} onValueChange={handleChange} disabled={isBusy}>
+          <SelectTrigger
+            className="w-44 shrink-0"
+            aria-label={`Permission preset for ${source.name}`}
+          >
+            <SelectValue placeholder="Custom" />
           </SelectTrigger>
           <SelectContent>
             {PERMISSION_PRESETS.map((preset) => (
@@ -106,12 +108,13 @@ export function PermissionPresetRow({ source, rule, autoApproveWrites }: Permiss
             ))}
           </SelectContent>
         </Select>
-        <p className="mt-2 text-[12px] leading-4 text-ink-muted">
-          {activePreset
-            ? getPreset(activePreset).description
-            : "This source uses a custom rule. Pick a preset to normalize it."}
-        </p>
       </div>
+
+      <p className="mt-2 text-[12px] leading-4 text-ink-muted">
+        {activePreset
+          ? getPreset(activePreset).description
+          : "This source uses a custom rule. Pick a preset to normalize it."}
+      </p>
 
       <ConfirmDialog
         open={pendingBypass !== null}
