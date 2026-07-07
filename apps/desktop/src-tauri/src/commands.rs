@@ -510,16 +510,23 @@ fn resolve_sidecar_bin() -> PathBuf {
 }
 
 /// From a Tauri `target/<profile>` executable directory, finds the workspace
-/// root's `target/release/<bin>`. Returns None when the layout does not match
-/// (e.g. a bundled install), so the caller uses the sibling path instead.
+/// root's built sidecar under `target/release` or `target/debug`. Returns None
+/// when the layout does not match (e.g. a bundled install), so the caller uses
+/// the sibling path instead. Checking debug too lets `tauri dev` auto-start the
+/// sidecar without a separate release build.
 fn dev_workspace_release(exe_dir: &std::path::Path) -> Option<PathBuf> {
     // exe_dir = .../apps/desktop/src-tauri/target/<profile>
     let target_dir = exe_dir.parent()?; // .../target
     if target_dir.file_name()?.to_str()? != "target" {
         return None;
     }
-    let candidate = target_dir.join("release").join(MCP_SIDECAR_BIN);
-    candidate.exists().then_some(candidate)
+    for profile in ["release", "debug"] {
+        let candidate = target_dir.join(profile).join(MCP_SIDECAR_BIN);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Builds the [`ServerSpec`] for the configured transport: an http url when the
@@ -751,6 +758,64 @@ pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSt
         running: true,
         pid: Some(pid),
     })
+}
+
+/// Best-effort auto-start of the managed sidecar at app launch so the server is
+/// running without the user clicking Start. Everything here is swallowed and
+/// logged: a missing binary, a busy DB lock, or a spawn failure must never block
+/// startup. A sidecar that is already running (fresh heartbeat) is left alone.
+pub fn auto_start_managed_sidecar(app: &tauri::AppHandle) {
+    use tauri::Manager;
+
+    let (Some(sidecar), Some(state)) = (
+        app.try_state::<ManagedSidecar>(),
+        app.try_state::<DbState>(),
+    ) else {
+        return;
+    };
+    let Ok(mut guard) = sidecar.child.lock() else {
+        return;
+    };
+    // Already-managed child still alive: nothing to do.
+    if let Some(existing) = guard.as_mut() {
+        match existing.try_wait() {
+            Ok(Some(_)) => *guard = None, // exited: fall through and relaunch
+            Ok(None) => return,           // running
+            Err(_) => return,
+        }
+    }
+
+    let config = match state.conn.lock() {
+        Ok(conn) => match db::get_mcp_config(&conn) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("[sheet-port] auto-start: could not read MCP config: {error}");
+                return;
+            }
+        },
+        Err(_) => return,
+    };
+
+    let bin = resolve_sidecar_bin();
+    if !bin.exists() {
+        eprintln!(
+            "[sheet-port] auto-start skipped: sidecar binary not found at {}",
+            bin.display()
+        );
+        return;
+    }
+
+    match std::process::Command::new(&bin)
+        .env(ENV_MCP_TRANSPORT, config.transport.as_str())
+        .env(ENV_MCP_PORT, config.port.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => *guard = Some(child),
+        Err(error) => eprintln!("[sheet-port] auto-start failed to spawn sidecar: {error}"),
+    }
 }
 
 /// Stops the desktop-managed sidecar child if one is running. Idempotent: no

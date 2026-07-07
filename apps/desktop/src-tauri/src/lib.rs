@@ -49,6 +49,9 @@ pub fn run() {
             app.manage(state);
             app.manage(commands::ManagedSidecar::default());
             build_tray(app.handle())?;
+            // Auto-start the managed sidecar so the server is running on launch
+            // without the user clicking Start. Best-effort; never blocks startup.
+            commands::auto_start_managed_sidecar(app.handle());
             Ok(())
         })
         .on_window_event(handle_window_event)
