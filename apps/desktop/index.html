@@ -33,6 +33,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Overlay editor portal for @glideapps/glide-data-grid; it renders cell
+         editors here so they escape the grid's clipping/scroll container. -->
+    <div id="portal" style="position: fixed; left: 0; top: 0; z-index: 6000"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

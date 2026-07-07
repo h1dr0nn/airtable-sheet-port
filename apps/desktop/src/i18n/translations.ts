@@ -169,10 +169,47 @@ export const en = {
   "sources.genericPlaceholder":
     "Connector scaffolded; authentication is not wired up yet",
 
-  // Tables (Coming Soon placeholder)
-  "tables.comingSoonTitle": "Coming Soon",
-  "tables.comingSoonSubtitle":
-    "An editable spreadsheet-style workbench is on the way. For now, agents read your tables through the MCP server.",
+  // Workbench
+  "workbench.title": "Workbench",
+  "workbench.addMenu": "Add to Workbench",
+  "workbench.newFolder": "New Folder",
+  "workbench.addSpreadsheet": "Add Spreadsheet",
+  "workbench.add": "Add",
+  "workbench.create": "Create",
+  "workbench.searchPlaceholder": "Search spreadsheets",
+  "workbench.ungrouped": "Ungrouped",
+  "workbench.rename": "Rename",
+  "workbench.renameFolder": "Rename Folder",
+  "workbench.delete": "Delete",
+  "workbench.remove": "Remove",
+  "workbench.moveToFolder": "Move to Folder",
+  "workbench.folderMenu": "{name} folder actions",
+  "workbench.itemMenu": "{name} actions",
+  "workbench.emptyFolder": "No spreadsheets",
+  "workbench.emptyTitle": "No Spreadsheets Yet",
+  "workbench.emptyDescription":
+    "Add a Google Sheets spreadsheet to start building your workspace.",
+  "workbench.noResults": "No matches",
+  "workbench.folderNameLabel": "Folder Name",
+  "workbench.folderNamePlaceholder": "e.g. Game Config",
+  "workbench.addSpreadsheetDescription":
+    "Paste a Google Sheets link or spreadsheet id, then pick a folder.",
+  "workbench.spreadsheetUrlLabel": "Spreadsheet URL or ID",
+  "workbench.spreadsheetUrlPlaceholder": "https://docs.google.com/spreadsheets/d/...",
+  "workbench.folderLabel": "Folder",
+  "workbench.deleteFolderTitle": "Delete Folder?",
+  "workbench.deleteFolderDescription":
+    "\"{name}\" is deleted and its spreadsheets move to Ungrouped. The spreadsheets themselves are not removed.",
+  "workbench.removeItemTitle": "Remove Spreadsheet?",
+  "workbench.removeItemDescription":
+    "\"{name}\" is removed from the Workbench. The spreadsheet itself is not deleted.",
+  "workbench.findInSheet": "Find in sheet",
+  "workbench.refresh": "Refresh",
+  "workbench.addRow": "Add Row",
+  "workbench.selectPromptTitle": "Select or add a spreadsheet",
+  "workbench.selectPromptDescription":
+    "Choose a spreadsheet from the left, or add one to get started.",
+  "workbench.sheetLoadError": "This sheet could not be loaded.",
 
   // Changes
   "changes.filterAll": "All",
@@ -445,7 +482,24 @@ export const en = {
   // Toasts - Changes
   "toast.changeDecisionFailed": "Change decision failed",
   "toast.changeApproved": "Change approved",
-  "toast.changeRejected": "Change rejected"
+  "toast.changeRejected": "Change rejected",
+
+  // Toasts - Workbench
+  "toast.folderCreated": "Folder created",
+  "toast.folderCreateError": "Folder not created",
+  "toast.folderRenamed": "Folder renamed",
+  "toast.folderRenameError": "Folder not renamed",
+  "toast.folderDeleted": "Folder deleted",
+  "toast.folderDeleteError": "Folder not deleted",
+  "toast.spreadsheetAdded": "Spreadsheet added",
+  "toast.spreadsheetAddError": "Spreadsheet not added",
+  "toast.spreadsheetRemoved": "Spreadsheet removed",
+  "toast.spreadsheetRemoveError": "Spreadsheet not removed",
+  "toast.spreadsheetMoved": "Spreadsheet moved",
+  "toast.spreadsheetMoveError": "Spreadsheet not moved",
+  "toast.cellUpdateError": "Cell not updated",
+  "toast.rowAdded": "Row added",
+  "toast.rowAddError": "Row not added"
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -613,10 +667,47 @@ const vi: Dictionary = {
   "sources.genericConnected": "Khả dụng cho agent thông qua quy tắc quyền",
   "sources.genericPlaceholder": "Connector đã dựng khung; xác thực chưa được kết nối",
 
-  // Tables (Coming Soon)
-  "tables.comingSoonTitle": "Sắp ra mắt",
-  "tables.comingSoonSubtitle":
-    "Một workbench dạng bảng tính có thể chỉnh sửa đang được phát triển. Hiện tại, agent đọc bảng của bạn qua máy chủ MCP.",
+  // Workbench
+  "workbench.title": "Workbench",
+  "workbench.addMenu": "Thêm vào Workbench",
+  "workbench.newFolder": "Thư mục mới",
+  "workbench.addSpreadsheet": "Thêm bảng tính",
+  "workbench.add": "Thêm",
+  "workbench.create": "Tạo",
+  "workbench.searchPlaceholder": "Tìm bảng tính",
+  "workbench.ungrouped": "Chưa phân nhóm",
+  "workbench.rename": "Đổi tên",
+  "workbench.renameFolder": "Đổi tên thư mục",
+  "workbench.delete": "Xóa",
+  "workbench.remove": "Gỡ",
+  "workbench.moveToFolder": "Chuyển vào thư mục",
+  "workbench.folderMenu": "Thao tác thư mục {name}",
+  "workbench.itemMenu": "Thao tác {name}",
+  "workbench.emptyFolder": "Chưa có bảng tính",
+  "workbench.emptyTitle": "Chưa có bảng tính nào",
+  "workbench.emptyDescription":
+    "Thêm một bảng tính Google Sheets để bắt đầu xây dựng không gian làm việc của bạn.",
+  "workbench.noResults": "Không có kết quả",
+  "workbench.folderNameLabel": "Tên thư mục",
+  "workbench.folderNamePlaceholder": "ví dụ: Game Config",
+  "workbench.addSpreadsheetDescription":
+    "Dán liên kết Google Sheets hoặc id bảng tính, sau đó chọn thư mục.",
+  "workbench.spreadsheetUrlLabel": "URL hoặc ID bảng tính",
+  "workbench.spreadsheetUrlPlaceholder": "https://docs.google.com/spreadsheets/d/...",
+  "workbench.folderLabel": "Thư mục",
+  "workbench.deleteFolderTitle": "Xóa thư mục?",
+  "workbench.deleteFolderDescription":
+    "\"{name}\" sẽ bị xóa và các bảng tính của nó chuyển sang Chưa phân nhóm. Bản thân các bảng tính không bị gỡ.",
+  "workbench.removeItemTitle": "Gỡ bảng tính?",
+  "workbench.removeItemDescription":
+    "\"{name}\" sẽ được gỡ khỏi Workbench. Bản thân bảng tính không bị xóa.",
+  "workbench.findInSheet": "Tìm trong trang tính",
+  "workbench.refresh": "Làm mới",
+  "workbench.addRow": "Thêm hàng",
+  "workbench.selectPromptTitle": "Chọn hoặc thêm một bảng tính",
+  "workbench.selectPromptDescription":
+    "Chọn một bảng tính ở bên trái, hoặc thêm một bảng tính để bắt đầu.",
+  "workbench.sheetLoadError": "Không thể tải trang tính này.",
 
   // Changes
   "changes.filterAll": "Tất cả",
@@ -888,7 +979,24 @@ const vi: Dictionary = {
   // Toasts - Changes
   "toast.changeDecisionFailed": "Quyết định thay đổi thất bại",
   "toast.changeApproved": "Đã phê duyệt thay đổi",
-  "toast.changeRejected": "Đã từ chối thay đổi"
+  "toast.changeRejected": "Đã từ chối thay đổi",
+
+  // Toasts - Workbench
+  "toast.folderCreated": "Đã tạo thư mục",
+  "toast.folderCreateError": "Không tạo được thư mục",
+  "toast.folderRenamed": "Đã đổi tên thư mục",
+  "toast.folderRenameError": "Không đổi tên được thư mục",
+  "toast.folderDeleted": "Đã xóa thư mục",
+  "toast.folderDeleteError": "Không xóa được thư mục",
+  "toast.spreadsheetAdded": "Đã thêm bảng tính",
+  "toast.spreadsheetAddError": "Không thêm được bảng tính",
+  "toast.spreadsheetRemoved": "Đã gỡ bảng tính",
+  "toast.spreadsheetRemoveError": "Không gỡ được bảng tính",
+  "toast.spreadsheetMoved": "Đã chuyển bảng tính",
+  "toast.spreadsheetMoveError": "Không chuyển được bảng tính",
+  "toast.cellUpdateError": "Không cập nhật được ô",
+  "toast.rowAdded": "Đã thêm hàng",
+  "toast.rowAddError": "Không thêm được hàng"
 };
 
 export const translations: Record<Language, Dictionary> = { en, vi };

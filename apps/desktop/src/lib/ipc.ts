@@ -135,6 +135,52 @@ export type SidecarStatus = {
   pid: number | null;
 };
 
+// ---------------------------------------------------------------------------
+// Workbench (Google-Sheets-like curated workspace)
+//
+// The Workbench is a user-curated tree of spreadsheets grouped into folders,
+// distinct from the raw `list_tables` read path. The methods below are wired to
+// the in-memory demo backend for the browser preview; the Tauri path throws a
+// clear "not wired yet" error until the real backend lands in a later wave.
+// ---------------------------------------------------------------------------
+
+/** A user-created folder that groups spreadsheets in the Workbench tree. */
+export type WorkbenchFolder = {
+  id: string;
+  name: string;
+  position: number; // ascending sort order within the tree
+};
+
+/** One spreadsheet the user has added to the Workbench, optionally foldered. */
+export type WorkbenchItem = {
+  id: string;
+  folderId: string | null; // null -> shown under "Ungrouped"
+  sourceId: string; // owning data source (e.g. a Google account)
+  spreadsheetId: string; // provider spreadsheet id
+  name: string; // resolved display name
+  position: number; // ascending sort order within its folder
+};
+
+/** One tab (sheet) inside a spreadsheet, like a Google Sheets bottom tab. */
+export type SheetTab = {
+  gid: string; // provider sheet id (gid)
+  title: string;
+  index: number; // tab order, left to right
+};
+
+/** A rectangular block of string cells for one sheet tab (v1: string cells). */
+export type GridData = {
+  columns: { id: string; title: string }[];
+  rows: Record<string, string>[]; // each row keyed by column id
+  totalRows: number; // total rows ignoring limit/offset
+};
+
+/** Input for adding a spreadsheet: a pasted URL or bare id plus a target folder. */
+export type AddSpreadsheetInput = {
+  folderId: string | null;
+  urlOrId: string;
+};
+
 /** Every Tauri command from docs/ipc.md, typed. */
 export interface IpcApi {
   getAppStatus(): Promise<AppStatus>;
@@ -206,7 +252,52 @@ export interface IpcApi {
   mcpServerStart(): Promise<SidecarStatus>;
   /** Stops the desktop-managed sidecar if one is running. Idempotent. */
   mcpServerStop(): Promise<SidecarStatus>;
+
+  // --- Workbench ---
+  /** The full curated tree: every folder plus every added spreadsheet. */
+  workbenchTree(): Promise<{ folders: WorkbenchFolder[]; items: WorkbenchItem[] }>;
+  /** Creates a folder at the end of the tree; the name must not be empty. */
+  createFolder(name: string): Promise<WorkbenchFolder>;
+  /** Renames a folder in place. */
+  renameFolder(id: string, name: string): Promise<void>;
+  /** Deletes a folder; its spreadsheets fall back to Ungrouped (folderId null). */
+  deleteFolder(id: string): Promise<void>;
+  /** Resolves a pasted URL/id into a spreadsheet and adds it to the tree. */
+  addSpreadsheet(input: AddSpreadsheetInput): Promise<WorkbenchItem>;
+  /** Removes one spreadsheet from the Workbench (does not touch the source). */
+  removeWorkbenchItem(id: string): Promise<void>;
+  /** Moves a spreadsheet to another folder, or to Ungrouped when null. */
+  moveWorkbenchItem(id: string, folderId: string | null): Promise<void>;
+  /** Lists the sheet tabs of one added spreadsheet, left to right. */
+  listSheetTabs(itemId: string): Promise<SheetTab[]>;
+  /** Reads a page of one sheet tab as string cells. */
+  readSheet(
+    itemId: string,
+    gid: string,
+    limit: number | null,
+    offset: number | null
+  ): Promise<GridData>;
+  /** Writes a single cell; the row must already exist. */
+  updateCell(
+    itemId: string,
+    gid: string,
+    rowIndex: number,
+    columnId: string,
+    value: string
+  ): Promise<void>;
+  /** Appends a row to a sheet tab, returning its new zero-based row index. */
+  appendSheetRow(
+    itemId: string,
+    gid: string,
+    values: Record<string, string>
+  ): Promise<{ rowIndex: number }>;
 }
+
+/** Shared rejection for Workbench methods until the real backend is wired up. */
+const WORKBENCH_NOT_WIRED = "The workbench backend is not wired yet";
+const workbenchNotWired = (): never => {
+  throw new Error(WORKBENCH_NOT_WIRED);
+};
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -258,7 +349,20 @@ const tauriIpc: IpcApi = {
   mcpUnregisterClient: (id) => invoke<void>("mcp_unregister_client", { id }),
   mcpConfigureAll: () => invoke<void>("mcp_configure_all"),
   mcpServerStart: () => invoke<SidecarStatus>("mcp_server_start"),
-  mcpServerStop: () => invoke<SidecarStatus>("mcp_server_stop")
+  mcpServerStop: () => invoke<SidecarStatus>("mcp_server_stop"),
+  // Workbench: no Rust commands exist yet. Reject clearly rather than calling a
+  // missing command; these get real implementations in a later backend wave.
+  workbenchTree: workbenchNotWired,
+  createFolder: workbenchNotWired,
+  renameFolder: workbenchNotWired,
+  deleteFolder: workbenchNotWired,
+  addSpreadsheet: workbenchNotWired,
+  removeWorkbenchItem: workbenchNotWired,
+  moveWorkbenchItem: workbenchNotWired,
+  listSheetTabs: workbenchNotWired,
+  readSheet: workbenchNotWired,
+  updateCell: workbenchNotWired,
+  appendSheetRow: workbenchNotWired
 };
 
 // Plain-browser dev preview falls back to clickable in-memory fixtures.

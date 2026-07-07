@@ -17,5 +17,9 @@ export const queryKeys = {
   settings: ["settings"] as const,
   autostart: ["autostart"] as const,
   mcpConfig: ["mcp-config"] as const,
-  mcpClients: ["mcp-clients"] as const
+  mcpClients: ["mcp-clients"] as const,
+  // Workbench
+  workbenchTree: ["workbench-tree"] as const,
+  sheetTabs: (itemId: string) => ["workbench-sheet-tabs", itemId] as const,
+  sheet: (itemId: string, gid: string) => ["workbench-sheet", itemId, gid] as const
 };

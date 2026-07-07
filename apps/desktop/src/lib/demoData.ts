@@ -27,6 +27,7 @@ import type {
   TablePage,
   TokenStatus
 } from "./ipc.js";
+import { createWorkbenchDemo } from "./workbenchDemo.js";
 
 // In-memory stand-in for the Rust backend so `vite dev` in a plain browser is
 // fully clickable. Mirrors the schema v2 empty state: a fresh database has no
@@ -236,7 +237,11 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     b.createdAt.localeCompare(a.createdAt);
   const newestEventFirst = (a: AuditEvent, b: AuditEvent) => b.timestamp.localeCompare(a.timestamp);
 
+  // Curated Workbench tree lives in its own module to keep this file focused.
+  const workbench = createWorkbenchDemo({ delay });
+
   return {
+    ...workbench,
     async getAppStatus(): Promise<AppStatus> {
       return {
         appVersion: "0.0.1 (browser demo)",
