@@ -73,7 +73,10 @@ export function ChangeCard({ change }: { change: PendingChange }) {
   const approve = useApproveChange();
   const reject = useRejectChange();
   const isDeciding = approve.isPending || reject.isPending;
-  const needsDecision = change.status === "pending" && change.requiresConfirmation;
+  // Any pending change can be rejected (an escape hatch for a preview the agent
+  // never committed); Approve is only meaningful when the policy requires it.
+  const isPending = change.status === "pending";
+  const needsApproval = isPending && change.requiresConfirmation;
 
   return (
     <article className="overflow-hidden rounded-card border border-edge bg-raised shadow-card">
@@ -106,9 +109,16 @@ export function ChangeCard({ change }: { change: PendingChange }) {
       </div>
 
       <footer className="flex items-center justify-between gap-3 border-t border-edge px-5 py-3">
-        {needsDecision ? (
+        {isPending ? (
           <>
-            <p className="text-[13px] font-medium text-warning">{t("changes.awaitingDecision")}</p>
+            <p
+              className={cn(
+                "text-[13px] font-medium",
+                needsApproval ? "text-warning" : "text-ink-muted"
+              )}
+            >
+              {needsApproval ? t("changes.awaitingDecision") : t("changes.rejectToCancel")}
+            </p>
             <div className="flex items-center gap-2">
               <Button
                 variant="destructive"
@@ -118,9 +128,11 @@ export function ChangeCard({ change }: { change: PendingChange }) {
               >
                 {reject.isPending ? t("changes.rejecting") : t("changes.reject")}
               </Button>
-              <Button size="sm" disabled={isDeciding} onClick={() => approve.mutate(change.id)}>
-                {approve.isPending ? t("changes.approving") : t("changes.approve")}
-              </Button>
+              {needsApproval ? (
+                <Button size="sm" disabled={isDeciding} onClick={() => approve.mutate(change.id)}>
+                  {approve.isPending ? t("changes.approving") : t("changes.approve")}
+                </Button>
+              ) : null}
             </div>
           </>
         ) : (
