@@ -21,6 +21,8 @@ receiving provider tokens or bypassing user policy.
 - Let an agent inspect table schema and read bounded rows.
 - Let an agent search records by text.
 - Let an agent preview record updates or appends and receive a diff.
+- Let an agent read a sheet's existing cell formatting and preview tasteful formatting
+  changes (header styling, freeze, number formats, alignment, column widths).
 - Require user approval in the desktop app before risky commits (enforced, not
   advisory).
 - Keep a persistent audit trail of agent reads, previews, decisions, and writes.
@@ -31,8 +33,10 @@ receiving provider tokens or bypassing user policy.
 - Airtable - Sheet Port is not a cloud-hosted proxy.
 - Airtable - Sheet Port does not expose raw provider APIs to agents.
 - The MVP does not implement destructive delete flows.
-- The MVP does not sync every spreadsheet feature such as formulas, charts, formatting,
-  or pivot tables.
+- The MVP supports basic cell formatting (text style, colors, alignment, number formats,
+  borders, freeze, column widths) through the staged-change pipeline, but does not sync
+  every spreadsheet feature such as formulas, charts, conditional formatting, or pivot
+  tables.
 
 ## MVP Status
 
@@ -43,7 +47,7 @@ sidecar):
 - Desktop app with Dashboard, Data Sources, Tables, Permissions, Changes, Audit Log,
   and Settings (light/dark/system theme) screens, live-wired to the Rust backend via
   typed Tauri IPC (`docs/ipc.md`).
-- Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 9 strict table-oriented tools
+- Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 11 strict table-oriented tools
   (stdio transport).
 - Shared SQLite database (WAL) used by both processes: sources, permission rules,
   pending changes, audit events, mock data, and the sidecar heartbeat.

@@ -25,6 +25,21 @@ pub const FIND_RECORDS_LIMIT: usize = 100;
 /// Maximum records/patches accepted per append or update preview call.
 pub const WRITE_BATCH_MAX: usize = 100;
 
+/// Maximum cell-format operations (and column-width entries) accepted per
+/// preview_format_table call, bounding a single formatting change.
+pub const FORMAT_OPS_MAX: usize = 100;
+
+/// Allowed font-size range (points) for a cell-format operation.
+pub const FONT_SIZE_MIN: i64 = 1;
+pub const FONT_SIZE_MAX: i64 = 400;
+
+/// Allowed column-width range (pixels) for a column-width override.
+pub const COLUMN_WIDTH_MIN: i64 = 2;
+pub const COLUMN_WIDTH_MAX: i64 = 2000;
+
+/// Maximum rows or columns a formatting change may freeze.
+pub const FREEZE_MAX: i64 = 100;
+
 /// Maximum rows returned when listing pending changes.
 pub const CHANGE_LIST_LIMIT: i64 = 200;
 

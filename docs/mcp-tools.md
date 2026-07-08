@@ -1,6 +1,6 @@
 # MCP Tools
 
-The Rust sidecar (`crates/sheet-port-mcp`) registers exactly 9 tools. All input
+The Rust sidecar (`crates/sheet-port-mcp`) registers exactly 11 tools. All input
 schemas are provider-neutral (generated via `schemars`, with every bound enforced in
 `src/args.rs`); none expose raw Google or provider APIs. Every tool returns a single
 text content block containing pretty-printed JSON with the shapes below. Every call
@@ -19,7 +19,7 @@ type PendingChange = {
   id: string;                     // "chg_" + UUID
   sourceId: string;
   tableId: string;
-  type: "append" | "update" | "delete";
+  type: "append" | "update" | "delete" | "format";
   createdAt: string;              // ISO timestamp
   status: "pending" | "approved" | "committed" | "rejected";
   requiresConfirmation: boolean;  // snapshot of the permission rule at preview time
@@ -40,7 +40,8 @@ and `bulk_update`.
 ## Google Sheets `tableId` forms
 
 For a Google Sheets source, every table tool (`describe_table`, `read_table`,
-`find_records`, `preview_update_records`, `append_records`) accepts the `tableId` in any
+`find_records`, `get_table_style`, `preview_update_records`, `append_records`,
+`preview_format_table`) accepts the `tableId` in any
 of these forms. This lets an agent paste a spreadsheet link the user shared and read the
 exact tab without extra lookups:
 
@@ -240,6 +241,50 @@ Example response:
 }
 ```
 
+## `get_table_style`
+
+Purpose: read a tab's existing cell formatting so an agent can match it (read-only). It
+returns the effective style of the header row and the first data row, plus the frozen
+row/column counts and per-column pixel widths. Only properties actually set on a cell are
+included, so the output stays compact. For Google Sheets, `tableId` may be a URL,
+spreadsheet id, or `spreadsheetId:gid` / `spreadsheetId:SheetName`.
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `tableId` | string | min length 1 |
+
+Output shape: `{ "style": TableStyle }` where
+
+```ts
+type CellStyle = {
+  column: string;                                    // A1 column letter
+  bold?: boolean; italic?: boolean; fontSize?: number;
+  fontColor?: string;                                // "#rrggbb"
+  backgroundColor?: string;                          // "#rrggbb"
+  horizontalAlignment?: "LEFT" | "CENTER" | "RIGHT";
+  numberFormat?: string;                             // pattern
+  wrap?: boolean;
+};
+type ColumnWidth = { column: string; pixels: number };
+type TableStyle = {
+  spreadsheetId: string;
+  sheetTitle?: string;                               // omitted for the first tab
+  frozenRowCount: number;
+  frozenColumnCount: number;
+  columnCount: number;                               // used (header) width
+  header: CellStyle[];                               // row 1
+  sample: CellStyle[];                               // row 2 (first data row)
+  columnWidths: ColumnWidth[];
+};
+```
+
+Permission required: `read` on the source/table. Only the Google Sheets connector
+implements this; the mock connector returns a "does not support reading cell formatting"
+error.
+
 ## `preview_update_records`
 
 Purpose: create a pending update change and return its diff. Nothing is written to the
@@ -356,6 +401,72 @@ Example response:
     }
   },
   "requiresConfirmation": true
+}
+```
+
+## `preview_format_table`
+
+Purpose: create a pending formatting change and return it. Nothing is written until
+`commit_change`. A plan is any mix of per-range cell formats, a header freeze, and column
+widths; only the properties you set are changed (partial formatting). For Google Sheets,
+`tableId` may be a URL, spreadsheet id, or `spreadsheetId:gid` / `spreadsheetId:SheetName`.
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `tableId` | string | min length 1 |
+| `formats` | array of `CellFormat` (below) | 0 to 100 items |
+| `freezeRows` | number (optional) | 0 to 100 |
+| `freezeColumns` | number (optional) | 0 to 100 |
+| `columnWidths` | array of `{ column: string, pixels: number (2..2000) }` | 0 to 100 items |
+
+At least one of `formats`, `freezeRows`, `freezeColumns`, or `columnWidths` must be set.
+
+```ts
+type CellFormat = {
+  range: string;                                     // A1 range, e.g. "A1:D1", "B:B", "2:2"
+  bold?: boolean; italic?: boolean;
+  fontSize?: number;                                 // 1..400
+  fontColor?: string;                                // "#rrggbb"
+  backgroundColor?: string;                          // "#rrggbb"
+  horizontalAlignment?: "LEFT" | "CENTER" | "RIGHT";
+  numberFormat?: string;                             // pattern, e.g. "#,##0", "yyyy-mm-dd"
+  numberFormatType?:                                 // inferred from the pattern when omitted
+    "TEXT" | "NUMBER" | "PERCENT" | "CURRENCY" | "DATE" | "TIME" | "DATE_TIME" | "SCIENTIFIC";
+  wrap?: boolean;
+  border?: "none" | "all" | "outer" | "bottom";
+};
+```
+
+Output shape: `{ "change": PendingChange, "requiresConfirmation": boolean }`
+
+Diff shape (in `change.diff`): the plan itself (the `FormatPlan` above: `formats`,
+`freezeRows`, `freezeColumns`, `columnWidths` with empty parts omitted).
+
+Permission required: `write` (evaluated as the `format` action; a rule can list `format`
+in `requireConfirmationFor` to require approval before commit). Only the Google Sheets
+connector applies formatting; the mock connector returns an "does not support cell
+formatting" error at commit.
+
+House style: when laying out a fresh sheet or writing new data, freeze the header row,
+make the header bold with a light neutral fill and a thin bottom border, give numeric and
+date columns a consistent `numberFormat`, and set `columnWidths` so nothing is clipped.
+When the sheet already has data or formatting, call `get_table_style` first and match it.
+
+Example call:
+
+```json
+{
+  "sourceId": "google-sheets:me_example_com",
+  "tableId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+  "formats": [
+    { "range": "A1:E1", "bold": true, "backgroundColor": "#f3f4f6", "border": "bottom" },
+    { "range": "D2:D1000", "horizontalAlignment": "RIGHT", "numberFormat": "#,##0" }
+  ],
+  "freezeRows": 1,
+  "columnWidths": [{ "column": "A", "pixels": 220 }]
 }
 ```
 

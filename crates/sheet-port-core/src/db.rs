@@ -3,7 +3,8 @@
 //! idempotent and the seed only runs while the meta 'seeded' marker is
 //! absent. Since schema_version 2 fresh databases start empty (no demo
 //! workspace); the v1 -> v2 migration removes the demo rows early builds
-//! seeded on first run.
+//! seeded on first run, and the v2 -> v3 migration widens the pending-change
+//! CHECK constraint to allow the 'format' change type.
 
 use std::path::{Path, PathBuf};
 
@@ -26,7 +27,7 @@ const BUSY_TIMEOUT_MS: u64 = 5000;
 
 const META_SEEDED_KEY: &str = "seeded";
 const META_SCHEMA_VERSION_KEY: &str = "schema_version";
-const SCHEMA_VERSION_CURRENT: &str = "2";
+const SCHEMA_VERSION_CURRENT: &str = "3";
 
 // include_str! paths are relative to THIS source file. The .sql files are the
 // single source of truth for the shared database contract.
@@ -43,6 +44,40 @@ DELETE FROM mock_tables;
 DELETE FROM mock_records;
 DELETE FROM permission_rules WHERE source_id = 'mock-source';
 INSERT INTO meta (key, value) VALUES ('schema_version', '2')
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+COMMIT;";
+
+/// v2 -> v3: widen the pending_changes.change_type CHECK to allow 'format'.
+/// SQLite cannot ALTER a CHECK constraint, so the table is rebuilt in place;
+/// existing rows are copied verbatim. Runs atomically with the version bump.
+const MIGRATE_V2_TO_V3_SQL: &str = "\
+BEGIN IMMEDIATE;
+DROP INDEX IF EXISTS idx_pending_changes_status;
+ALTER TABLE pending_changes RENAME TO pending_changes_v2;
+CREATE TABLE pending_changes (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  table_id TEXT NOT NULL,
+  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format')),
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'committed', 'rejected')),
+  requires_confirmation INTEGER NOT NULL DEFAULT 0,
+  diff TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  committed_at TEXT
+);
+INSERT INTO pending_changes
+  (id, source_id, table_id, change_type, created_at, status,
+   requires_confirmation, diff, payload, decided_at, decided_by, committed_at)
+  SELECT id, source_id, table_id, change_type, created_at, status,
+         requires_confirmation, diff, payload, decided_at, decided_by, committed_at
+  FROM pending_changes_v2;
+DROP TABLE pending_changes_v2;
+CREATE INDEX idx_pending_changes_status ON pending_changes (status, created_at DESC);
+INSERT INTO meta (key, value) VALUES ('schema_version', '3')
   ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 COMMIT;";
 
@@ -129,17 +164,31 @@ fn apply_schema_and_seed(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Brings older databases up to `SCHEMA_VERSION_CURRENT`. A missing
-/// schema_version means a v1 database (the v1 seed always wrote it, but be
-/// defensive); fresh databases get version 2 from the seed and skip this.
+/// Brings older databases up to `SCHEMA_VERSION_CURRENT` by applying each
+/// migration in sequence (v1 -> v2 -> v3). A missing schema_version means a v1
+/// database (the v1 seed always wrote it, but be defensive); fresh databases
+/// get the current version from the seed and skip every step. Each step
+/// advances the version marker inside its own transaction, so the loop
+/// terminates; an unknown or newer marker is left untouched rather than
+/// migrated blindly.
 fn migrate_to_current_version(conn: &Connection) -> Result<(), CoreError> {
-    let version = get_meta(conn, META_SCHEMA_VERSION_KEY)?;
-    if version.as_deref() == Some(SCHEMA_VERSION_CURRENT) {
-        return Ok(());
+    loop {
+        let version = get_meta(conn, META_SCHEMA_VERSION_KEY)?;
+        if version.as_deref() == Some(SCHEMA_VERSION_CURRENT) {
+            return Ok(());
+        }
+        let (sql, target) = match version.as_deref() {
+            None | Some("1") => (MIGRATE_V1_TO_V2_SQL, "2"),
+            Some("2") => (MIGRATE_V2_TO_V3_SQL, "3"),
+            Some(_) => return Ok(()),
+        };
+        conn.execute_batch(sql).map_err(|error| {
+            db_error(
+                &format!("Could not migrate database to schema version {target}"),
+                error,
+            )
+        })?;
     }
-    conn.execute_batch(MIGRATE_V1_TO_V2_SQL)
-        .map_err(|error| db_error("Could not migrate database to schema version 2", error))?;
-    Ok(())
 }
 
 fn is_seeded(conn: &Connection) -> Result<bool, CoreError> {
@@ -537,6 +586,80 @@ INSERT INTO mock_records (source_id, table_id, record_id, fields, position) VALU
             get_meta(&conn, "schema_version").expect("meta"),
             Some(SCHEMA_VERSION_CURRENT.to_string())
         );
+    }
+
+    /// A schema_version 2 `pending_changes` table (CHECK without 'format') plus
+    /// one committed row, to prove the v2 -> v3 rebuild preserves data and then
+    /// accepts the new change type.
+    const V2_PENDING_CHANGES_FIXTURE: &str = r#"
+DROP TABLE pending_changes;
+CREATE TABLE pending_changes (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  table_id TEXT NOT NULL,
+  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete')),
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'committed', 'rejected')),
+  requires_confirmation INTEGER NOT NULL DEFAULT 0,
+  diff TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  committed_at TEXT
+);
+CREATE INDEX idx_pending_changes_status ON pending_changes (status, created_at DESC);
+INSERT INTO pending_changes
+  (id, source_id, table_id, change_type, created_at, status, requires_confirmation, diff, payload)
+VALUES
+  ('chg_keep', 'google-sheets', 'sheet-1', 'update', '2026-01-01T00:00:00.000Z',
+   'committed', 1, '[]', '{"type":"update","patches":[]}');
+"#;
+
+    #[test]
+    fn migrates_v2_pending_changes_to_v3_and_accepts_format() {
+        let path = temp_db_path();
+        // Build a v2-shaped database: current schema, then swap in the old
+        // pending_changes table and mark the version as 2.
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        let setup = Connection::open(&path).expect("open raw");
+        setup.execute_batch(SCHEMA_SQL).expect("apply schema");
+        setup
+            .execute_batch(V2_PENDING_CHANGES_FIXTURE)
+            .expect("install v2 pending_changes");
+        setup
+            .execute_batch(
+                "INSERT INTO meta (key, value) VALUES ('seeded', '1'), ('schema_version', '2');",
+            )
+            .expect("apply v2 meta");
+        drop(setup);
+
+        let conn = open_at(&path).expect("open migrates v2 database");
+
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some(SCHEMA_VERSION_CURRENT.to_string())
+        );
+        // The existing row survived the table rebuild.
+        assert_eq!(count(&conn, "pending_changes"), 1);
+        let kept: String = conn
+            .query_row(
+                "SELECT change_type FROM pending_changes WHERE id = 'chg_keep'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("kept row");
+        assert_eq!(kept, "update");
+        // The widened CHECK now accepts a 'format' change.
+        conn.execute(
+            "INSERT INTO pending_changes
+                 (id, source_id, table_id, change_type, created_at, status,
+                  requires_confirmation, diff, payload)
+             VALUES ('chg_fmt', 'google-sheets', 'sheet-1', 'format',
+                     '2026-01-02T00:00:00.000Z', 'pending', 1, '{}', '{}')",
+            [],
+        )
+        .expect("format change type is accepted after migration");
     }
 
     #[test]

@@ -1,21 +1,20 @@
-//! The 9 broker tools (docs/mcp-tools.md), behavior-identical to the
-//! checks in the same order, same audit actions and metadata keys, and the
-//! same JSON output shapes. Each function returns the pretty-printed JSON
-//! text of the tool result; errors bubble as `CoreError` and the transport
-//! layer turns them into MCP tool errors.
+//! The 11 broker tools (docs/mcp-tools.md): permission checks in a fixed order,
+//! an audit event per call, and pretty-printed JSON output. Each function
+//! returns the JSON text of the tool result; errors bubble as `CoreError` and
+//! the transport layer turns them into MCP tool errors.
 
 use serde::Serialize;
 use serde_json::json;
 use sheet_port_core::constants::BULK_UPDATE_THRESHOLD;
 use sheet_port_core::types::{
     AuditActor, AuditEvent, ChangeType, DataSource, PendingChange, ReadOptions, RecordPatch,
-    TableRecord, TableRef, TableSchema, WriteAction,
+    TableRecord, TableRef, TableSchema, TableStyle, WriteAction,
 };
 use sheet_port_core::{audit, changes, permissions, CoreError};
 
 use crate::args::{
-    AppendRecordsArgs, CommitChangeArgs, FindRecordsArgs, GetAuditLogArgs, ListTablesArgs,
-    PreviewUpdateArgs, ReadTableArgs, SourceTableArgs,
+    AppendRecordsArgs, CommitChangeArgs, FindRecordsArgs, FormatTableArgs, GetAuditLogArgs,
+    ListTablesArgs, PreviewUpdateArgs, ReadTableArgs, SourceTableArgs,
 };
 use crate::state::BrokerState;
 
@@ -49,6 +48,11 @@ struct PreviewOutput {
 #[derive(Serialize)]
 struct EventsOutput {
     events: Vec<AuditEvent>,
+}
+
+#[derive(Serialize)]
+struct StyleOutput {
+    style: TableStyle,
 }
 
 /// JSON.stringify(data, null, 2) equivalent: 2-space pretty printing.
@@ -262,6 +266,62 @@ pub fn commit_change(state: &BrokerState, args: &CommitChangeArgs) -> Result<Str
     })
 }
 
+pub fn get_table_style(state: &BrokerState, args: &SourceTableArgs) -> Result<String, CoreError> {
+    args.validate()?;
+    state.with_conn(|conn, registry| {
+        permissions::assert_can_read(conn, &args.source_id, Some(&args.table_id))?;
+        let style = registry.read_table_style(conn, &args.source_id, &args.table_id)?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "get_table_style",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            None,
+        )?;
+        pretty(&StyleOutput { style })
+    })
+}
+
+pub fn preview_format_table(
+    state: &BrokerState,
+    args: FormatTableArgs,
+) -> Result<String, CoreError> {
+    let plan = args.validate()?;
+    state.with_conn(|conn, _registry| {
+        let requires_confirmation = permissions::assert_can_write(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            WriteAction::Format,
+        )?;
+        let format_count = plan.formats.len();
+        let change = changes::create_format_change(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            plan,
+            requires_confirmation,
+        )?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "preview_format_table",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            Some(&json!({
+                "changeId": change.id,
+                "formatCount": format_count,
+                "requiresConfirmation": requires_confirmation,
+            })),
+        )?;
+        pretty(&PreviewOutput {
+            change,
+            requires_confirmation,
+        })
+    })
+}
+
 pub fn get_audit_log(state: &BrokerState, args: &GetAuditLogArgs) -> Result<String, CoreError> {
     let limit = args.validate()?;
     state.with_conn(|conn, _registry| {
@@ -285,6 +345,7 @@ fn write_action_for(change_type: ChangeType) -> WriteAction {
         ChangeType::Append => WriteAction::Append,
         ChangeType::Update => WriteAction::Update,
         ChangeType::Delete => WriteAction::Delete,
+        ChangeType::Format => WriteAction::Format,
     }
 }
 

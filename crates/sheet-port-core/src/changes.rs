@@ -17,14 +17,15 @@ use crate::db::{get_meta, now_iso};
 use crate::error::{db_error, parse_json, CoreError};
 use crate::permissions;
 use crate::types::{
-    AuditActor, ChangeDecider, ChangeStatus, ChangeType, JsonMap, PendingChange, ReadOptions,
-    RecordPatch, TableRecord, WriteAction,
+    AuditActor, ChangeDecider, ChangeStatus, ChangeType, FormatPlan, JsonMap, PendingChange,
+    ReadOptions, RecordPatch, TableRecord, WriteAction,
 };
 
 /// Internal write payload; persisted alongside a change but never returned to
 /// agents or the desktop frontend. JSON shape matches the TypeScript
 /// reference: {"type":"append","records":[...]}, {"type":"update",
-/// "patches":[...]}, {"type":"delete","recordIds":[...]}.
+/// "patches":[...]}, {"type":"delete","recordIds":[...]},
+/// {"type":"format","plan":{...}}.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ChangePayload {
@@ -37,6 +38,9 @@ pub enum ChangePayload {
     #[serde(rename_all = "camelCase")]
     Delete {
         record_ids: Vec<String>,
+    },
+    Format {
+        plan: FormatPlan,
     },
 }
 
@@ -98,6 +102,29 @@ pub fn create_update_change(
         table_id,
         ChangeType::Update,
         &ChangePayload::Update { patches },
+        diff,
+        requires_confirmation,
+    )
+}
+
+/// Stages a formatting change. The plan is safe to expose, so it doubles as the
+/// agent-visible diff; the same plan is stored as the internal payload the
+/// commit replays through the connector.
+pub fn create_format_change(
+    conn: &Connection,
+    source_id: &str,
+    table_id: &str,
+    plan: FormatPlan,
+    requires_confirmation: bool,
+) -> Result<PendingChange, CoreError> {
+    let diff = serde_json::to_value(&plan)
+        .map_err(|error| CoreError::Storage(format!("Could not encode format plan: {error}")))?;
+    insert_change(
+        conn,
+        source_id,
+        table_id,
+        ChangeType::Format,
+        &ChangePayload::Format { plan },
         diff,
         requires_confirmation,
     )
@@ -513,6 +540,11 @@ fn execute(
         ChangePayload::Delete { .. } => Err(CoreError::Unsupported(
             "Delete changes are not implemented in the MVP".to_string(),
         )),
+        ChangePayload::Format { plan } => {
+            registry.format_cells(conn, &change.source_id, &change.table_id, plan)?;
+            // Formatting writes no records; the committed change carries none.
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -536,6 +568,7 @@ fn commit_action(change_type: ChangeType, payload: &ChangePayload) -> WriteActio
         ChangeType::Append => WriteAction::Append,
         ChangeType::Update => WriteAction::Update,
         ChangeType::Delete => WriteAction::Delete,
+        ChangeType::Format => WriteAction::Format,
     }
 }
 

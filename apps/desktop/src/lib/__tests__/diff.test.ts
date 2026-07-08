@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isFieldChanged, parseAppendDiff, parseUpdateDiff, type UpdateDiffEntry } from "../diff";
+import {
+  isFieldChanged,
+  parseAppendDiff,
+  parseFormatDiff,
+  parseUpdateDiff,
+  type UpdateDiffEntry
+} from "../diff";
 
 describe("parseAppendDiff", () => {
   it("parses a valid append diff", () => {
@@ -63,6 +69,45 @@ describe("parseUpdateDiff", () => {
     expect(parseUpdateDiff([{ recordId: 7, before: null, after: {} }])).toBeNull();
     expect(parseUpdateDiff([{ recordId: "rec_1", before: null, after: "not-a-record" }])).toBeNull();
     expect(parseUpdateDiff([{ recordId: "rec_1", before: null, after: {} }, 42])).toBeNull();
+  });
+});
+
+describe("parseFormatDiff", () => {
+  it("parses a plan with cell formats, freeze, and column widths", () => {
+    const diff: unknown = {
+      formats: [{ range: "A1:D1", bold: true, backgroundColor: "#f3f4f6", border: "bottom" }],
+      freezeRows: 1,
+      columnWidths: [{ column: "A", pixels: 160 }]
+    };
+
+    const parsed = parseFormatDiff(diff);
+
+    expect(parsed).toEqual({
+      formats: [{ range: "A1:D1", bold: true, backgroundColor: "#f3f4f6", border: "bottom" }],
+      freezeRows: 1,
+      freezeColumns: undefined,
+      columnWidths: [{ column: "A", pixels: 160 }]
+    });
+  });
+
+  it("drops malformed formats and column widths", () => {
+    const parsed = parseFormatDiff({
+      formats: [{ range: "A1" }, { bold: true }],
+      columnWidths: [{ column: "A", pixels: 100 }, { column: "B" }]
+    });
+    expect(parsed).toEqual({
+      formats: [{ range: "A1" }],
+      freezeRows: undefined,
+      freezeColumns: undefined,
+      columnWidths: [{ column: "A", pixels: 100 }]
+    });
+  });
+
+  it("returns null when the plan carries no formatting", () => {
+    expect(parseFormatDiff({})).toBeNull();
+    expect(parseFormatDiff({ formats: [] })).toBeNull();
+    expect(parseFormatDiff(null)).toBeNull();
+    expect(parseFormatDiff([{ range: "A1" }])).toBeNull();
   });
 });
 

@@ -1,4 +1,4 @@
-//! rmcp glue: registers exactly the 9 contract tools (docs/mcp-tools.md) and
+//! rmcp glue: registers exactly the 11 contract tools (docs/mcp-tools.md) and
 //! the server identity. All behavior lives in `tools`; this layer only maps
 //! results onto the MCP wire shape.
 
@@ -10,8 +10,8 @@ use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use sheet_port_core::CoreError;
 
 use crate::args::{
-    AppendRecordsArgs, CommitChangeArgs, FindRecordsArgs, GetAuditLogArgs, ListTablesArgs,
-    PreviewUpdateArgs, ReadTableArgs, SourceTableArgs,
+    AppendRecordsArgs, CommitChangeArgs, FindRecordsArgs, FormatTableArgs, GetAuditLogArgs,
+    ListTablesArgs, PreviewUpdateArgs, ReadTableArgs, SourceTableArgs,
 };
 use crate::state::BrokerState;
 use crate::tools;
@@ -24,7 +24,7 @@ const SERVER_VERSION: &str = "0.3.0";
 /// pass a pasted spreadsheet link straight through as the tableId. Kept
 /// accurate to the connector behavior (URL / id / id:gid / id:SheetName
 /// resolution, preview -> commit writes, tokens held by the desktop app).
-const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port exposes safe tools to read and edit the user's connected Google Sheets (and future providers). When the user mentions a Google Sheets link or a spreadsheet, use these tools instead of guessing: call list_sources to find the connected account, then read_table or find_records. read_table and the other table tools accept a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName as the tableId - so you can pass a pasted spreadsheet link directly, and the exact tab is selected from the gid or sheet name (no selector reads the first tab). All writes are staged: preview_update_records or append_records return a changeId, then commit_change applies it (some changes need the user to approve in the desktop app first). Never fabricate spreadsheet contents; read them with these tools. Never ask for or handle OAuth tokens - the desktop app holds them.";
+const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port exposes safe tools to read and edit the user's connected Google Sheets (and future providers). When the user mentions a Google Sheets link or a spreadsheet, use these tools instead of guessing: call list_sources to find the connected account, then read_table or find_records. read_table and the other table tools accept a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName as the tableId - so you can pass a pasted spreadsheet link directly, and the exact tab is selected from the gid or sheet name (no selector reads the first tab). All writes are staged: preview_update_records, append_records, or preview_format_table return a changeId, then commit_change applies it (some changes need the user to approve in the desktop app first). Two tools handle appearance: get_table_style reads a tab's existing look (header and first-row cell styles, frozen rows, column widths), and preview_format_table stages formatting - per-range bold, italic, fontSize, fontColor and backgroundColor as #rrggbb, horizontalAlignment, numberFormat (with an optional numberFormatType such as DATE or CURRENCY), wrap and border (none/all/outer/bottom), plus freezeRows, freezeColumns, and columnWidths. House style whenever you lay out a fresh sheet or write new data: freeze the header row, make the header bold with a light neutral fill (for example #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat and right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained - one or two muted accent colors, no full gridlines, no loud fills. When the sheet ALREADY has data or formatting, call get_table_style first and match its existing header and data styling instead of imposing a new look. Never fabricate spreadsheet contents; read them with these tools. Never ask for or handle OAuth tokens - the desktop app holds them.";
 
 pub struct SheetPortServer {
     state: Arc<BrokerState>,
@@ -117,6 +117,19 @@ impl SheetPortServer {
     }
 
     #[tool(
+        name = "get_table_style",
+        description = "Read a tab's existing cell formatting so you can match it: the effective style (bold, colors, alignment, number format, wrap) of the header row and the first data row, plus frozen row/column counts and column pixel widths. Call this before preview_format_table when the sheet already has data or a look you should keep consistent. For Google Sheets the tableId may be a URL, a spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName.",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_table_style(
+        &self,
+        Parameters(args): Parameters<SourceTableArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::get_table_style(&state, &args)).await
+    }
+
+    #[tool(
         name = "preview_update_records",
         description = "Stage an update to existing records and return its diff (before/after). This does NOT write anything: it returns a changeId you then pass to commit_change. Some changes require the user to approve them in the desktop app before commit_change will apply them. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab."
     )]
@@ -138,6 +151,18 @@ impl SheetPortServer {
     ) -> CallToolResult {
         let state = Arc::clone(&self.state);
         respond_blocking(move || tools::append_records(&state, args)).await
+    }
+
+    #[tool(
+        name = "preview_format_table",
+        description = "Stage cell formatting for a tab and return the pending change. This does NOT write anything: it returns a changeId you then pass to commit_change (some changes require the user to approve them in the desktop app first). Provide any of: `formats` (a list of operations, each with a `range` like A1:D1 plus optional bold, italic, fontSize, fontColor and backgroundColor as #rrggbb, horizontalAlignment LEFT/CENTER/RIGHT, numberFormat pattern with optional numberFormatType, wrap, and border none/all/outer/bottom), `freezeRows`, `freezeColumns`, and `columnWidths` (per-column pixel sizes). Only the properties you set are changed. Call get_table_style first to match an existing sheet's look. For Google Sheets the tableId may be a URL, a spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName."
+    )]
+    async fn preview_format_table(
+        &self,
+        Parameters(args): Parameters<FormatTableArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::preview_format_table(&state, args)).await
     }
 
     #[tool(

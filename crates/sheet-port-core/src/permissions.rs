@@ -10,12 +10,13 @@ use crate::error::{db_error, CoreError};
 use crate::types::{AuditActor, PermissionRuleRow, SavePermissionRule, WriteAction};
 
 /// Must match `ConfirmationAction` in the shared contract.
-pub const ALLOWED_CONFIRMATION_ACTIONS: [&str; 5] = [
+pub const ALLOWED_CONFIRMATION_ACTIONS: [&str; 6] = [
     "append",
     "update",
     "delete",
     "bulk_update",
     "formula_change",
+    "format",
 ];
 
 const RULE_COLUMNS: &str =

@@ -40,11 +40,56 @@ export type RecordPatch = {
   fields: Record<string, unknown>;
 };
 
-export type ChangeType = "append" | "update" | "delete";
-export type ConfirmationAction = "append" | "update" | "delete" | "bulk_update" | "formula_change";
+export type ChangeType = "append" | "update" | "delete" | "format";
+export type ConfirmationAction =
+  | "append"
+  | "update"
+  | "delete"
+  | "bulk_update"
+  | "formula_change"
+  | "format";
 
 /** Write action evaluated against permission rules; wider than ChangeType. */
-export type WriteAction = ChangeType | "bulk_update";
+export type WriteAction = "append" | "update" | "delete" | "bulk_update" | "format";
+
+export type HorizontalAlignment = "LEFT" | "CENTER" | "RIGHT";
+
+export type NumberFormatType =
+  | "TEXT"
+  | "NUMBER"
+  | "PERCENT"
+  | "CURRENCY"
+  | "DATE"
+  | "TIME"
+  | "DATE_TIME"
+  | "SCIENTIFIC";
+
+export type BorderStyle = "none" | "all" | "outer" | "bottom";
+
+/** One cell-format operation over an A1 range; only the set properties change. */
+export type CellFormat = {
+  range: string;
+  bold?: boolean;
+  italic?: boolean;
+  fontSize?: number;
+  fontColor?: string;
+  backgroundColor?: string;
+  horizontalAlignment?: HorizontalAlignment;
+  numberFormat?: string;
+  numberFormatType?: NumberFormatType;
+  wrap?: boolean;
+  border?: BorderStyle;
+};
+
+export type ColumnWidth = { column: string; pixels: number };
+
+/** A staged formatting change; also the agent-visible diff of a format change. */
+export type FormatPlan = {
+  formats?: CellFormat[];
+  freezeRows?: number;
+  freezeColumns?: number;
+  columnWidths?: ColumnWidth[];
+};
 
 /** Update previews touching more than this many records are treated as bulk_update. */
 export const BULK_UPDATE_THRESHOLD = 20;

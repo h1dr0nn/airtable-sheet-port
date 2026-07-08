@@ -127,8 +127,9 @@ try {
   const names = tools.result.tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
     "append_records", "commit_change", "describe_table", "find_records",
-    "get_audit_log", "list_sources", "list_tables", "preview_update_records", "read_table"
-  ], "exactly the 9 contract tools");
+    "get_audit_log", "get_table_style", "list_sources", "list_tables",
+    "preview_format_table", "preview_update_records", "read_table"
+  ], "exactly the 11 contract tools");
 
   const src = toolJson(await callTool("list_sources"));
   assert.ok(!src.isError && JSON.stringify(src.json).includes("mock-source"), "list_sources works");

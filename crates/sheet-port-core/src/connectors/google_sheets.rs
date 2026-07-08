@@ -9,15 +9,17 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 
 use super::{
-    clamp_read_window, column_id_for_index, column_index_for_id, js_string, TableConnector,
+    clamp_read_window, column_id_for_index, column_index_for_id, js_string, parse_a1_range,
+    A1Range, TableConnector,
 };
 use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
 use crate::google;
 use crate::sources;
 use crate::types::{
-    DataSource, FieldSchema, GridColumn, GridData, GridRow, JsonMap, ReadOptions, RecordPatch,
-    SheetTab, SourceKind, TableRecord, TableRef, TableSchema,
+    BorderStyle, CellFormat, CellStyle, ColumnWidth, DataSource, FieldSchema, FormatPlan,
+    GridColumn, GridData, GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch, SheetTab,
+    SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
 };
 
 const DRIVE_FILES_ENDPOINT: &str = "https://www.googleapis.com/drive/v3/files";
@@ -454,6 +456,35 @@ impl TableConnector for GoogleSheetsConnector {
             })?;
         Ok(start_row - FIRST_SHEET_ROW)
     }
+
+    /// The effective style of the tab: header row, first data row, sheet freeze
+    /// counts, and column widths. One `spreadsheets.get` with `includeGridData`
+    /// over the first two rows (docs/mcp-tools.md "get_table_style").
+    fn read_table_style(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+    ) -> Result<TableStyle, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        read_table_style_for(&token, &sheet)
+    }
+
+    /// Applies a formatting plan through `spreadsheets.batchUpdate` (cell
+    /// formats, header freeze, and column widths). Called only from the
+    /// staged-change commit path.
+    fn format_cells(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        plan: &FormatPlan,
+    ) -> Result<(), CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        apply_format_plan(&token, &sheet, plan)
+    }
 }
 
 /// Parses a Google Sheets URL, bare spreadsheet id, or `id:selector` down to
@@ -629,6 +660,10 @@ struct ResolvedSheet {
     spreadsheet_title: String,
     /// Resolved tab title, or `None` when reading the first sheet.
     sheet_title: Option<String>,
+    /// Numeric tab id (the Google `gid`) of the resolved sheet. Needed to build
+    /// a `GridRange` for cell-formatting requests; A1 value ranges use the
+    /// title instead.
+    sheet_id: i64,
 }
 
 impl ResolvedSheet {
@@ -640,10 +675,12 @@ impl ResolvedSheet {
         let parsed = ParsedTableId::parse(table_id)?;
         let meta = fetch_spreadsheet_meta(token, &parsed.spreadsheet_id)?;
         let sheet_title = resolve_sheet_title(&parsed, &meta)?;
+        let sheet_id = resolve_sheet_id(&parsed, &meta)?;
         Ok(Self {
             spreadsheet_id: parsed.spreadsheet_id,
             spreadsheet_title: meta.title,
             sheet_title,
+            sheet_id,
         })
     }
 
@@ -738,6 +775,47 @@ fn resolve_sheet_title(
             .iter()
             .find(|sheet| sheet.title == *title)
             .map(|sheet| Some(sheet.title.clone()))
+            .ok_or_else(|| {
+                CoreError::NotFound(format!(
+                    "Spreadsheet {} has no tab named '{title}'",
+                    parsed.spreadsheet_id
+                ))
+            }),
+    }
+}
+
+/// Resolves the numeric tab id (gid) the selector points at, using the same
+/// rules as [`resolve_sheet_title`]: `First` is the lowest-index tab, `Gid` is
+/// the tab with that id, and `Title` is the tab with that exact title.
+fn resolve_sheet_id(parsed: &ParsedTableId, meta: &SpreadsheetMeta) -> Result<i64, CoreError> {
+    match &parsed.selector {
+        SheetSelector::First => meta
+            .sheets
+            .iter()
+            .min_by_key(|sheet| sheet.index)
+            .map(|sheet| sheet.sheet_id)
+            .ok_or_else(|| {
+                CoreError::NotFound(format!(
+                    "Spreadsheet {} has no sheets",
+                    parsed.spreadsheet_id
+                ))
+            }),
+        SheetSelector::Gid(gid) => meta
+            .sheets
+            .iter()
+            .find(|sheet| sheet.sheet_id == *gid)
+            .map(|sheet| sheet.sheet_id)
+            .ok_or_else(|| {
+                CoreError::NotFound(format!(
+                    "Spreadsheet {} has no tab with gid {gid}",
+                    parsed.spreadsheet_id
+                ))
+            }),
+        SheetSelector::Title(title) => meta
+            .sheets
+            .iter()
+            .find(|sheet| sheet.title == *title)
+            .map(|sheet| sheet.sheet_id)
             .ok_or_else(|| {
                 CoreError::NotFound(format!(
                     "Spreadsheet {} has no tab named '{title}'",
@@ -975,9 +1053,421 @@ fn row_values(header: &[String], fields: &JsonMap) -> Vec<Value> {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Cell formatting (spreadsheets.batchUpdate) and style reads (spreadsheets.get
+// with includeGridData). Request building is pure and unit-tested; only
+// apply_format_plan / read_table_style_for touch the network.
+// ---------------------------------------------------------------------------
+
+/// Neutral grey used for the border lines a formatting plan draws.
+const DEFAULT_BORDER_COLOR: &str = "#bfbfbf";
+
+/// Field mask for a style read: the two sample rows plus sheet freeze counts
+/// and per-column pixel widths. Bounds the response to exactly what
+/// [`TableStyle`] reports.
+const STYLE_FIELDS_MASK: &str = "sheets(properties(sheetId,title,gridProperties(frozenRowCount,frozenColumnCount)),data(rowData(values(formattedValue,effectiveFormat(backgroundColor,horizontalAlignment,wrapStrategy,numberFormat,textFormat(bold,italic,fontSize,foregroundColor)))),columnMetadata(pixelSize)))";
+
+/// POSTs a formatting plan as a single `spreadsheets.batchUpdate`. An empty
+/// plan (no requests) is a no-op; plans are validated non-empty upstream.
+fn apply_format_plan(
+    token: &str,
+    sheet: &ResolvedSheet,
+    plan: &FormatPlan,
+) -> Result<(), CoreError> {
+    let requests = build_format_requests(sheet.sheet_id, plan)?;
+    if requests.is_empty() {
+        return Ok(());
+    }
+    let url = spreadsheet_batch_update_url(&sheet.spreadsheet_id)?;
+    google::post_json(token, url.as_str(), &json!({ "requests": requests }))?;
+    Ok(())
+}
+
+/// Turns a plan into ordered `spreadsheets.batchUpdate` requests: per-range cell
+/// formats and borders, then the header freeze, then column widths. Pure so the
+/// request shape can be unit-tested without a network call.
+fn build_format_requests(sheet_id: i64, plan: &FormatPlan) -> Result<Vec<Value>, CoreError> {
+    let mut requests = Vec::new();
+    for format in &plan.formats {
+        if let Some(request) = repeat_cell_request(sheet_id, format)? {
+            requests.push(request);
+        }
+        if let Some(request) = border_request(sheet_id, format)? {
+            requests.push(request);
+        }
+    }
+    if let Some(request) = freeze_request(sheet_id, plan.freeze_rows, plan.freeze_columns) {
+        requests.push(request);
+    }
+    requests.extend(column_width_requests(sheet_id, &plan.column_widths)?);
+    Ok(requests)
+}
+
+/// A `repeatCell` request writing only the properties present in `format`; the
+/// field mask names exactly those paths so everything else is left untouched.
+/// Returns `None` when the op sets no cell-level format (e.g. border only).
+fn repeat_cell_request(sheet_id: i64, format: &CellFormat) -> Result<Option<Value>, CoreError> {
+    let mut user_format = serde_json::Map::new();
+    let mut text_format = serde_json::Map::new();
+    let mut fields: Vec<&str> = Vec::new();
+
+    if let Some(bold) = format.bold {
+        text_format.insert("bold".to_string(), json!(bold));
+        fields.push("userEnteredFormat.textFormat.bold");
+    }
+    if let Some(italic) = format.italic {
+        text_format.insert("italic".to_string(), json!(italic));
+        fields.push("userEnteredFormat.textFormat.italic");
+    }
+    if let Some(size) = format.font_size {
+        text_format.insert("fontSize".to_string(), json!(size));
+        fields.push("userEnteredFormat.textFormat.fontSize");
+    }
+    if let Some(color) = &format.font_color {
+        text_format.insert("foregroundColor".to_string(), hex_to_color_json(color)?);
+        fields.push("userEnteredFormat.textFormat.foregroundColor");
+    }
+    if !text_format.is_empty() {
+        user_format.insert("textFormat".to_string(), Value::Object(text_format));
+    }
+    if let Some(color) = &format.background_color {
+        user_format.insert("backgroundColor".to_string(), hex_to_color_json(color)?);
+        fields.push("userEnteredFormat.backgroundColor");
+    }
+    if let Some(align) = format.horizontal_alignment {
+        user_format.insert("horizontalAlignment".to_string(), json!(align.as_str()));
+        fields.push("userEnteredFormat.horizontalAlignment");
+    }
+    if let Some(pattern) = &format.number_format {
+        let format_type = number_format_type_str(pattern, format.number_format_type);
+        user_format.insert(
+            "numberFormat".to_string(),
+            json!({ "type": format_type, "pattern": pattern }),
+        );
+        fields.push("userEnteredFormat.numberFormat");
+    }
+    if let Some(wrap) = format.wrap {
+        let strategy = if wrap { "WRAP" } else { "OVERFLOW_CELL" };
+        user_format.insert("wrapStrategy".to_string(), json!(strategy));
+        fields.push("userEnteredFormat.wrapStrategy");
+    }
+
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    let range = parse_a1_range(&format.range)?;
+    Ok(Some(json!({
+        "repeatCell": {
+            "range": grid_range_json(sheet_id, &range),
+            "cell": { "userEnteredFormat": Value::Object(user_format) },
+            "fields": fields.join(","),
+        }
+    })))
+}
+
+/// An `updateBorders` request for the op's [`BorderStyle`], or `None` when the
+/// op sets no border. `Bottom` draws only a bottom rule (header underline);
+/// `None` clears every side.
+fn border_request(sheet_id: i64, format: &CellFormat) -> Result<Option<Value>, CoreError> {
+    let Some(border) = format.border else {
+        return Ok(None);
+    };
+    let range = parse_a1_range(&format.range)?;
+    let (sides, style): (&[&str], &str) = match border {
+        BorderStyle::None => (
+            &[
+                "top",
+                "bottom",
+                "left",
+                "right",
+                "innerHorizontal",
+                "innerVertical",
+            ],
+            "NONE",
+        ),
+        BorderStyle::All => (
+            &[
+                "top",
+                "bottom",
+                "left",
+                "right",
+                "innerHorizontal",
+                "innerVertical",
+            ],
+            "SOLID",
+        ),
+        BorderStyle::Outer => (&["top", "bottom", "left", "right"], "SOLID"),
+        BorderStyle::Bottom => (&["bottom"], "SOLID"),
+    };
+    let border_obj = if style == "NONE" {
+        json!({ "style": "NONE" })
+    } else {
+        json!({ "style": style, "color": hex_to_color_json(DEFAULT_BORDER_COLOR)? })
+    };
+    let mut request = serde_json::Map::new();
+    request.insert("range".to_string(), grid_range_json(sheet_id, &range));
+    for side in sides {
+        request.insert((*side).to_string(), border_obj.clone());
+    }
+    Ok(Some(json!({ "updateBorders": Value::Object(request) })))
+}
+
+/// An `updateSheetProperties` request setting the header freeze; `None` when the
+/// plan freezes nothing.
+fn freeze_request(
+    sheet_id: i64,
+    freeze_rows: Option<i64>,
+    freeze_columns: Option<i64>,
+) -> Option<Value> {
+    if freeze_rows.is_none() && freeze_columns.is_none() {
+        return None;
+    }
+    let mut grid_properties = serde_json::Map::new();
+    let mut fields: Vec<&str> = Vec::new();
+    if let Some(rows) = freeze_rows {
+        grid_properties.insert("frozenRowCount".to_string(), json!(rows));
+        fields.push("gridProperties.frozenRowCount");
+    }
+    if let Some(columns) = freeze_columns {
+        grid_properties.insert("frozenColumnCount".to_string(), json!(columns));
+        fields.push("gridProperties.frozenColumnCount");
+    }
+    Some(json!({
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": sheet_id,
+                "gridProperties": Value::Object(grid_properties),
+            },
+            "fields": fields.join(","),
+        }
+    }))
+}
+
+/// One `updateDimensionProperties` request per column-width override.
+fn column_width_requests(sheet_id: i64, widths: &[ColumnWidth]) -> Result<Vec<Value>, CoreError> {
+    widths
+        .iter()
+        .map(|width| {
+            let index = column_index_for_id(&width.column.to_ascii_uppercase())
+                .filter(|index| *index < last_column_count())
+                .ok_or_else(|| {
+                    CoreError::InvalidInput(format!("Unknown column {}", width.column))
+                })?;
+            Ok(json!({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": index,
+                        "endIndex": index + 1,
+                    },
+                    "properties": { "pixelSize": width.pixels },
+                    "fields": "pixelSize",
+                }
+            }))
+        })
+        .collect()
+}
+
+/// A `GridRange` JSON object; unbounded dimensions omit their start/end keys so
+/// a whole-column or whole-row range is expressed correctly.
+fn grid_range_json(sheet_id: i64, range: &A1Range) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("sheetId".to_string(), json!(sheet_id));
+    if let Some(value) = range.start_row {
+        object.insert("startRowIndex".to_string(), json!(value));
+    }
+    if let Some(value) = range.end_row {
+        object.insert("endRowIndex".to_string(), json!(value));
+    }
+    if let Some(value) = range.start_col {
+        object.insert("startColumnIndex".to_string(), json!(value));
+    }
+    if let Some(value) = range.end_col {
+        object.insert("endColumnIndex".to_string(), json!(value));
+    }
+    Value::Object(object)
+}
+
+/// The `numberFormat.type` for a pattern: the explicit override when given,
+/// otherwise inferred (a year or day token implies a date, else NUMBER).
+fn number_format_type_str(pattern: &str, explicit: Option<NumberFormatType>) -> &'static str {
+    if let Some(kind) = explicit {
+        return kind.as_str();
+    }
+    let lower = pattern.to_ascii_lowercase();
+    if lower.contains('y') || lower.contains('d') {
+        NumberFormatType::Date.as_str()
+    } else {
+        NumberFormatType::Number.as_str()
+    }
+}
+
+/// `#rrggbb` -> a Google API color object with 0..1 float components. Errors on
+/// a malformed hex string (the tool boundary validates first, so this is a
+/// defensive check).
+fn hex_to_color_json(hex: &str) -> Result<Value, CoreError> {
+    let (red, green, blue) = parse_hex_rgb(hex)
+        .ok_or_else(|| CoreError::InvalidInput(format!("'{hex}' is not a #rrggbb color")))?;
+    Ok(json!({
+        "red": f64::from(red) / 255.0,
+        "green": f64::from(green) / 255.0,
+        "blue": f64::from(blue) / 255.0,
+    }))
+}
+
+/// Parses `#rrggbb` (case-insensitive) into RGB bytes; `None` for any other
+/// shape.
+fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let digits = hex.strip_prefix('#')?;
+    if digits.len() != 6 || !digits.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    let red = u8::from_str_radix(&digits[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&digits[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&digits[4..6], 16).ok()?;
+    Some((red, green, blue))
+}
+
+/// `{SHEETS_ENDPOINT}/{id}:batchUpdate`; the `:batchUpdate` verb rides the id
+/// path segment, matching how the values URLs attach their verbs.
+fn spreadsheet_batch_update_url(spreadsheet_id: &str) -> Result<url::Url, CoreError> {
+    let mut url = url::Url::parse(SHEETS_ENDPOINT)
+        .map_err(|error| CoreError::Storage(format!("Could not build the Sheets URL: {error}")))?;
+    push_segments(&mut url, &[&format!("{spreadsheet_id}:batchUpdate")])?;
+    Ok(url)
+}
+
+/// Reads the effective style of the tab via one `spreadsheets.get` with
+/// `includeGridData` over the header and first data row.
+fn read_table_style_for(token: &str, sheet: &ResolvedSheet) -> Result<TableStyle, CoreError> {
+    let mut url = sheets_base_url(&sheet.spreadsheet_id)?;
+    url.query_pairs_mut()
+        .append_pair(
+            "ranges",
+            &sheet.range(&format!("A{HEADER_ROW}:{LAST_COLUMN}{FIRST_DATA_ROW}")),
+        )
+        .append_pair("includeGridData", "true")
+        .append_pair("fields", STYLE_FIELDS_MASK);
+    let body = google::get_json(token, url.as_str())?;
+
+    let properties = &body["sheets"][0]["properties"];
+    let grid = &properties["gridProperties"];
+    let frozen_row_count = grid["frozenRowCount"].as_i64().unwrap_or(0);
+    let frozen_column_count = grid["frozenColumnCount"].as_i64().unwrap_or(0);
+
+    let data = &body["sheets"][0]["data"][0];
+    let row_data = data["rowData"].as_array().cloned().unwrap_or_default();
+    let header_values = row_style_values(&row_data, 0);
+    let sample_values = row_style_values(&row_data, 1);
+    let used = used_style_columns(&header_values);
+    Ok(TableStyle {
+        spreadsheet_id: sheet.spreadsheet_id.clone(),
+        sheet_title: sheet.sheet_title.clone(),
+        frozen_row_count,
+        frozen_column_count,
+        column_count: used as i64,
+        header: cell_styles(&header_values, used),
+        sample: cell_styles(&sample_values, used),
+        column_widths: style_column_widths(&data["columnMetadata"], used),
+    })
+}
+
+/// The `values` array of one style row (empty when the row is absent).
+fn row_style_values(row_data: &[Value], index: usize) -> Vec<Value> {
+    row_data
+        .get(index)
+        .and_then(|row| row["values"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// Used width = the last header cell carrying a non-empty value, plus one,
+/// bounded to the supported column window. Zero for an empty header.
+fn used_style_columns(header_values: &[Value]) -> usize {
+    header_values
+        .iter()
+        .rposition(|cell| {
+            cell["formattedValue"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        })
+        .map_or(0, |last| (last + 1).min(last_column_count()))
+}
+
+/// The effective style of each used cell in a row, keyed by column letter.
+fn cell_styles(values: &[Value], used: usize) -> Vec<CellStyle> {
+    let null = Value::Null;
+    (0..used)
+        .map(|index| {
+            let effective = values
+                .get(index)
+                .map_or(&null, |cell| &cell["effectiveFormat"]);
+            parse_cell_style(&column_id_for_index(index), effective)
+        })
+        .collect()
+}
+
+/// Maps a Google `effectiveFormat` onto a [`CellStyle`]; only properties that
+/// are actually set (bold/italic true, a present color, a pattern, an explicit
+/// alignment) are reported, so the output stays compact.
+fn parse_cell_style(column: &str, effective_format: &Value) -> CellStyle {
+    let text = &effective_format["textFormat"];
+    CellStyle {
+        column: column.to_string(),
+        bold: text["bold"].as_bool().filter(|bold| *bold),
+        italic: text["italic"].as_bool().filter(|italic| *italic),
+        font_size: text["fontSize"].as_i64(),
+        font_color: google_color_to_hex(&text["foregroundColor"]),
+        background_color: google_color_to_hex(&effective_format["backgroundColor"]),
+        horizontal_alignment: effective_format["horizontalAlignment"]
+            .as_str()
+            .map(str::to_string),
+        number_format: effective_format["numberFormat"]["pattern"]
+            .as_str()
+            .filter(|pattern| !pattern.is_empty())
+            .map(str::to_string),
+        wrap: effective_format["wrapStrategy"]
+            .as_str()
+            .map(|strategy| strategy == "WRAP"),
+    }
+}
+
+/// A Google color object -> `#rrggbb`; `None` when no color object is present
+/// (absent components default to 0).
+fn google_color_to_hex(color: &Value) -> Option<String> {
+    if !color.is_object() {
+        return None;
+    }
+    let component = |key: &str| -> u8 {
+        (color[key].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        component("red"),
+        component("green"),
+        component("blue")
+    ))
+}
+
+/// Per-column pixel widths for the used columns, from the style read's
+/// `columnMetadata` (skipping columns with no reported width).
+fn style_column_widths(column_metadata: &Value, used: usize) -> Vec<ColumnWidth> {
+    let metadata = column_metadata.as_array().cloned().unwrap_or_default();
+    (0..used)
+        .filter_map(|index| {
+            let pixels = metadata.get(index)?["pixelSize"].as_i64()?;
+            Some(ColumnWidth {
+                column: column_id_for_index(index),
+                pixels,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::HorizontalAlignment;
     use serde_json::json;
 
     fn header(names: &[&str]) -> Vec<String> {
@@ -1244,6 +1734,7 @@ mod tests {
             spreadsheet_id: SAMPLE_ID.to_string(),
             spreadsheet_title: "Book".to_string(),
             sheet_title: None,
+            sheet_id: 0,
         };
         assert_eq!(first.range("A1:ZZ1"), "A1:ZZ1");
 
@@ -1251,6 +1742,7 @@ mod tests {
             spreadsheet_id: SAMPLE_ID.to_string(),
             spreadsheet_title: "Book".to_string(),
             sheet_title: Some("My Sheet".to_string()),
+            sheet_id: 42,
         };
         assert_eq!(named.range("A2:ZZ"), "'My Sheet'!A2:ZZ");
 
@@ -1259,6 +1751,7 @@ mod tests {
             spreadsheet_id: SAMPLE_ID.to_string(),
             spreadsheet_title: "Book".to_string(),
             sheet_title: Some("Bob's Tab".to_string()),
+            sheet_id: 7,
         };
         assert_eq!(quoted.range("A1"), "'Bob''s Tab'!A1");
     }
@@ -1343,5 +1836,230 @@ mod tests {
         let batch = values_batch_update_url(SAMPLE_ID).expect("batch url");
         assert_eq!(batch.host_str(), Some("sheets.googleapis.com"));
         assert!(batch.as_str().ends_with("values:batchUpdate"));
+    }
+
+    fn cell_format(range: &str) -> CellFormat {
+        CellFormat {
+            range: range.to_string(),
+            bold: None,
+            italic: None,
+            font_size: None,
+            font_color: None,
+            background_color: None,
+            horizontal_alignment: None,
+            number_format: None,
+            number_format_type: None,
+            wrap: None,
+            border: None,
+        }
+    }
+
+    #[test]
+    fn hex_to_color_json_maps_channels_to_unit_floats() {
+        let color = hex_to_color_json("#ff8000").expect("valid hex");
+        assert_eq!(color["red"].as_f64(), Some(1.0));
+        assert!((color["green"].as_f64().unwrap() - 128.0 / 255.0).abs() < 1e-9);
+        assert_eq!(color["blue"].as_f64(), Some(0.0));
+        assert!(
+            hex_to_color_json("ff8000").is_err(),
+            "missing # is rejected"
+        );
+        assert!(hex_to_color_json("#fff").is_err(), "shorthand is rejected");
+        assert!(hex_to_color_json("#gggggg").is_err(), "non-hex is rejected");
+    }
+
+    #[test]
+    fn number_format_type_infers_date_from_pattern_or_uses_override() {
+        assert_eq!(number_format_type_str("#,##0", None), "NUMBER");
+        assert_eq!(number_format_type_str("0.00%", None), "NUMBER");
+        assert_eq!(number_format_type_str("yyyy-mm-dd", None), "DATE");
+        assert_eq!(
+            number_format_type_str("#,##0", Some(NumberFormatType::Currency)),
+            "CURRENCY"
+        );
+    }
+
+    #[test]
+    fn grid_range_json_omits_unbounded_dimensions() {
+        let cell = grid_range_json(7, &parse_a1_range("B2:C3").expect("range"));
+        assert_eq!(cell["sheetId"].as_i64(), Some(7));
+        assert_eq!(cell["startRowIndex"].as_i64(), Some(1));
+        assert_eq!(cell["endRowIndex"].as_i64(), Some(3));
+        assert_eq!(cell["startColumnIndex"].as_i64(), Some(1));
+        assert_eq!(cell["endColumnIndex"].as_i64(), Some(3));
+
+        let whole_columns = grid_range_json(7, &parse_a1_range("A:B").expect("range"));
+        assert_eq!(whole_columns["startColumnIndex"].as_i64(), Some(0));
+        assert_eq!(whole_columns["endColumnIndex"].as_i64(), Some(2));
+        assert!(
+            whole_columns.get("startRowIndex").is_none(),
+            "whole-column range leaves rows unbounded"
+        );
+    }
+
+    #[test]
+    fn repeat_cell_request_masks_only_the_set_properties() {
+        let format = CellFormat {
+            bold: Some(true),
+            background_color: Some("#f3f4f6".to_string()),
+            horizontal_alignment: Some(HorizontalAlignment::Center),
+            ..cell_format("A1:D1")
+        };
+        let request = repeat_cell_request(3, &format)
+            .expect("request")
+            .expect("some");
+        let repeat = &request["repeatCell"];
+        let fields = repeat["fields"].as_str().expect("fields");
+        assert!(fields.contains("userEnteredFormat.textFormat.bold"));
+        assert!(fields.contains("userEnteredFormat.backgroundColor"));
+        assert!(fields.contains("userEnteredFormat.horizontalAlignment"));
+        assert!(
+            !fields.contains("italic"),
+            "unset properties stay out of the mask"
+        );
+        let user_format = &repeat["cell"]["userEnteredFormat"];
+        assert_eq!(user_format["textFormat"]["bold"].as_bool(), Some(true));
+        assert_eq!(user_format["horizontalAlignment"].as_str(), Some("CENTER"));
+    }
+
+    #[test]
+    fn repeat_cell_request_is_none_when_only_a_border_is_set() {
+        let format = CellFormat {
+            border: Some(BorderStyle::Bottom),
+            ..cell_format("A1:D1")
+        };
+        assert!(repeat_cell_request(1, &format).expect("ok").is_none());
+    }
+
+    #[test]
+    fn border_request_bottom_draws_only_a_bottom_rule() {
+        let format = CellFormat {
+            border: Some(BorderStyle::Bottom),
+            ..cell_format("A1:D1")
+        };
+        let request = border_request(1, &format).expect("ok").expect("some");
+        let borders = &request["updateBorders"];
+        assert_eq!(borders["bottom"]["style"].as_str(), Some("SOLID"));
+        assert!(borders.get("top").is_none(), "only the bottom side is set");
+        assert!(border_request(1, &cell_format("A1")).expect("ok").is_none());
+    }
+
+    #[test]
+    fn freeze_request_combines_row_and_column_fields() {
+        let request = freeze_request(5, Some(1), Some(2)).expect("some");
+        let update = &request["updateSheetProperties"];
+        assert_eq!(update["properties"]["sheetId"].as_i64(), Some(5));
+        assert_eq!(
+            update["properties"]["gridProperties"]["frozenRowCount"].as_i64(),
+            Some(1)
+        );
+        let fields = update["fields"].as_str().expect("fields");
+        assert!(fields.contains("gridProperties.frozenRowCount"));
+        assert!(fields.contains("gridProperties.frozenColumnCount"));
+        assert!(freeze_request(5, None, None).is_none());
+    }
+
+    #[test]
+    fn column_width_requests_map_letters_to_dimension_ranges() {
+        let widths = vec![ColumnWidth {
+            column: "C".to_string(),
+            pixels: 160,
+        }];
+        let requests = column_width_requests(9, &widths).expect("requests");
+        let range = &requests[0]["updateDimensionProperties"]["range"];
+        assert_eq!(range["dimension"].as_str(), Some("COLUMNS"));
+        assert_eq!(range["startIndex"].as_i64(), Some(2));
+        assert_eq!(range["endIndex"].as_i64(), Some(3));
+        assert_eq!(
+            requests[0]["updateDimensionProperties"]["properties"]["pixelSize"].as_i64(),
+            Some(160)
+        );
+
+        let bad = column_width_requests(
+            9,
+            &[ColumnWidth {
+                column: "not-a-column".to_string(),
+                pixels: 100,
+            }],
+        );
+        assert!(bad.is_err(), "an unknown column is rejected");
+    }
+
+    #[test]
+    fn build_format_requests_orders_cells_then_freeze_then_widths() {
+        let plan = FormatPlan {
+            formats: vec![CellFormat {
+                bold: Some(true),
+                border: Some(BorderStyle::Bottom),
+                ..cell_format("A1:D1")
+            }],
+            freeze_rows: Some(1),
+            freeze_columns: None,
+            column_widths: vec![ColumnWidth {
+                column: "A".to_string(),
+                pixels: 200,
+            }],
+        };
+        let requests = build_format_requests(0, &plan).expect("requests");
+        assert!(requests[0].get("repeatCell").is_some());
+        assert!(requests[1].get("updateBorders").is_some());
+        assert!(requests[2].get("updateSheetProperties").is_some());
+        assert!(requests[3].get("updateDimensionProperties").is_some());
+
+        let empty = build_format_requests(
+            0,
+            &FormatPlan {
+                formats: Vec::new(),
+                freeze_rows: None,
+                freeze_columns: None,
+                column_widths: Vec::new(),
+            },
+        )
+        .expect("requests");
+        assert!(empty.is_empty(), "an empty plan produces no requests");
+    }
+
+    #[test]
+    fn spreadsheet_batch_update_url_targets_the_fixed_endpoint() {
+        let url = spreadsheet_batch_update_url(SAMPLE_ID).expect("url");
+        assert_eq!(url.host_str(), Some("sheets.googleapis.com"));
+        assert!(url.as_str().starts_with(SHEETS_ENDPOINT));
+        assert!(url.as_str().ends_with(&format!("{SAMPLE_ID}:batchUpdate")));
+    }
+
+    #[test]
+    fn parse_cell_style_reports_only_set_properties() {
+        let effective = json!({
+            "backgroundColor": { "red": 1.0, "green": 1.0, "blue": 1.0 },
+            "horizontalAlignment": "RIGHT",
+            "numberFormat": { "type": "NUMBER", "pattern": "#,##0" },
+            "wrapStrategy": "OVERFLOW_CELL",
+            "textFormat": { "bold": true, "italic": false, "fontSize": 11 }
+        });
+        let style = parse_cell_style("B", &effective);
+        assert_eq!(style.column, "B");
+        assert_eq!(style.bold, Some(true));
+        assert_eq!(style.italic, None, "italic false is omitted as noise");
+        assert_eq!(style.font_size, Some(11));
+        assert_eq!(style.background_color.as_deref(), Some("#ffffff"));
+        assert_eq!(style.horizontal_alignment.as_deref(), Some("RIGHT"));
+        assert_eq!(style.number_format.as_deref(), Some("#,##0"));
+        assert_eq!(style.wrap, Some(false));
+
+        // A missing effectiveFormat yields an all-empty style for that column.
+        let empty = parse_cell_style("A", &Value::Null);
+        assert_eq!(empty.bold, None);
+        assert_eq!(empty.background_color, None);
+    }
+
+    #[test]
+    fn used_style_columns_counts_to_the_last_nonempty_header_cell() {
+        let header = vec![
+            json!({ "formattedValue": "Name" }),
+            json!({ "formattedValue": "Seats" }),
+            json!({}),
+        ];
+        assert_eq!(used_style_columns(&header), 2);
+        assert_eq!(used_style_columns(&[]), 0);
     }
 }

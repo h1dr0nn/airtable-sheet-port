@@ -113,3 +113,139 @@ fn get_audit_log_applies_default_and_bounds() {
     assert!(base(Some(0)).validate().is_err(), "limit below 1");
     assert!(base(Some(501)).validate().is_err(), "limit above 500");
 }
+
+fn empty_format_args() -> FormatTableArgs {
+    FormatTableArgs {
+        source_id: "s".to_string(),
+        table_id: "t".to_string(),
+        formats: Vec::new(),
+        freeze_rows: None,
+        freeze_columns: None,
+        column_widths: Vec::new(),
+    }
+}
+
+fn cell_format_arg(range: &str) -> CellFormatArg {
+    CellFormatArg {
+        range: range.to_string(),
+        bold: None,
+        italic: None,
+        font_size: None,
+        font_color: None,
+        background_color: None,
+        horizontal_alignment: None,
+        number_format: None,
+        number_format_type: None,
+        wrap: None,
+        border: None,
+    }
+}
+
+#[test]
+fn format_table_rejects_a_plan_that_changes_nothing() {
+    assert!(
+        empty_format_args().validate().is_err(),
+        "an empty plan is rejected"
+    );
+}
+
+#[test]
+fn format_table_accepts_a_freeze_only_plan() {
+    let plan = FormatTableArgs {
+        freeze_rows: Some(1),
+        ..empty_format_args()
+    }
+    .validate()
+    .expect("freeze-only plan is valid");
+    assert_eq!(plan.freeze_rows, Some(1));
+    assert!(plan.formats.is_empty());
+}
+
+#[test]
+fn format_table_validates_colors_alignment_border_and_range() {
+    let good = FormatTableArgs {
+        formats: vec![CellFormatArg {
+            bold: Some(true),
+            background_color: Some("#F3F4F6".to_string()),
+            horizontal_alignment: Some("center".to_string()),
+            border: Some("BOTTOM".to_string()),
+            ..cell_format_arg("A1:D1")
+        }],
+        ..empty_format_args()
+    };
+    let plan = good.validate().expect("valid formatting");
+    let format = &plan.formats[0];
+    assert_eq!(
+        format.background_color.as_deref(),
+        Some("#f3f4f6"),
+        "hex is normalized to lowercase"
+    );
+    assert_eq!(
+        format.horizontal_alignment,
+        Some(HorizontalAlignment::Center)
+    );
+    assert_eq!(format.border, Some(BorderStyle::Bottom));
+
+    let bad_color = FormatTableArgs {
+        formats: vec![CellFormatArg {
+            background_color: Some("f3f4f6".to_string()),
+            ..cell_format_arg("A1")
+        }],
+        ..empty_format_args()
+    };
+    assert!(bad_color.validate().is_err(), "missing # is rejected");
+
+    let bad_align = FormatTableArgs {
+        formats: vec![CellFormatArg {
+            horizontal_alignment: Some("justify".to_string()),
+            ..cell_format_arg("A1")
+        }],
+        ..empty_format_args()
+    };
+    assert!(
+        bad_align.validate().is_err(),
+        "unknown alignment is rejected"
+    );
+
+    let bad_range = FormatTableArgs {
+        formats: vec![cell_format_arg("not-a-range")],
+        ..empty_format_args()
+    };
+    assert!(bad_range.validate().is_err(), "a bad A1 range is rejected");
+}
+
+#[test]
+fn format_table_enforces_numeric_bounds() {
+    let bad_freeze = FormatTableArgs {
+        freeze_rows: Some(101),
+        ..empty_format_args()
+    };
+    assert!(bad_freeze.validate().is_err(), "freeze above the cap");
+
+    let bad_font = FormatTableArgs {
+        formats: vec![CellFormatArg {
+            font_size: Some(0),
+            ..cell_format_arg("A1")
+        }],
+        ..empty_format_args()
+    };
+    assert!(bad_font.validate().is_err(), "font size below the minimum");
+
+    let bad_width = FormatTableArgs {
+        column_widths: vec![ColumnWidthArg {
+            column: "A".to_string(),
+            pixels: 1,
+        }],
+        ..empty_format_args()
+    };
+    assert!(bad_width.validate().is_err(), "width below the minimum");
+
+    let ok_width = FormatTableArgs {
+        column_widths: vec![ColumnWidthArg {
+            column: "A".to_string(),
+            pixels: 160,
+        }],
+        ..empty_format_args()
+    };
+    assert!(ok_width.validate().is_ok());
+}

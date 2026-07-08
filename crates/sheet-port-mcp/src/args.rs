@@ -5,17 +5,24 @@
 
 use schemars::JsonSchema;
 use serde::Deserialize;
+use sheet_port_core::connectors::validate_a1_range;
 use sheet_port_core::constants::{
-    AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, FIND_QUERY_MAX_LEN, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
+    AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, FIND_QUERY_MAX_LEN,
+    FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX, FREEZE_MAX, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
     READ_LIMIT_MIN, WRITE_BATCH_MAX,
 };
-use sheet_port_core::types::JsonMap;
+use sheet_port_core::types::{
+    BorderStyle, CellFormat, ColumnWidth, FormatPlan, HorizontalAlignment, JsonMap,
+    NumberFormatType,
+};
 use sheet_port_core::CoreError;
 
 /// Matches the audit module's own lower bound (kept private there).
 const AUDIT_LIMIT_MIN: i64 = 1;
 const FIND_QUERY_MIN_LEN: usize = 1;
 const WRITE_BATCH_MIN: usize = 1;
+/// Upper bound on a number-format pattern so a plan cannot smuggle a huge blob.
+const NUMBER_FORMAT_MAX_LEN: usize = 60;
 
 fn invalid(message: String) -> CoreError {
     CoreError::InvalidInput(message)
@@ -166,6 +173,223 @@ impl AppendRecordsArgs {
         require_non_empty(&self.table_id, "tableId")?;
         require_batch_size(self.records.len(), "records")
     }
+}
+
+/// One cell-format operation as received from an agent; strings are validated
+/// and mapped onto the typed [`CellFormat`] in [`FormatTableArgs::validate`].
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CellFormatArg {
+    pub range: String,
+    #[serde(default)]
+    pub bold: Option<bool>,
+    #[serde(default)]
+    pub italic: Option<bool>,
+    #[serde(default)]
+    pub font_size: Option<i64>,
+    #[serde(default)]
+    pub font_color: Option<String>,
+    #[serde(default)]
+    pub background_color: Option<String>,
+    #[serde(default)]
+    pub horizontal_alignment: Option<String>,
+    #[serde(default)]
+    pub number_format: Option<String>,
+    #[serde(default)]
+    pub number_format_type: Option<String>,
+    #[serde(default)]
+    pub wrap: Option<bool>,
+    #[serde(default)]
+    pub border: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnWidthArg {
+    pub column: String,
+    pub pixels: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatTableArgs {
+    pub source_id: String,
+    pub table_id: String,
+    #[serde(default)]
+    pub formats: Vec<CellFormatArg>,
+    #[serde(default)]
+    pub freeze_rows: Option<i64>,
+    #[serde(default)]
+    pub freeze_columns: Option<i64>,
+    #[serde(default)]
+    pub column_widths: Vec<ColumnWidthArg>,
+}
+
+impl FormatTableArgs {
+    /// Validates every bound and enum, then returns the typed [`FormatPlan`] the
+    /// staged-change layer stores. Rejects an empty plan (nothing to format).
+    pub fn validate(&self) -> Result<FormatPlan, CoreError> {
+        require_non_empty(&self.source_id, "sourceId")?;
+        require_non_empty(&self.table_id, "tableId")?;
+        if self.formats.len() > FORMAT_OPS_MAX {
+            return Err(invalid(format!(
+                "formats must contain at most {FORMAT_OPS_MAX} items"
+            )));
+        }
+        if self.column_widths.len() > FORMAT_OPS_MAX {
+            return Err(invalid(format!(
+                "columnWidths must contain at most {FORMAT_OPS_MAX} items"
+            )));
+        }
+        validate_freeze(self.freeze_rows, "freezeRows")?;
+        validate_freeze(self.freeze_columns, "freezeColumns")?;
+
+        let formats = self
+            .formats
+            .iter()
+            .enumerate()
+            .map(|(index, format)| convert_cell_format(index, format))
+            .collect::<Result<Vec<_>, _>>()?;
+        let column_widths = self
+            .column_widths
+            .iter()
+            .enumerate()
+            .map(|(index, width)| convert_column_width(index, width))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let plan = FormatPlan {
+            formats,
+            freeze_rows: self.freeze_rows,
+            freeze_columns: self.freeze_columns,
+            column_widths,
+        };
+        if plan.is_empty() {
+            return Err(invalid(
+                "a formatting change must set at least one of formats, freezeRows, \
+                 freezeColumns, or columnWidths"
+                    .to_string(),
+            ));
+        }
+        Ok(plan)
+    }
+}
+
+fn validate_freeze(value: Option<i64>, field: &str) -> Result<(), CoreError> {
+    if let Some(value) = value {
+        if !(0..=FREEZE_MAX).contains(&value) {
+            return Err(invalid(format!(
+                "{field} must be between 0 and {FREEZE_MAX}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn convert_cell_format(index: usize, arg: &CellFormatArg) -> Result<CellFormat, CoreError> {
+    let field = |name: &str| format!("formats[{index}].{name}");
+    require_non_empty(&arg.range, &field("range"))?;
+    validate_a1_range(&arg.range)?;
+    if let Some(size) = arg.font_size {
+        if !(FONT_SIZE_MIN..=FONT_SIZE_MAX).contains(&size) {
+            return Err(invalid(format!(
+                "{} must be between {FONT_SIZE_MIN} and {FONT_SIZE_MAX}",
+                field("fontSize")
+            )));
+        }
+    }
+    if let Some(pattern) = &arg.number_format {
+        let length = pattern.chars().count();
+        if !(1..=NUMBER_FORMAT_MAX_LEN).contains(&length) {
+            return Err(invalid(format!(
+                "{} must be 1 to {NUMBER_FORMAT_MAX_LEN} characters",
+                field("numberFormat")
+            )));
+        }
+    }
+    let font_color = arg
+        .font_color
+        .as_deref()
+        .map(|color| require_hex_color(color, &field("fontColor")))
+        .transpose()?;
+    let background_color = arg
+        .background_color
+        .as_deref()
+        .map(|color| require_hex_color(color, &field("backgroundColor")))
+        .transpose()?;
+    let horizontal_alignment = arg
+        .horizontal_alignment
+        .as_deref()
+        .map(|value| parse_alignment(value, &field("horizontalAlignment")))
+        .transpose()?;
+    let number_format_type = arg
+        .number_format_type
+        .as_deref()
+        .map(|value| parse_number_format_type(value, &field("numberFormatType")))
+        .transpose()?;
+    let border = arg
+        .border
+        .as_deref()
+        .map(|value| parse_border(value, &field("border")))
+        .transpose()?;
+
+    Ok(CellFormat {
+        range: arg.range.clone(),
+        bold: arg.bold,
+        italic: arg.italic,
+        font_size: arg.font_size,
+        font_color,
+        background_color,
+        horizontal_alignment,
+        number_format: arg.number_format.clone(),
+        number_format_type,
+        wrap: arg.wrap,
+        border,
+    })
+}
+
+fn convert_column_width(index: usize, arg: &ColumnWidthArg) -> Result<ColumnWidth, CoreError> {
+    let field = |name: &str| format!("columnWidths[{index}].{name}");
+    require_non_empty(&arg.column, &field("column"))?;
+    if !(COLUMN_WIDTH_MIN..=COLUMN_WIDTH_MAX).contains(&arg.pixels) {
+        return Err(invalid(format!(
+            "{} must be between {COLUMN_WIDTH_MIN} and {COLUMN_WIDTH_MAX}",
+            field("pixels")
+        )));
+    }
+    Ok(ColumnWidth {
+        column: arg.column.clone(),
+        pixels: arg.pixels,
+    })
+}
+
+/// Accepts a `#rrggbb` color (case-insensitive), echoing back the lowercase
+/// form so stored plans are normalized.
+fn require_hex_color(value: &str, field: &str) -> Result<String, CoreError> {
+    let valid = value
+        .strip_prefix('#')
+        .is_some_and(|digits| digits.len() == 6 && digits.chars().all(|ch| ch.is_ascii_hexdigit()));
+    if !valid {
+        return Err(invalid(format!("{field} must be a #rrggbb hex color")));
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+fn parse_alignment(value: &str, field: &str) -> Result<HorizontalAlignment, CoreError> {
+    HorizontalAlignment::from_wire(&value.to_ascii_uppercase())
+        .ok_or_else(|| invalid(format!("{field} must be one of LEFT, CENTER, RIGHT")))
+}
+
+fn parse_number_format_type(value: &str, field: &str) -> Result<NumberFormatType, CoreError> {
+    NumberFormatType::from_wire(&value.to_ascii_uppercase()).ok_or_else(|| {
+        invalid(format!(
+            "{field} must be one of TEXT, NUMBER, PERCENT, CURRENCY, DATE, TIME, DATE_TIME, SCIENTIFIC"
+        ))
+    })
+}
+
+fn parse_border(value: &str, field: &str) -> Result<BorderStyle, CoreError> {
+    BorderStyle::from_wire(&value.to_ascii_lowercase())
+        .ok_or_else(|| invalid(format!("{field} must be one of none, all, outer, bottom")))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

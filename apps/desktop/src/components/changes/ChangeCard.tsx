@@ -34,7 +34,8 @@ const STATUS_LABEL_KEYS: Record<ChangeStatus, TranslationKey> = {
 const TYPE_VARIANTS: Record<ChangeType, BadgeVariant> = {
   append: "default",
   update: "default",
-  delete: "danger"
+  delete: "danger",
+  format: "default"
 };
 
 function ChangeOutcome({ change }: { change: PendingChange }) {

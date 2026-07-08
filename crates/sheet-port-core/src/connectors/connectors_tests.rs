@@ -253,6 +253,71 @@ fn mock_rejects_unknown_source_and_table() {
 }
 
 #[test]
+fn mock_connector_does_not_support_formatting() {
+    let conn = demo_db();
+    let style = MockConnector.read_table_style(&conn, SOURCE, TABLE);
+    assert!(matches!(style, Err(CoreError::Unsupported(_))));
+    let format = MockConnector.format_cells(
+        &conn,
+        SOURCE,
+        TABLE,
+        &crate::types::FormatPlan {
+            formats: Vec::new(),
+            freeze_rows: Some(1),
+            freeze_columns: None,
+            column_widths: Vec::new(),
+        },
+    );
+    assert!(matches!(format, Err(CoreError::Unsupported(_))));
+}
+
+#[test]
+fn parse_a1_range_handles_cells_columns_and_rows() {
+    let cell = parse_a1_range("A1").expect("cell");
+    assert_eq!(cell.start_col, Some(0));
+    assert_eq!(cell.end_col, Some(1));
+    assert_eq!(cell.start_row, Some(0));
+    assert_eq!(cell.end_row, Some(1));
+
+    let block = parse_a1_range("A1:D10").expect("block");
+    assert_eq!(block.start_col, Some(0));
+    assert_eq!(block.end_col, Some(4));
+    assert_eq!(block.start_row, Some(0));
+    assert_eq!(block.end_row, Some(10));
+
+    // Reversed corners normalize to the same block.
+    assert_eq!(parse_a1_range("D10:A1").expect("reversed"), block);
+
+    let columns = parse_a1_range("B:C").expect("columns");
+    assert_eq!(columns.start_col, Some(1));
+    assert_eq!(columns.end_col, Some(3));
+    assert_eq!(columns.start_row, None);
+    assert_eq!(columns.end_row, None);
+
+    let rows = parse_a1_range("2:4").expect("rows");
+    assert_eq!(rows.start_row, Some(1));
+    assert_eq!(rows.end_row, Some(4));
+    assert_eq!(rows.start_col, None);
+
+    // Lowercase and absolute markers are tolerated.
+    assert_eq!(parse_a1_range("$a$1").expect("abs"), cell);
+}
+
+#[test]
+fn parse_a1_range_rejects_malformed_and_mixed_shapes() {
+    assert!(parse_a1_range("").is_err());
+    assert!(parse_a1_range("A1:B").is_err(), "cell-to-column is mixed");
+    assert!(parse_a1_range("1A").is_err(), "digits before letters");
+    assert!(parse_a1_range("A0").is_err(), "row 0 is invalid");
+    assert!(parse_a1_range("!!").is_err());
+    assert!(
+        validate_a1_range("A1:D1").is_ok(),
+        "the public validator accepts a good range"
+    );
+    assert!(validate_a1_range("nope").is_err());
+}
+
+#[test]
 fn mock_find_records_matches_case_insensitive_substrings() {
     let conn = demo_db();
     let find = |query: &str| {

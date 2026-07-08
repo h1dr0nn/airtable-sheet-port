@@ -1,11 +1,14 @@
+import type { ReactNode } from "react";
 import { cn } from "@sheet-port/ui";
-import type { PendingChange } from "@sheet-port/shared";
+import type { CellFormat, PendingChange } from "@sheet-port/shared";
 import { useTranslation } from "../../i18n/useTranslation.js";
 import {
   isFieldChanged,
   parseAppendDiff,
+  parseFormatDiff,
   parseUpdateDiff,
   type AppendDiff,
+  type FormatDiff,
   type UpdateDiffEntry
 } from "../../lib/diff.js";
 import { formatValue } from "../../lib/format.js";
@@ -109,6 +112,101 @@ function UpdateEntryTable({ entry }: { entry: UpdateDiffEntry }) {
   );
 }
 
+function FormatChip({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-edge bg-surface px-2 py-0.5 text-[11.5px] text-ink">
+      {children}
+    </span>
+  );
+}
+
+function ColorChip({ label, color }: { label: string; color: string }) {
+  return (
+    <FormatChip>
+      <span
+        className="h-3 w-3 rounded-sm border border-edge"
+        style={{ backgroundColor: color }}
+        aria-hidden
+      />
+      {label} {color}
+    </FormatChip>
+  );
+}
+
+/** Compact pills for the properties one cell-format op sets. */
+function FormatOpChips({ format }: { format: CellFormat }) {
+  const chips: ReactNode[] = [];
+  if (format.bold) chips.push(<FormatChip key="bold">Bold</FormatChip>);
+  if (format.italic) chips.push(<FormatChip key="italic">Italic</FormatChip>);
+  if (typeof format.fontSize === "number") {
+    chips.push(<FormatChip key="size">Size {format.fontSize}</FormatChip>);
+  }
+  if (format.horizontalAlignment) {
+    chips.push(<FormatChip key="align">Align {format.horizontalAlignment}</FormatChip>);
+  }
+  if (format.numberFormat) {
+    chips.push(<FormatChip key="numberFormat">Format {format.numberFormat}</FormatChip>);
+  }
+  if (typeof format.wrap === "boolean") {
+    chips.push(<FormatChip key="wrap">{format.wrap ? "Wrap" : "No wrap"}</FormatChip>);
+  }
+  if (format.border) chips.push(<FormatChip key="border">Border {format.border}</FormatChip>);
+  if (format.fontColor) {
+    chips.push(<ColorChip key="fontColor" label="Text" color={format.fontColor} />);
+  }
+  if (format.backgroundColor) {
+    chips.push(<ColorChip key="backgroundColor" label="Fill" color={format.backgroundColor} />);
+  }
+  return <div className="flex flex-wrap gap-1.5">{chips}</div>;
+}
+
+function FormatDiffView({ diff }: { diff: FormatDiff }) {
+  const { t } = useTranslation();
+  const hasLayout =
+    diff.freezeRows !== undefined ||
+    diff.freezeColumns !== undefined ||
+    diff.columnWidths.length > 0;
+  return (
+    <div className="space-y-2">
+      {diff.formats.length > 0 ? (
+        <div className="overflow-hidden rounded-lg border border-edge">
+          <p className="border-b border-edge bg-surface px-3 py-2 text-[11px] font-medium text-ink-muted">
+            {t("changes.formatCellsHeading")}
+          </p>
+          <ul className="divide-y divide-edge">
+            {diff.formats.map((format, index) => (
+              <li key={index} className="flex flex-col gap-2 px-3 py-2.5">
+                <span className="font-mono text-[12px] text-ink">{format.range}</span>
+                <FormatOpChips format={format} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {hasLayout ? (
+        <div className="overflow-hidden rounded-lg border border-edge">
+          <p className="border-b border-edge bg-surface px-3 py-2 text-[11px] font-medium text-ink-muted">
+            {t("changes.formatLayoutHeading")}
+          </p>
+          <ul className="space-y-1 px-3 py-2.5 text-[12.5px] text-ink">
+            {diff.freezeRows !== undefined ? (
+              <li>{t("changes.formatFreezeRows", { count: diff.freezeRows })}</li>
+            ) : null}
+            {diff.freezeColumns !== undefined ? (
+              <li>{t("changes.formatFreezeColumns", { count: diff.freezeColumns })}</li>
+            ) : null}
+            {diff.columnWidths.map((width) => (
+              <li key={width.column} className="font-mono text-[12px]">
+                {t("changes.formatColumnWidth", { column: width.column, pixels: width.pixels })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Renders the agent-visible diff for a pending change; falls back to raw JSON. */
 export function DiffViewer({ change }: { change: PendingChange }) {
   if (change.type === "append") {
@@ -127,6 +225,12 @@ export function DiffViewer({ change }: { change: PendingChange }) {
           ))}
         </div>
       );
+    }
+  }
+  if (change.type === "format") {
+    const formatDiff = parseFormatDiff(change.diff);
+    if (formatDiff) {
+      return <FormatDiffView diff={formatDiff} />;
     }
   }
   return (

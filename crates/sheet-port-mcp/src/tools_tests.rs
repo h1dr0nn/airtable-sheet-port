@@ -253,3 +253,110 @@ fn tools_self_record_audit_events() {
     assert!(actions.contains(&"preview_update_records"));
     assert!(actions.contains(&"append_records_preview"));
 }
+
+/// A representative formatting plan: a bold, filled, underlined header plus a
+/// frozen header row.
+fn format_args() -> FormatTableArgs {
+    FormatTableArgs {
+        source_id: "mock-source".to_string(),
+        table_id: "customers".to_string(),
+        formats: vec![crate::args::CellFormatArg {
+            range: "A1:E1".to_string(),
+            bold: Some(true),
+            italic: None,
+            font_size: None,
+            font_color: None,
+            background_color: Some("#f3f4f6".to_string()),
+            horizontal_alignment: None,
+            number_format: None,
+            number_format_type: None,
+            wrap: None,
+            border: Some("bottom".to_string()),
+        }],
+        freeze_rows: Some(1),
+        freeze_columns: None,
+        column_widths: Vec::new(),
+    }
+}
+
+#[test]
+fn preview_format_table_stages_a_format_change_without_payload() {
+    let state = temp_state();
+    let output = parse(&preview_format_table(&state, format_args()).expect("format preview"));
+    // The demo rule requires confirmation for append/update/delete/bulk_update,
+    // but not for `format`, so this auto-commits.
+    assert_eq!(output["requiresConfirmation"], false);
+    assert_eq!(output["change"]["type"], "format");
+    assert_eq!(output["change"]["status"], "pending");
+    let change = output["change"].as_object().expect("change object");
+    assert!(
+        !change.contains_key("payload"),
+        "payload must never reach agents"
+    );
+    // The agent-visible diff is the plan itself.
+    assert_eq!(output["change"]["diff"]["freezeRows"], 1);
+    assert_eq!(output["change"]["diff"]["formats"][0]["range"], "A1:E1");
+    assert_eq!(output["change"]["diff"]["formats"][0]["bold"], true);
+    assert_eq!(output["change"]["diff"]["formats"][0]["border"], "bottom");
+}
+
+#[test]
+fn preview_format_table_honors_a_confirmation_rule() {
+    let state = temp_state();
+    state
+        .with_conn(|conn, _| {
+            conn.execute(
+                "UPDATE permission_rules SET require_confirmation='[\"format\"]' \
+                 WHERE source_id='mock-source'",
+                [],
+            )
+            .expect("rule update");
+            Ok(())
+        })
+        .expect("update rule");
+    let output = parse(&preview_format_table(&state, format_args()).expect("format preview"));
+    assert_eq!(output["requiresConfirmation"], true);
+    assert_eq!(output["change"]["requiresConfirmation"], true);
+}
+
+#[test]
+fn preview_format_table_requires_write_permission() {
+    let state = temp_state();
+    state
+        .with_conn(|conn, _| {
+            conn.execute(
+                "UPDATE permission_rules SET can_write=0 WHERE source_id='mock-source'",
+                [],
+            )
+            .expect("rule update");
+            Ok(())
+        })
+        .expect("update rule");
+    let error = preview_format_table(&state, format_args()).expect_err("write must be denied");
+    assert!(
+        error
+            .to_string()
+            .to_lowercase()
+            .contains("write access denied"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn get_table_style_is_unsupported_on_the_mock_connector() {
+    let state = temp_state();
+    let error = get_table_style(
+        &state,
+        &SourceTableArgs {
+            source_id: "mock-source".to_string(),
+            table_id: "customers".to_string(),
+        },
+    )
+    .expect_err("mock connector has no style read");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support reading cell formatting"),
+        "unexpected error: {error}"
+    );
+}

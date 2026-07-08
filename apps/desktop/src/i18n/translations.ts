@@ -241,6 +241,11 @@ export const en = {
   "changes.approvedWaiting": "Approved {time} · waiting for the agent to commit",
   "changes.autoCommit": "Auto-commit · no confirmation required by policy",
   "changes.recordLabel": "Record {id}",
+  "changes.formatCellsHeading": "Cell formatting",
+  "changes.formatLayoutHeading": "Sheet layout",
+  "changes.formatFreezeRows": "Freeze first {count} row(s)",
+  "changes.formatFreezeColumns": "Freeze first {count} column(s)",
+  "changes.formatColumnWidth": "Column {column}: {pixels}px",
 
   // Records table
   "records.record": "Record",
@@ -742,6 +747,11 @@ const vi: Dictionary = {
   "changes.approvedWaiting": "Đã duyệt {time} · đang chờ agent commit",
   "changes.autoCommit": "Tự động commit · chính sách không yêu cầu xác nhận",
   "changes.recordLabel": "Bản ghi {id}",
+  "changes.formatCellsHeading": "Định dạng ô",
+  "changes.formatLayoutHeading": "Bố cục sheet",
+  "changes.formatFreezeRows": "Cố định {count} hàng đầu",
+  "changes.formatFreezeColumns": "Cố định {count} cột đầu",
+  "changes.formatColumnWidth": "Cột {column}: {pixels}px",
 
   // Records table
   "records.record": "Bản ghi",

@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS pending_changes (
   id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL,
   table_id TEXT NOT NULL,
-  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete')),
+  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format')),
   created_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'committed', 'rejected')),
@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS pending_changes (
   -- [{"recordId","before","after"}] per patched record.
   diff TEXT NOT NULL,
   -- Internal payload, JSON, never returned to agents:
-  -- append -> {"records": [...]}, update -> {"patches": [...]}.
+  -- append -> {"records": [...]}, update -> {"patches": [...]},
+  -- format -> {"plan": {...}}.
   payload TEXT NOT NULL,
   decided_at TEXT,
   -- 'user' when approved/rejected in the desktop app, 'policy' when auto-allowed.

@@ -146,6 +146,7 @@ pub enum WriteAction {
     Update,
     Delete,
     BulkUpdate,
+    Format,
 }
 
 impl WriteAction {
@@ -155,6 +156,7 @@ impl WriteAction {
             Self::Update => "update",
             Self::Delete => "delete",
             Self::BulkUpdate => "bulk_update",
+            Self::Format => "format",
         }
     }
 }
@@ -165,6 +167,7 @@ pub enum ChangeType {
     Append,
     Update,
     Delete,
+    Format,
 }
 
 impl ChangeType {
@@ -173,6 +176,7 @@ impl ChangeType {
             Self::Append => "append",
             Self::Update => "update",
             Self::Delete => "delete",
+            Self::Format => "format",
         }
     }
 
@@ -181,6 +185,7 @@ impl ChangeType {
             "append" => Some(Self::Append),
             "update" => Some(Self::Update),
             "delete" => Some(Self::Delete),
+            "format" => Some(Self::Format),
             _ => None,
         }
     }
@@ -357,4 +362,231 @@ pub struct HeartbeatStatus {
 pub struct TokenStatus {
     pub google_sheets: bool,
     pub provider: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Cell formatting (docs/mcp-tools.md "Formatting"). A FormatPlan is the whole
+// staged formatting change: any subset of per-range cell formats, a header
+// freeze, and column widths. It is both the internal change payload and the
+// agent-visible diff, so every field is a plain, non-sensitive value.
+// ---------------------------------------------------------------------------
+
+/// Border treatment applied to a range: no lines, all inner+outer gridlines,
+/// the outer frame only, or a single bottom rule (the common header underline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BorderStyle {
+    None,
+    All,
+    Outer,
+    Bottom,
+}
+
+impl BorderStyle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::All => "all",
+            Self::Outer => "outer",
+            Self::Bottom => "bottom",
+        }
+    }
+
+    /// Parses a border keyword; the allow-list is enforced at the tool boundary,
+    /// so `None` here means an out-of-contract value slipped through.
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "none" => Some(Self::None),
+            "all" => Some(Self::All),
+            "outer" => Some(Self::Outer),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+}
+
+/// Google Sheets number-format category. Paired with a pattern; when omitted
+/// the connector infers it from the pattern (date tokens -> DATE, else NUMBER).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NumberFormatType {
+    Text,
+    Number,
+    Percent,
+    Currency,
+    Date,
+    Time,
+    DateTime,
+    Scientific,
+}
+
+impl NumberFormatType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "TEXT",
+            Self::Number => "NUMBER",
+            Self::Percent => "PERCENT",
+            Self::Currency => "CURRENCY",
+            Self::Date => "DATE",
+            Self::Time => "TIME",
+            Self::DateTime => "DATE_TIME",
+            Self::Scientific => "SCIENTIFIC",
+        }
+    }
+
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "TEXT" => Some(Self::Text),
+            "NUMBER" => Some(Self::Number),
+            "PERCENT" => Some(Self::Percent),
+            "CURRENCY" => Some(Self::Currency),
+            "DATE" => Some(Self::Date),
+            "TIME" => Some(Self::Time),
+            "DATE_TIME" => Some(Self::DateTime),
+            "SCIENTIFIC" => Some(Self::Scientific),
+            _ => None,
+        }
+    }
+}
+
+/// Horizontal text alignment for a range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HorizontalAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+impl HorizontalAlignment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "LEFT",
+            Self::Center => "CENTER",
+            Self::Right => "RIGHT",
+        }
+    }
+
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "LEFT" => Some(Self::Left),
+            "CENTER" => Some(Self::Center),
+            "RIGHT" => Some(Self::Right),
+            _ => None,
+        }
+    }
+}
+
+/// One cell-format operation over an A1 range within the resolved tab. Every
+/// optional field left unset is preserved on the sheet (partial formatting):
+/// only the properties present here are written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellFormat {
+    /// A1 range within the tab, e.g. `A1:D1`, `B:B`, or `A1`.
+    pub range: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<i64>,
+    /// `#rrggbb` text color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_color: Option<String>,
+    /// `#rrggbb` cell fill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizontal_alignment: Option<HorizontalAlignment>,
+    /// Google Sheets number-format pattern, e.g. `#,##0` or `yyyy-mm-dd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<String>,
+    /// Category for `number_format`; inferred from the pattern when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format_type: Option<NumberFormatType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<BorderStyle>,
+}
+
+/// A single column-width override (pixels), keyed by A1 column letter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnWidth {
+    pub column: String,
+    pub pixels: i64,
+}
+
+/// A staged formatting change: any mix of per-range cell formats, a header
+/// freeze, and column widths. Serialized verbatim as the agent-visible diff.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatPlan {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formats: Vec<CellFormat>,
+    /// Freeze this many top rows (0 unfreezes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeze_rows: Option<i64>,
+    /// Freeze this many left columns (0 unfreezes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeze_columns: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub column_widths: Vec<ColumnWidth>,
+}
+
+impl FormatPlan {
+    /// A plan is empty when it would produce no batchUpdate request at all.
+    pub fn is_empty(&self) -> bool {
+        self.formats.is_empty()
+            && self.freeze_rows.is_none()
+            && self.freeze_columns.is_none()
+            && self.column_widths.is_empty()
+    }
+}
+
+/// The effective format of one cell in a style read, keyed by A1 column letter.
+/// Only properties actually set on the cell are present.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellStyle {
+    pub column: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_alignment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+}
+
+/// The existing style of a tab: sheet-level freeze/width plus the effective
+/// format of the header row and the first data row, so an agent can match an
+/// existing sheet's look instead of imposing a new one.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableStyle {
+    pub spreadsheet_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sheet_title: Option<String>,
+    pub frozen_row_count: i64,
+    pub frozen_column_count: i64,
+    /// Number of used columns the style covers (header width).
+    pub column_count: i64,
+    /// Effective format of each used cell in sheet row 1 (the header row).
+    pub header: Vec<CellStyle>,
+    /// Effective format of each used cell in sheet row 2 (first data row);
+    /// empty when the sheet has no data row.
+    pub sample: Vec<CellStyle>,
+    pub column_widths: Vec<ColumnWidth>,
 }

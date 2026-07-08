@@ -15,8 +15,8 @@ use crate::constants::{READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN};
 use crate::error::CoreError;
 use crate::sources;
 use crate::types::{
-    DataSource, GridData, GridRow, JsonMap, ReadOptions, RecordPatch, SheetTab, SourceKind,
-    TableRecord, TableRef, TableSchema,
+    DataSource, FormatPlan, GridData, GridRow, JsonMap, ReadOptions, RecordPatch, SheetTab,
+    SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
 };
 
 pub trait TableConnector: Send + Sync {
@@ -120,6 +120,39 @@ pub trait TableConnector: Send + Sync {
     ) -> Result<i64, CoreError> {
         Err(CoreError::Unsupported(
             "This source does not support row appends".to_string(),
+        ))
+    }
+
+    // -----------------------------------------------------------------------
+    // Cell formatting (docs/mcp-tools.md "Formatting"). `read_table_style` is a
+    // DIRECT read; `format_cells` runs from the staged-change commit path only,
+    // never directly from an agent. Connectors that cannot format cells inherit
+    // the Unsupported defaults below.
+    // -----------------------------------------------------------------------
+
+    /// The existing style of a tab (header + first data row + sheet freeze and
+    /// column widths) so an agent can match it instead of imposing a new look.
+    fn read_table_style(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+    ) -> Result<TableStyle, CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support reading cell formatting".to_string(),
+        ))
+    }
+
+    /// Applies a formatting plan to the resolved tab.
+    fn format_cells(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _plan: &FormatPlan,
+    ) -> Result<(), CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support cell formatting".to_string(),
         ))
     }
 }
@@ -273,6 +306,27 @@ impl ConnectorRegistry {
             .append_grid_row(conn, source_id, table_id, values)
     }
 
+    pub fn read_table_style(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+    ) -> Result<TableStyle, CoreError> {
+        self.for_source(conn, source_id)?
+            .read_table_style(conn, source_id, table_id)
+    }
+
+    pub fn format_cells(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        plan: &FormatPlan,
+    ) -> Result<(), CoreError> {
+        self.for_source(conn, source_id)?
+            .format_cells(conn, source_id, table_id, plan)
+    }
+
     fn for_source(
         &self,
         conn: &Connection,
@@ -351,6 +405,127 @@ pub(crate) fn js_string(value: &serde_json::Value) -> String {
         Value::Array(items) => items.iter().map(js_string).collect::<Vec<_>>().join(","),
         Value::Object(_) => "[object Object]".to_string(),
     }
+}
+
+/// Highest column count a formatting range may span (A..ZZ, matching the
+/// connector's value window).
+const GRID_MAX_COLUMNS: usize = 702;
+/// Highest 1-based row a formatting range may reference; a sane upper bound so
+/// a typo cannot build an absurd grid range.
+const GRID_MAX_ROWS: usize = 10_000_000;
+
+/// A parsed A1 range as half-open, zero-based grid bounds. `None` on a
+/// dimension means it is unbounded (a whole-column range like `A:B` leaves the
+/// rows unbounded; a whole-row range like `1:3` leaves the columns unbounded).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct A1Range {
+    pub start_col: Option<usize>,
+    /// Exclusive.
+    pub end_col: Option<usize>,
+    pub start_row: Option<usize>,
+    /// Exclusive.
+    pub end_row: Option<usize>,
+}
+
+/// One endpoint of an A1 range: a column, a row, or a cell (both). At least one
+/// of the two is always present.
+struct A1Endpoint {
+    col: Option<usize>,
+    row: Option<usize>,
+}
+
+fn bad_a1_range(range: &str) -> CoreError {
+    CoreError::InvalidInput(format!(
+        "'{range}' is not a valid A1 range (examples: A1, A1:D10, B:B, 2:2)"
+    ))
+}
+
+/// Splits an endpoint like `A`, `12`, or `C7` into its column and row parts.
+/// Absolute `$` markers are tolerated; letters must precede digits.
+fn parse_a1_endpoint(token: &str) -> Option<A1Endpoint> {
+    let cleaned: String = token.trim().chars().filter(|ch| *ch != '$').collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut letters = String::new();
+    let mut digits = String::new();
+    for ch in cleaned.chars() {
+        if ch.is_ascii_alphabetic() {
+            if !digits.is_empty() {
+                return None; // letters after digits is not a valid A1 cell
+            }
+            letters.push(ch.to_ascii_uppercase());
+        } else if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else {
+            return None;
+        }
+    }
+    let col = match letters.is_empty() {
+        true => None,
+        false => Some(column_index_for_id(&letters)?),
+    };
+    let row = if digits.is_empty() {
+        None
+    } else {
+        let number: usize = digits.parse().ok()?;
+        // A1 rows are 1-based, so row 0 (e.g. "A0") is not a valid reference.
+        if number == 0 {
+            return None;
+        }
+        Some(number - 1)
+    };
+    if col.is_none() && row.is_none() {
+        return None;
+    }
+    Some(A1Endpoint { col, row })
+}
+
+/// Combines two matching endpoint bounds into a half-open `(start, end)` pair,
+/// normalizing reversed inputs. `(None, None)` stays unbounded.
+fn combine_bounds(a: Option<usize>, b: Option<usize>) -> (Option<usize>, Option<usize>) {
+    match (a, b) {
+        (Some(a), Some(b)) => (Some(a.min(b)), Some(a.max(b) + 1)),
+        _ => (None, None),
+    }
+}
+
+/// Parses an A1 range within a single tab into zero-based, half-open grid
+/// bounds. Both endpoints must describe the same shape (cell:cell, col:col, or
+/// row:row); a bare endpoint (no `:`) covers exactly that cell/column/row.
+pub(crate) fn parse_a1_range(range: &str) -> Result<A1Range, CoreError> {
+    let trimmed = range.trim();
+    if trimmed.is_empty() {
+        return Err(bad_a1_range(range));
+    }
+    let (left, right) = match trimmed.split_once(':') {
+        Some((left, right)) => (left, right),
+        None => (trimmed, trimmed),
+    };
+    let start = parse_a1_endpoint(left).ok_or_else(|| bad_a1_range(range))?;
+    let end = parse_a1_endpoint(right).ok_or_else(|| bad_a1_range(range))?;
+    if start.col.is_some() != end.col.is_some() || start.row.is_some() != end.row.is_some() {
+        return Err(bad_a1_range(range));
+    }
+    let (start_col, end_col) = combine_bounds(start.col, end.col);
+    let (start_row, end_row) = combine_bounds(start.row, end.row);
+    if end_col.is_some_and(|end| end > GRID_MAX_COLUMNS)
+        || end_row.is_some_and(|end| end > GRID_MAX_ROWS)
+    {
+        return Err(bad_a1_range(range));
+    }
+    Ok(A1Range {
+        start_col,
+        end_col,
+        start_row,
+        end_row,
+    })
+}
+
+/// Validates that a string is a well-formed A1 range without keeping the parse
+/// result. Used at the MCP boundary so a bad range fails at preview time.
+pub fn validate_a1_range(range: &str) -> Result<(), CoreError> {
+    parse_a1_range(range).map(|_| ())
 }
 
 #[cfg(test)]
