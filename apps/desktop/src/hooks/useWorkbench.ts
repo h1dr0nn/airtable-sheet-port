@@ -184,12 +184,32 @@ export type AppendRowInput = {
   values: Record<string, string>;
 };
 
+/** Optimistic row append: shows the new row instantly, rolls back on failure. */
 export function useAppendSheetRow() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   return useMutation({
     mutationFn: (input: AppendRowInput) => ipc.appendSheetRow(input.itemId, input.gid, input.values),
-    onError: (error: unknown) => {
+    onMutate: async (input): Promise<{ previous: GridData | undefined }> => {
+      const key = queryKeys.sheet(input.itemId, input.gid);
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<GridData>(key);
+      if (previous) {
+        // Build the appended row from the sheet's columns so the grid keeps its
+        // shape; unspecified cells default to empty, mirroring the backend.
+        const appended: Record<string, string> = {};
+        for (const column of previous.columns) {
+          appended[column.id] = input.values[column.id] ?? "";
+        }
+        const rows = [...previous.rows, appended];
+        queryClient.setQueryData<GridData>(key, { ...previous, rows, totalRows: rows.length });
+      }
+      return { previous };
+    },
+    onError: (error: unknown, input, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(queryKeys.sheet(input.itemId, input.gid), context.previous);
+      }
       toast.error(t("toast.rowAddError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {

@@ -1,6 +1,6 @@
 import { Skeleton } from "@sheet-port/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "../../i18n/useTranslation.js";
 import type { WorkbenchItem } from "../../lib/ipc.js";
 import { queryKeys } from "../../lib/queryKeys.js";
@@ -10,9 +10,27 @@ import {
   useSheetTabs,
   useUpdateCell
 } from "../../hooks/useWorkbench.js";
+import { useSheetHistory } from "../../hooks/useSheetHistory.js";
 import { SheetGrid } from "./SheetGrid.js";
 import { SheetTabsBar } from "./SheetTabsBar.js";
 import { WorkbenchToolbar } from "./WorkbenchToolbar.js";
+
+/** True when focus sits in an editable field or an open dialog, where the
+ * app's undo/redo shortcuts must yield to the browser's native handling. */
+function isTypingContext(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    return true;
+  }
+  // Any open dialog (e.g. Add Spreadsheet) owns the keyboard while it is up.
+  return document.querySelector('[role="dialog"]') !== null;
+}
 
 type SheetWorkAreaProps = {
   item: WorkbenchItem;
@@ -67,12 +85,61 @@ export function SheetWorkArea({ item }: SheetWorkAreaProps) {
     appendRow.mutate({ itemId: item.id, gid: activeGid, values: {} });
   };
 
-  const editCell = (rowIndex: number, columnId: string, value: string) => {
-    if (activeGid === null) {
-      return;
-    }
-    updateCell.mutate({ itemId: item.id, gid: activeGid, rowIndex, columnId, value });
-  };
+  // Writes a cell without touching history; the shared path for user edits,
+  // undo, and redo. History records only around user edits (see editCell).
+  const applyCell = useCallback(
+    (rowIndex: number, columnId: string, value: string) => {
+      if (activeGid === null) {
+        return;
+      }
+      updateCell.mutate({ itemId: item.id, gid: activeGid, rowIndex, columnId, value });
+    },
+    [activeGid, item.id, updateCell]
+  );
+
+  // History resets whenever the active spreadsheet or sheet tab changes.
+  const historyScope = `${item.id}:${activeGid ?? ""}`;
+  const history = useSheetHistory(historyScope, applyCell);
+  const { record, undo, redo, canUndo, canRedo } = history;
+
+  const editCell = useCallback(
+    (rowIndex: number, columnId: string, value: string) => {
+      if (activeGid === null || !grid) {
+        return;
+      }
+      const prevValue = grid.rows[rowIndex]?.[columnId] ?? "";
+      applyCell(rowIndex, columnId, value);
+      record({ rowIndex, columnId, prevValue, nextValue: value });
+    },
+    [activeGid, grid, applyCell, record]
+  );
+
+  // Ctrl/Cmd+Z undoes, Ctrl+Y or Ctrl/Cmd+Shift+Z redoes. Suppressed while the
+  // user is typing in a field or a dialog is open so native undo still works.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      const isUndo = key === "z" && !event.shiftKey;
+      const isRedo = key === "y" || (key === "z" && event.shiftKey);
+      if (!isUndo && !isRedo) {
+        return;
+      }
+      if (isTypingContext(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      if (isUndo) {
+        undo();
+      } else {
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo, redo]);
 
   const isRefreshing = tabsQuery.isFetching || sheetQuery.isFetching;
   const showGridSkeleton = activeGid === null || (sheetQuery.isLoading && !grid);
@@ -88,6 +155,10 @@ export function SheetWorkArea({ item }: SheetWorkAreaProps) {
         isRefreshing={isRefreshing}
         onAddRow={addRow}
         canAddRow={grid !== null && activeGid !== null}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={canUndo}
+        canRedo={canRedo}
       />
 
       <div className="relative min-h-0 flex-1 bg-raised">

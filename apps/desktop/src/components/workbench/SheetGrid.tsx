@@ -2,12 +2,13 @@ import "@glideapps/glide-data-grid/dist/index.css";
 import {
   DataEditor,
   GridCellKind,
+  type DataEditorRef,
   type EditableGridCell,
   type GridCell,
   type GridColumn,
   type Item
 } from "@glideapps/glide-data-grid";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GridData } from "../../lib/ipc.js";
 import { useGlideTheme } from "./glideTheme.js";
 
@@ -37,6 +38,8 @@ function estimateWidth(title: string): number {
  */
 export function SheetGrid({ grid, query, onEditCell }: SheetGridProps) {
   const theme = useGlideTheme();
+  const gridRef = useRef<DataEditorRef>(null);
+  const previousGridRef = useRef<GridData | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
 
   // Original row indices that survive the in-sheet filter, preserving order so
@@ -56,6 +59,45 @@ export function SheetGrid({ grid, query, onEditCell }: SheetGridProps) {
       return matches;
     }, []);
   }, [grid, query]);
+
+  // Display-row lookup by original row index, matching visibleRows' ordering.
+  const displayRowByOriginal = useMemo<Map<number, number>>(() => {
+    const map = new Map<number, number>();
+    visibleRows.forEach((originalRow, displayRow) => map.set(originalRow, displayRow));
+    return map;
+  }, [visibleRows]);
+
+  // The prop-driven getCellContent closure already repaints on any data change,
+  // but glide keeps a canvas cell cache; explicitly damaging the changed cells
+  // guarantees an optimistic edit, append, or undo/redo shows without a flash.
+  useEffect(() => {
+    const previous = previousGridRef.current;
+    previousGridRef.current = grid;
+    if (!previous || previous === grid) {
+      return;
+    }
+    const damaged: { cell: Item }[] = [];
+    const sharedRows = Math.min(previous.rows.length, grid.rows.length);
+    for (let originalRow = 0; originalRow < sharedRows; originalRow += 1) {
+      const before = previous.rows[originalRow];
+      const after = grid.rows[originalRow];
+      if (before === after) {
+        continue;
+      }
+      const displayRow = displayRowByOriginal.get(originalRow);
+      if (displayRow === undefined) {
+        continue;
+      }
+      grid.columns.forEach((column, colIndex) => {
+        if (before?.[column.id] !== after?.[column.id]) {
+          damaged.push({ cell: [colIndex, displayRow] });
+        }
+      });
+    }
+    if (damaged.length > 0) {
+      gridRef.current?.updateCells(damaged);
+    }
+  }, [grid, displayRowByOriginal]);
 
   const columns = useMemo<GridColumn[]>(
     () =>
@@ -111,6 +153,7 @@ export function SheetGrid({ grid, query, onEditCell }: SheetGridProps) {
   return (
     <div className="h-full w-full">
       <DataEditor
+        ref={gridRef}
         theme={theme}
         columns={columns}
         rows={visibleRows.length}

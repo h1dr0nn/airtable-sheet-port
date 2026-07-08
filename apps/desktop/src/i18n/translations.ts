@@ -206,6 +206,8 @@ export const en = {
   "workbench.findInSheet": "Find in sheet",
   "workbench.refresh": "Refresh",
   "workbench.addRow": "Add Row",
+  "workbench.undo": "Undo",
+  "workbench.redo": "Redo",
   "workbench.sheetTabs": "Sheet Tabs",
   "workbench.selectPromptTitle": "Select or add a spreadsheet",
   "workbench.selectPromptDescription":
@@ -705,6 +707,8 @@ const vi: Dictionary = {
   "workbench.findInSheet": "Tìm trong trang tính",
   "workbench.refresh": "Làm mới",
   "workbench.addRow": "Thêm hàng",
+  "workbench.undo": "Hoàn tác",
+  "workbench.redo": "Làm lại",
   "workbench.sheetTabs": "Thẻ trang tính",
   "workbench.selectPromptTitle": "Chọn hoặc thêm một bảng tính",
   "workbench.selectPromptDescription":

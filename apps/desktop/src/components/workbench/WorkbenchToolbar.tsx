@@ -1,5 +1,5 @@
 import { Button, cn, FOCUS_RING, Tooltip, TooltipContent, TooltipTrigger } from "@sheet-port/ui";
-import { Plus, RefreshCw, Search } from "lucide-react";
+import { Plus, RefreshCw, Search, Undo2, Redo2 } from "lucide-react";
 import { useTranslation } from "../../i18n/useTranslation.js";
 
 type WorkbenchToolbarProps = {
@@ -11,6 +11,10 @@ type WorkbenchToolbarProps = {
   isRefreshing: boolean;
   onAddRow: () => void;
   canAddRow: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 };
 
 /**
@@ -25,7 +29,11 @@ export function WorkbenchToolbar({
   onRefresh,
   isRefreshing,
   onAddRow,
-  canAddRow
+  canAddRow,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
 }: WorkbenchToolbarProps) {
   const { t } = useTranslation();
 
@@ -71,6 +79,38 @@ export function WorkbenchToolbar({
           </Button>
         </TooltipTrigger>
         <TooltipContent>{t("workbench.refresh")}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onUndo}
+            disabled={!canUndo}
+            aria-label={t("workbench.undo")}
+          >
+            <Undo2 size={14} strokeWidth={1.75} aria-hidden />
+            <span className="hidden sm:inline">{t("workbench.undo")}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("workbench.undo")}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onRedo}
+            disabled={!canRedo}
+            aria-label={t("workbench.redo")}
+          >
+            <Redo2 size={14} strokeWidth={1.75} aria-hidden />
+            <span className="hidden sm:inline">{t("workbench.redo")}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t("workbench.redo")}</TooltipContent>
       </Tooltip>
 
       <Tooltip>
