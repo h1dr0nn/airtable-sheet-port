@@ -213,12 +213,13 @@ fn mock_list_sheet_tabs_returns_one_synthetic_tab() {
 }
 
 #[test]
-fn mock_read_grid_maps_fields_to_lettered_columns() {
+fn mock_read_grid_mirrors_header_and_records_as_lettered_columns() {
     let conn = demo_db();
     let grid = registry()
         .read_grid(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, None, None)
         .expect("grid");
 
+    // Columns are the A1 letters as both id and title (raw mirror, not names).
     let columns: Vec<(&str, &str)> = grid
         .columns
         .iter()
@@ -226,47 +227,50 @@ fn mock_read_grid_maps_fields_to_lettered_columns() {
         .collect();
     assert_eq!(
         columns,
-        [
-            ("A", "Name"),
-            ("B", "Email"),
-            ("C", "Plan"),
-            ("D", "Seats"),
-            ("E", "Active"),
-        ]
+        [("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"), ("E", "E"),]
     );
-    assert_eq!(grid.total_rows, 3);
-    assert_eq!(grid.rows.len(), 3);
+
+    // Row 0 is the field-name header; the records follow it.
+    assert_eq!(grid.total_rows, 4, "header row + 3 records");
+    assert_eq!(grid.rows.len(), 4);
+    assert_eq!(grid.rows[0].get("A").map(String::as_str), Some("Name"));
+    assert_eq!(grid.rows[0].get("E").map(String::as_str), Some("Active"));
     assert_eq!(
-        grid.rows[0].get("A").map(String::as_str),
+        grid.rows[1].get("A").map(String::as_str),
         Some("Aurora Labs")
     );
     assert_eq!(
-        grid.rows[0].get("D").map(String::as_str),
+        grid.rows[1].get("D").map(String::as_str),
         Some("24"),
         "numbers stringify"
     );
     assert_eq!(
-        grid.rows[0].get("E").map(String::as_str),
+        grid.rows[1].get("E").map(String::as_str),
         Some("true"),
         "booleans stringify"
     );
 }
 
 #[test]
-fn mock_write_cell_updates_the_targeted_cell() {
+fn mock_write_cell_updates_the_targeted_data_cell() {
     let conn = demo_db();
     let reg = registry();
 
-    reg.write_cell(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, 0, "D", "25")
+    // Row 1 is the first data record (row 0 is the header).
+    reg.write_cell(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, 1, "D", "25")
         .expect("write");
     let grid = reg
         .read_grid(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, None, None)
         .expect("grid");
-    assert_eq!(grid.rows[0].get("D").map(String::as_str), Some("25"));
+    assert_eq!(grid.rows[1].get("D").map(String::as_str), Some("25"));
 
-    // A column id past the header, or a negative row, is rejected.
+    // The header row, a column past the fields, and a negative row are rejected.
     assert!(matches!(
-        reg.write_cell(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, 0, "Z", "x"),
+        reg.write_cell(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, 0, "A", "x"),
+        Err(CoreError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        reg.write_cell(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, 1, "Z", "x"),
         Err(CoreError::InvalidInput(_))
     ));
     assert!(matches!(
@@ -289,15 +293,19 @@ fn mock_append_grid_row_returns_the_new_row_index() {
     let index = reg
         .append_grid_row(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, &values)
         .expect("append");
-    assert_eq!(index, 3, "new 0-based data row index");
+    // 0-based over all rows: header (1) + 3 existing records = index 4.
+    assert_eq!(index, 4, "new 0-based row index over all rows");
 
     let grid = reg
         .read_grid(&conn, DEMO_SOURCE_ID, DEMO_TABLE_ID, None, None)
         .expect("grid");
-    assert_eq!(grid.total_rows, 4);
-    assert_eq!(grid.rows[3].get("A").map(String::as_str), Some("Zeta Inc"));
+    assert_eq!(grid.total_rows, 5, "header + 4 records");
     assert_eq!(
-        grid.rows[3].get("B").map(String::as_str),
+        grid.rows[index as usize].get("A").map(String::as_str),
+        Some("Zeta Inc")
+    );
+    assert_eq!(
+        grid.rows[index as usize].get("B").map(String::as_str),
         Some(""),
         "unset columns are empty cells"
     );

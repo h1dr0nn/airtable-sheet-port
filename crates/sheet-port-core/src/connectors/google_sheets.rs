@@ -29,6 +29,12 @@ const DRIVE_PAGE_SIZE: &str = "100";
 const LAST_COLUMN: &str = "ZZ";
 const HEADER_ROW: i64 = 1;
 const FIRST_DATA_ROW: i64 = 2;
+/// First row of the RAW Workbench grid mirror: row 1 is real data, not a
+/// header (the record/table view above still treats row 1 as the header).
+const FIRST_SHEET_ROW: i64 = 1;
+/// Smallest column count a raw grid reports, so a fully empty sheet still shows
+/// a column A to type into.
+const MIN_GRID_COLUMNS: usize = 1;
 const RECORD_ID_PREFIX: &str = "row_";
 
 /// Values API `valueInputOption`: write cell values exactly as sent.
@@ -344,10 +350,12 @@ impl TableConnector for GoogleSheetsConnector {
         Ok(tabs)
     }
 
-    /// Header row 1 becomes the columns (id = A1 column letter, title = header
-    /// cell); each data row becomes a string-cell row keyed by column id. One
-    /// unbounded fetch keeps `totalRows` exact, then the page window is sliced
-    /// locally with the standard read bounds.
+    /// RAW mirror of the sheet (Workbench). The whole used range is read from
+    /// row 1, columns are the A1 column letters (id AND title), and EVERY sheet
+    /// row - starting at row 1 - becomes a string-cell row keyed by column
+    /// letter. Empty cells are empty strings. One unbounded fetch keeps
+    /// `total_rows` exact, then the page window is sliced locally with the
+    /// standard read bounds.
     fn read_grid(
         &self,
         conn: &Connection,
@@ -358,34 +366,20 @@ impl TableConnector for GoogleSheetsConnector {
     ) -> Result<GridData, CoreError> {
         let token = google::access_token(conn, source_id)?;
         let sheet = ResolvedSheet::resolve(&token, table_id)?;
-        let header = self.fetch_header(&token, &sheet)?;
-        if header.is_empty() {
-            return Ok(GridData {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                total_rows: 0,
-            });
-        }
-        let columns: Vec<GridColumn> = header
-            .iter()
-            .enumerate()
-            .map(|(index, name)| GridColumn {
-                id: column_id_for_index(index),
-                title: name.clone(),
-            })
-            .collect();
         let all_rows = fetch_values(
             &token,
             &sheet.spreadsheet_id,
-            &sheet.range(&format!("A{FIRST_DATA_ROW}:{LAST_COLUMN}")),
+            &sheet.range(&format!("A{FIRST_SHEET_ROW}:{LAST_COLUMN}")),
         )?;
+        let column_count = raw_column_count(&all_rows);
+        let columns: Vec<GridColumn> = (0..column_count).map(grid_column_for_index).collect();
         let total_rows = all_rows.len() as i64;
         let (limit, offset) = clamp_read_window(limit, offset);
         let rows = all_rows
             .iter()
             .skip(offset as usize)
             .take(limit as usize)
-            .map(|row| grid_row(&header, row))
+            .map(|row| raw_grid_row(column_count, row))
             .collect();
         Ok(GridData {
             columns,
@@ -395,8 +389,8 @@ impl TableConnector for GoogleSheetsConnector {
     }
 
     /// Writes one cell via `values.batchUpdate` (RAW). `row_index` is 0-based
-    /// over data rows, so the sheet row is `FIRST_DATA_ROW + row_index`; the
-    /// column id must map to an existing header column.
+    /// over ALL sheet rows (row 1 = index 0), so the sheet row is
+    /// `row_index + FIRST_SHEET_ROW`; `column_id` is the A1 column letter.
     fn write_cell(
         &self,
         conn: &Connection,
@@ -411,14 +405,13 @@ impl TableConnector for GoogleSheetsConnector {
                 "Row index must not be negative, got {row_index}"
             )));
         }
+        let column = column_index_for_id(column_id)
+            .filter(|index| *index < last_column_count())
+            .ok_or_else(|| CoreError::InvalidInput(format!("Unknown column {column_id}")))?;
         let token = google::access_token(conn, source_id)?;
         let sheet = ResolvedSheet::resolve(&token, table_id)?;
-        let header = self.fetch_header(&token, &sheet)?;
-        let column = column_index_for_id(column_id)
-            .filter(|index| *index < header.len())
-            .ok_or_else(|| CoreError::InvalidInput(format!("Unknown column {column_id}")))?;
 
-        let sheet_row = FIRST_DATA_ROW + row_index;
+        let sheet_row = row_index + FIRST_SHEET_ROW;
         let cell = format!("{}{sheet_row}", column_id_for_index(column));
         let url = values_batch_update_url(&sheet.spreadsheet_id)?;
         google::post_json(
@@ -432,9 +425,10 @@ impl TableConnector for GoogleSheetsConnector {
         Ok(())
     }
 
-    /// Appends one row via `values.append` (RAW). Cells are ordered by the
-    /// header; a column id absent from `values` writes an empty cell. Returns
-    /// the new 0-based data row index parsed from the API's updatedRange.
+    /// Appends one row via `values.append` (RAW). Cells are ordered by column
+    /// letter (A, B, C ...); a column absent from `values` writes an empty cell.
+    /// Returns the new row's 0-based index (row 1 = index 0), which equals the
+    /// previous `total_rows`.
     fn append_grid_row(
         &self,
         conn: &Connection,
@@ -444,26 +438,10 @@ impl TableConnector for GoogleSheetsConnector {
     ) -> Result<i64, CoreError> {
         let token = google::access_token(conn, source_id)?;
         let sheet = ResolvedSheet::resolve(&token, table_id)?;
-        let header = self.fetch_header(&token, &sheet)?;
-        if header.is_empty() {
-            return Err(CoreError::InvalidInput(format!(
-                "Spreadsheet {} has no header row to map cells onto",
-                sheet.spreadsheet_id
-            )));
-        }
-        let row: Vec<Value> = (0..header.len())
-            .map(|index| {
-                Value::String(
-                    values
-                        .get(&column_id_for_index(index))
-                        .cloned()
-                        .unwrap_or_default(),
-                )
-            })
-            .collect();
+        let row = row_from_column_values(values);
         let url = values_append_url(
             &sheet.spreadsheet_id,
-            &sheet.range(&format!("A{HEADER_ROW}")),
+            &sheet.range(&format!("A{FIRST_SHEET_ROW}")),
         )?;
         let body = google::post_json(&token, url.as_str(), &json!({ "values": [row] }))?;
         let start_row = body["updates"]["updatedRange"]
@@ -474,7 +452,7 @@ impl TableConnector for GoogleSheetsConnector {
                     "Google Sheets append response had no usable updatedRange".to_string(),
                 )
             })?;
-        Ok(start_row - FIRST_DATA_ROW)
+        Ok(start_row - FIRST_SHEET_ROW)
     }
 }
 
@@ -496,13 +474,59 @@ pub fn spreadsheet_title(
     Ok(fetch_spreadsheet_meta(&token, spreadsheet_id)?.title)
 }
 
-/// Builds one GridData row from a raw sheet row: every header column gets a
-/// string cell keyed by its A1 column id, empty when the row is short.
-fn grid_row(header: &[String], row: &[Value]) -> GridRow {
-    (0..header.len())
+/// The GridColumn for a zero-based column index: the A1 letter is both id and
+/// title, so the Workbench grid reads like Google Sheets (columns A, B, C ...).
+fn grid_column_for_index(index: usize) -> GridColumn {
+    let letter = column_id_for_index(index);
+    GridColumn {
+        id: letter.clone(),
+        title: letter,
+    }
+}
+
+/// Raw grid width: the widest returned row, floored at [`MIN_GRID_COLUMNS`] so
+/// an empty sheet still shows a column, and capped at the [`LAST_COLUMN`]
+/// window.
+fn raw_column_count(rows: &[Vec<Value>]) -> usize {
+    let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
+    widest.clamp(MIN_GRID_COLUMNS, last_column_count())
+}
+
+/// Column count of the A1 window bounded by [`LAST_COLUMN`] (ZZ -> 702).
+fn last_column_count() -> usize {
+    column_index_for_id(LAST_COLUMN)
+        .map(|index| index + 1)
+        .unwrap_or(MIN_GRID_COLUMNS)
+}
+
+/// One raw grid row: every column index gets a string cell keyed by its A1
+/// letter, empty when the sheet row is short.
+fn raw_grid_row(column_count: usize, row: &[Value]) -> GridRow {
+    (0..column_count)
         .map(|index| {
             let cell = row.get(index).map(js_string).unwrap_or_default();
             (column_id_for_index(index), cell)
+        })
+        .collect()
+}
+
+/// Orders column-letter-keyed cell values into a positional row (A, B, C ...),
+/// filling gaps with empty strings, for a RAW append.
+fn row_from_column_values(values: &GridRow) -> Vec<Value> {
+    let column_count = values
+        .keys()
+        .filter_map(|id| column_index_for_id(id))
+        .map(|index| index + 1)
+        .max()
+        .unwrap_or(0);
+    (0..column_count)
+        .map(|index| {
+            Value::String(
+                values
+                    .get(&column_id_for_index(index))
+                    .cloned()
+                    .unwrap_or_default(),
+            )
         })
         .collect()
 }
@@ -1060,6 +1084,67 @@ mod tests {
         let values = row_values(&names, &fields);
 
         assert_eq!(values, vec![json!("Aurora"), json!(""), json!(true)]);
+    }
+
+    #[test]
+    fn raw_column_count_uses_widest_row_within_bounds() {
+        assert_eq!(
+            raw_column_count(&[]),
+            MIN_GRID_COLUMNS,
+            "empty sheet floors at the minimum"
+        );
+        let rows = vec![
+            vec![json!("a")],
+            vec![json!("a"), json!("b"), json!("c")],
+            vec![json!("a"), json!("b")],
+        ];
+        assert_eq!(raw_column_count(&rows), 3, "the widest row sets the width");
+        assert_eq!(last_column_count(), 702, "ZZ window is 702 columns");
+    }
+
+    #[test]
+    fn raw_grid_row_keys_cells_by_column_letter_and_pads() {
+        let row = vec![json!("Name"), json!(24), json!(true)];
+        let grid = raw_grid_row(4, &row);
+        assert_eq!(grid.get("A").map(String::as_str), Some("Name"));
+        assert_eq!(
+            grid.get("B").map(String::as_str),
+            Some("24"),
+            "numbers stringify"
+        );
+        assert_eq!(
+            grid.get("C").map(String::as_str),
+            Some("true"),
+            "booleans stringify"
+        );
+        assert_eq!(
+            grid.get("D").map(String::as_str),
+            Some(""),
+            "a short row pads with empty cells"
+        );
+    }
+
+    #[test]
+    fn grid_column_uses_the_letter_as_both_id_and_title() {
+        let column = grid_column_for_index(0);
+        assert_eq!(column.id, "A");
+        assert_eq!(column.title, "A");
+        assert_eq!(grid_column_for_index(26).id, "AA");
+    }
+
+    #[test]
+    fn row_from_column_values_orders_by_letter_and_fills_gaps() {
+        let mut values = GridRow::new();
+        values.insert("C".to_string(), "third".to_string());
+        values.insert("A".to_string(), "first".to_string());
+
+        let row = row_from_column_values(&values);
+
+        assert_eq!(row, vec![json!("first"), json!(""), json!("third")]);
+        assert!(
+            row_from_column_values(&GridRow::new()).is_empty(),
+            "no values -> no cells"
+        );
     }
 
     // A realistic 44-char Google document id used across the parser tests.

@@ -51,13 +51,35 @@ type ItemSheets = {
   grids: Record<string, GridData>;
 };
 
-/** Builds a GridData from a title list and a matrix of string cells. */
-function makeGrid(columnTitles: string[], cells: readonly (readonly string[])[]): GridData {
-  const columns = columnTitles.map((title, index) => ({ id: `c${index}`, title }));
-  const rows = cells.map((cellRow) => {
+/** The bijective base-26 A1 column letter for a zero-based index (0 -> "A"). */
+function columnLetter(index: number): string {
+  let n = index + 1;
+  let label = "";
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    label = String.fromCharCode(65 + remainder) + label;
+    n = Math.floor((n - 1) / 26);
+  }
+  return label;
+}
+
+/**
+ * Builds a RAW GridData that mirrors Google Sheets literally: columns are the
+ * A1 letters (id AND title), and the header titles become the FIRST data row
+ * (row 1 is real data, not a consumed header). Every following row is a literal
+ * string cell keyed by column letter.
+ */
+function makeGrid(headerTitles: string[], dataRows: readonly (readonly string[])[]): GridData {
+  const width = Math.max(headerTitles.length, ...dataRows.map((row) => row.length), 0);
+  const columns = Array.from({ length: width }, (_, index) => {
+    const id = columnLetter(index);
+    return { id, title: id };
+  });
+  const rawRows = [headerTitles, ...dataRows];
+  const rows = rawRows.map((cells) => {
     const record: Record<string, string> = {};
     columns.forEach((column, index) => {
-      record[column.id] = cellRow[index] ?? "";
+      record[column.id] = cells[index] ?? "";
     });
     return record;
   });
@@ -554,4 +576,10 @@ export function createWorkbenchDemo(deps: { delay: () => Promise<void> }): Workb
 }
 
 /** Exported for tests and isolated demo instances. */
-export const _internal = { parseSpreadsheetId, deriveSpreadsheetName, makeGrid, cloneItemSheets };
+export const _internal = {
+  parseSpreadsheetId,
+  deriveSpreadsheetName,
+  makeGrid,
+  columnLetter,
+  cloneItemSheets
+};

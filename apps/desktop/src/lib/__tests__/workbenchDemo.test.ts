@@ -20,39 +20,44 @@ describe("workbench demo backend", () => {
     expect(tree.items.filter((item) => item.folderId === null)).toHaveLength(1);
   });
 
-  it("lists sheet tabs and reads a seeded grid", async () => {
+  it("lists sheet tabs and reads a seeded grid as a raw mirror", async () => {
     const tabs = await api.listSheetTabs("wbi_core");
     expect(tabs.map((tab) => tab.title)).toEqual(["Constants", "Formulas", "Progression"]);
 
     const grid = await api.readSheet("wbi_core", "0", null, null);
-    expect(grid.columns[0]?.title).toBe("Key");
+    // Columns are A1 letters, not header-cell names.
+    expect(grid.columns[0]?.id).toBe("A");
+    expect(grid.columns[0]?.title).toBe("A");
     expect(grid.totalRows).toBe(grid.rows.length);
-    expect(grid.rows[0]?.[grid.columns[0]!.id]).toBe("MAX_LEVEL");
+    // Row 1 (index 0) is the header text; the data starts at row 2 (index 1).
+    expect(grid.rows[0]?.[grid.columns[0]!.id]).toBe("Key");
+    expect(grid.rows[1]?.[grid.columns[0]!.id]).toBe("MAX_LEVEL");
   });
 
-  it("persists a cell edit", async () => {
+  it("persists a cell edit on a data row", async () => {
     const before = await api.readSheet("wbi_core", "0", null, null);
-    const columnId = before.columns[1]!.id; // "Value" column
+    const columnId = before.columns[1]!.id; // column "B"
 
-    await api.updateCell("wbi_core", "0", 0, columnId, "99");
+    // Row index 1 is the first data row (row index 0 is the literal header row).
+    await api.updateCell("wbi_core", "0", 1, columnId, "99");
 
     const after = await api.readSheet("wbi_core", "0", null, null);
-    expect(after.rows[0]?.[columnId]).toBe("99");
+    expect(after.rows[1]?.[columnId]).toBe("99");
   });
 
   it("rejects a cell edit outside the row range", async () => {
-    await expect(api.updateCell("wbi_core", "0", 9999, "c0", "x")).rejects.toThrow();
+    await expect(api.updateCell("wbi_core", "0", 9999, "A", "x")).rejects.toThrow();
   });
 
   it("appends a row and returns its index", async () => {
     const before = await api.readSheet("wbi_core", "0", null, null);
-    const result = await api.appendSheetRow("wbi_core", "0", { c0: "NEW_KEY" });
+    const result = await api.appendSheetRow("wbi_core", "0", { A: "NEW_KEY" });
 
     expect(result.rowIndex).toBe(before.totalRows);
 
     const after = await api.readSheet("wbi_core", "0", null, null);
     expect(after.totalRows).toBe(before.totalRows + 1);
-    expect(after.rows[result.rowIndex]?.c0).toBe("NEW_KEY");
+    expect(after.rows[result.rowIndex]?.A).toBe("NEW_KEY");
   });
 
   it("respects read limit and offset", async () => {

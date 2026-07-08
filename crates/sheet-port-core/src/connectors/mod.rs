@@ -77,7 +77,8 @@ pub trait TableConnector: Send + Sync {
         ))
     }
 
-    /// A page of one sheet tab as string cells. `table_id` names the tab
+    /// A page of one sheet tab as a RAW mirror of string cells: columns are the
+    /// A1 column letters and rows start at sheet row 1. `table_id` names the tab
     /// (`{spreadsheetId}:{gid}`).
     fn read_grid(
         &self,
@@ -92,8 +93,8 @@ pub trait TableConnector: Send + Sync {
         ))
     }
 
-    /// Writes one cell. `row_index` is 0-based over data rows (the header is
-    /// not a data row); `column_id` is the A1 column letter.
+    /// Writes one cell. `row_index` is 0-based over ALL sheet rows (row 1 =
+    /// index 0); `column_id` is the A1 column letter.
     fn write_cell(
         &self,
         _conn: &Connection,

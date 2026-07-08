@@ -357,9 +357,9 @@ type WorkbenchItem = {
 };
 type SheetTab = { gid: string; title: string; index: number };
 type GridData = {
-  columns: { id: string; title: string }[]; // id = A1 column letter
+  columns: { id: string; title: string }[]; // id AND title = A1 column letter
   rows: Record<string, string>[];            // each row keyed by column id
-  totalRows: number;                         // data rows ignoring limit/offset
+  totalRows: number;                         // all sheet rows ignoring limit/offset
 };
 ```
 
@@ -405,21 +405,24 @@ Resolves the item to its source + spreadsheet, then lists the tabs left to right
 
 ### `read_workbench_sheet(itemId: string, gid: string, limit: number | null, offset: number | null) -> GridData`
 
-Reads one tab (`tableId = {spreadsheetId}:{gid}`) as string cells. Columns come
-from the header row (id = A1 column letter, title = header cell). Default limit
-100, clamp 1..=500, offset floors at 0; `totalRows` counts all data rows.
+Reads one tab (`tableId = {spreadsheetId}:{gid}`) as a RAW mirror of string
+cells - exactly like Google Sheets. Columns are the A1 column letters (id AND
+title = `A`, `B`, `C`, ...); the column count is the widest sheet row. Rows are
+EVERY sheet row starting at row 1 (the first row is real data, never consumed as
+a header); empty cells are empty strings. Default limit 100, clamp 1..=500,
+offset floors at 0; `totalRows` counts all sheet rows (row 1 included).
 
 ### `update_workbench_cell(itemId: string, gid: string, rowIndex: number, columnId: string, value: string) -> void`
 
-Writes one cell directly. `rowIndex` is 0-based over data rows (sheet row =
-header + 1 + rowIndex); `columnId` is the A1 column letter and must map to an
-existing column. Audit `workbench_cell_updated` (actor user).
+Writes one cell directly. `rowIndex` is 0-based over ALL sheet rows (sheet row =
+rowIndex + 1, so row 1 = index 0); `columnId` is the A1 column letter. Audit
+`workbench_cell_updated` (actor user).
 
 ### `append_workbench_row(itemId: string, gid: string, values: Record<string, string>) -> { rowIndex: number }`
 
-Appends a row ordered by the header (values keyed by column id; absent columns
-write empty cells) and returns its new 0-based data row index. Audit
-`workbench_row_appended` (actor user).
+Appends a row at the bottom, ordered by column letter (values keyed by column
+id; absent columns write empty cells), and returns its new 0-based row index
+(= the previous `totalRows`). Audit `workbench_row_appended` (actor user).
 
 ## Confirmation enforcement (cross-process)
 
