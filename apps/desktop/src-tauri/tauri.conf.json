@@ -4,9 +4,9 @@
   "version": "0.3.0",
   "identifier": "dev.sheetport.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm stage:sidecar && pnpm dev",
     "devUrl": "http://127.0.0.1:8477",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm stage:sidecar && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -28,6 +28,7 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/sheet-port-mcp"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

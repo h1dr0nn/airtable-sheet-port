@@ -698,6 +698,20 @@ const ENV_MCP_PORT: &str = "SHEET_PORT_MCP_PORT";
 const MCP_SERVER_STARTED_ACTION: &str = "mcp_server_started";
 const MCP_SERVER_STOPPED_ACTION: &str = "mcp_server_stopped";
 
+/// Applies the Windows flag that stops the console-subsystem sidecar from
+/// flashing a terminal window when the GUI desktop process spawns it. No-op on
+/// other platforms. Without this a black console blinks on every launch/start.
+#[cfg(target_os = "windows")]
+fn hide_child_console(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW: the child gets no console and does not inherit ours.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_child_console(_command: &mut std::process::Command) {}
+
 /// The result of a start/stop request: whether a managed child is running now
 /// and its PID when one is.
 #[derive(Serialize)]
@@ -756,12 +770,15 @@ pub fn mcp_server_start(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSt
     // stdio transport never sees EOF and exits: a desktop-launched GUI process
     // has no console stdin, so an inherited/null stdin would close immediately
     // and the sidecar would stop heartbeating. stdout/stderr are discarded.
-    let child = std::process::Command::new(&bin)
+    let mut command = std::process::Command::new(&bin);
+    command
         .env(ENV_MCP_TRANSPORT, transport)
         .env(ENV_MCP_PORT, port.to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    hide_child_console(&mut command);
+    let child = command
         .spawn()
         .map_err(|error| format!("Could not start the MCP server: {error}"))?;
     let pid = child.id();
@@ -831,14 +848,15 @@ pub fn auto_start_managed_sidecar(app: &tauri::AppHandle) {
         return;
     }
 
-    match std::process::Command::new(&bin)
+    let mut command = std::process::Command::new(&bin);
+    command
         .env(ENV_MCP_TRANSPORT, config.transport.as_str())
         .env(ENV_MCP_PORT, config.port.to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::null());
+    hide_child_console(&mut command);
+    match command.spawn() {
         Ok(child) => *guard = Some(child),
         Err(error) => eprintln!("[sheet-port] auto-start failed to spawn sidecar: {error}"),
     }
