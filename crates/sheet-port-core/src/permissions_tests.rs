@@ -141,6 +141,47 @@ fn delete_allowed_when_delete_records_enabled() {
 }
 
 #[test]
+fn delete_sheet_is_gated_on_the_delete_permission_like_a_record_delete() {
+    let conn = open_temp_db();
+    save(&conn, &make_rule(None));
+
+    // Write-only rule: deleting a whole tab is refused, so auto-approve alone
+    // (which never touches delete_records) cannot authorize it.
+    let denied = evaluate_write(&conn, SOURCE, TABLE, WriteAction::DeleteSheet).expect("evaluate");
+    assert!(!denied.allowed);
+
+    let mut with_delete = make_rule(None);
+    with_delete.delete_records = true;
+    save(&conn, &with_delete);
+    let allowed = evaluate_write(&conn, SOURCE, TABLE, WriteAction::DeleteSheet).expect("evaluate");
+    assert!(
+        allowed.allowed,
+        "the Bypass delete permission authorizes it"
+    );
+}
+
+#[test]
+fn create_spreadsheet_resolves_the_source_wide_rule_with_an_empty_table() {
+    let conn = open_temp_db();
+
+    // No rule yet: a source-level create is denied and the reason names the
+    // source, not a source/table pair.
+    let denied =
+        evaluate_write(&conn, SOURCE, "", WriteAction::CreateSpreadsheet).expect("evaluate");
+    assert!(!denied.allowed);
+    assert_eq!(
+        denied.reason.as_deref(),
+        Some(format!("Write access denied for {SOURCE}").as_str())
+    );
+
+    // A source-wide write rule (table_id = null) authorizes it.
+    save(&conn, &make_rule(None));
+    let allowed =
+        evaluate_write(&conn, SOURCE, "", WriteAction::CreateSpreadsheet).expect("evaluate");
+    assert!(allowed.allowed);
+}
+
+#[test]
 fn assert_can_write_returns_typed_permission_denied() {
     let conn = open_temp_db();
     let mut rule = make_rule(None);

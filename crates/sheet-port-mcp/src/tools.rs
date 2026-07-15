@@ -13,8 +13,9 @@ use sheet_port_core::types::{
 use sheet_port_core::{audit, changes, permissions, CoreError};
 
 use crate::args::{
-    AppendRecordsArgs, CommitChangeArgs, FindRecordsArgs, FormatTableArgs, GetAuditLogArgs,
-    ListTablesArgs, PreviewUpdateArgs, ReadTableArgs, SourceTableArgs,
+    AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
+    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, PreviewUpdateArgs,
+    ReadTableArgs, SourceTableArgs,
 };
 use crate::state::BrokerState;
 
@@ -406,12 +407,129 @@ pub fn get_audit_log(state: &BrokerState, args: &GetAuditLogArgs) -> Result<Stri
     })
 }
 
+pub fn preview_create_spreadsheet(
+    state: &BrokerState,
+    args: CreateSpreadsheetArgs,
+) -> Result<String, CoreError> {
+    args.validate()?;
+    state.with_conn(|conn, _registry| {
+        // Source-level: the empty table_id resolves to the source-wide rule.
+        let requires_confirmation = permissions::assert_can_write(
+            conn,
+            &args.source_id,
+            "",
+            WriteAction::CreateSpreadsheet,
+        )?;
+        let change = changes::create_create_spreadsheet_change(
+            conn,
+            &args.source_id,
+            args.title.clone(),
+            requires_confirmation,
+        )?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "preview_create_spreadsheet",
+            Some(&args.source_id),
+            None,
+            Some(&json!({
+                "changeId": change.id,
+                "title": args.title,
+                "requiresConfirmation": requires_confirmation,
+            })),
+        )?;
+        pretty(&PreviewOutput {
+            change,
+            requires_confirmation,
+        })
+    })
+}
+
+pub fn preview_create_sheet(
+    state: &BrokerState,
+    args: CreateSheetArgs,
+) -> Result<String, CoreError> {
+    args.validate()?;
+    state.with_conn(|conn, _registry| {
+        let requires_confirmation = permissions::assert_can_write(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            WriteAction::CreateSheet,
+        )?;
+        let change = changes::create_create_sheet_change(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            args.title.clone(),
+            requires_confirmation,
+        )?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "preview_create_sheet",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            Some(&json!({
+                "changeId": change.id,
+                "title": args.title,
+                "requiresConfirmation": requires_confirmation,
+            })),
+        )?;
+        pretty(&PreviewOutput {
+            change,
+            requires_confirmation,
+        })
+    })
+}
+
+pub fn preview_delete_sheet(
+    state: &BrokerState,
+    args: DeleteSheetArgs,
+) -> Result<String, CoreError> {
+    args.validate()?;
+    state.with_conn(|conn, _registry| {
+        // DeleteSheet needs the delete_records permission (the Bypass preset),
+        // so this refuses unless the user has explicitly enabled deletes.
+        let requires_confirmation = permissions::assert_can_write(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            WriteAction::DeleteSheet,
+        )?;
+        let change = changes::create_delete_sheet_change(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            requires_confirmation,
+        )?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "preview_delete_sheet",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            Some(&json!({
+                "changeId": change.id,
+                "requiresConfirmation": requires_confirmation,
+            })),
+        )?;
+        pretty(&PreviewOutput {
+            change,
+            requires_confirmation,
+        })
+    })
+}
+
 fn write_action_for(change_type: ChangeType) -> WriteAction {
     match change_type {
         ChangeType::Append => WriteAction::Append,
         ChangeType::Update => WriteAction::Update,
         ChangeType::Delete => WriteAction::Delete,
         ChangeType::Format => WriteAction::Format,
+        ChangeType::CreateSpreadsheet => WriteAction::CreateSpreadsheet,
+        ChangeType::CreateSheet => WriteAction::CreateSheet,
+        ChangeType::DeleteSheet => WriteAction::DeleteSheet,
     }
 }
 

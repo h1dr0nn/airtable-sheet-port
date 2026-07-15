@@ -3,8 +3,9 @@
 //! idempotent and the seed only runs while the meta 'seeded' marker is
 //! absent. Since schema_version 2 fresh databases start empty (no demo
 //! workspace); the v1 -> v2 migration removes the demo rows early builds
-//! seeded on first run, and the v2 -> v3 migration widens the pending-change
-//! CHECK constraint to allow the 'format' change type.
+//! seeded on first run, and the v2 -> v3 / v3 -> v4 migrations widen the
+//! pending-change CHECK constraint to allow the 'format' and then the
+//! structural ('create_spreadsheet' / 'create_sheet' / 'delete_sheet') types.
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +28,7 @@ const BUSY_TIMEOUT_MS: u64 = 5000;
 
 const META_SEEDED_KEY: &str = "seeded";
 const META_SCHEMA_VERSION_KEY: &str = "schema_version";
-const SCHEMA_VERSION_CURRENT: &str = "3";
+const SCHEMA_VERSION_CURRENT: &str = "4";
 
 // include_str! paths are relative to THIS source file. The .sql files are the
 // single source of truth for the shared database contract.
@@ -78,6 +79,40 @@ INSERT INTO pending_changes
 DROP TABLE pending_changes_v2;
 CREATE INDEX idx_pending_changes_status ON pending_changes (status, created_at DESC);
 INSERT INTO meta (key, value) VALUES ('schema_version', '3')
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+COMMIT;";
+
+/// v3 -> v4: widen the pending_changes.change_type CHECK to allow the structural
+/// change types ('create_spreadsheet', 'create_sheet', 'delete_sheet'). Same
+/// rebuild-in-place approach as v2 -> v3; existing rows are copied verbatim.
+const MIGRATE_V3_TO_V4_SQL: &str = "\
+BEGIN IMMEDIATE;
+DROP INDEX IF EXISTS idx_pending_changes_status;
+ALTER TABLE pending_changes RENAME TO pending_changes_v3;
+CREATE TABLE pending_changes (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  table_id TEXT NOT NULL,
+  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format', 'create_spreadsheet', 'create_sheet', 'delete_sheet')),
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'committed', 'rejected')),
+  requires_confirmation INTEGER NOT NULL DEFAULT 0,
+  diff TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  committed_at TEXT
+);
+INSERT INTO pending_changes
+  (id, source_id, table_id, change_type, created_at, status,
+   requires_confirmation, diff, payload, decided_at, decided_by, committed_at)
+  SELECT id, source_id, table_id, change_type, created_at, status,
+         requires_confirmation, diff, payload, decided_at, decided_by, committed_at
+  FROM pending_changes_v3;
+DROP TABLE pending_changes_v3;
+CREATE INDEX idx_pending_changes_status ON pending_changes (status, created_at DESC);
+INSERT INTO meta (key, value) VALUES ('schema_version', '4')
   ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 COMMIT;";
 
@@ -165,7 +200,7 @@ fn apply_schema_and_seed(conn: &Connection) -> Result<(), CoreError> {
 }
 
 /// Brings older databases up to `SCHEMA_VERSION_CURRENT` by applying each
-/// migration in sequence (v1 -> v2 -> v3). A missing schema_version means a v1
+/// migration in sequence (v1 -> v2 -> v3 -> v4). A missing schema_version means a v1
 /// database (the v1 seed always wrote it, but be defensive); fresh databases
 /// get the current version from the seed and skip every step. Each step
 /// advances the version marker inside its own transaction, so the loop
@@ -180,6 +215,7 @@ fn migrate_to_current_version(conn: &Connection) -> Result<(), CoreError> {
         let (sql, target) = match version.as_deref() {
             None | Some("1") => (MIGRATE_V1_TO_V2_SQL, "2"),
             Some("2") => (MIGRATE_V2_TO_V3_SQL, "3"),
+            Some("3") => (MIGRATE_V3_TO_V4_SQL, "4"),
             Some(_) => return Ok(()),
         };
         conn.execute_batch(sql).map_err(|error| {

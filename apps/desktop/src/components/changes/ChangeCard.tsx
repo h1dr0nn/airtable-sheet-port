@@ -35,7 +35,10 @@ const TYPE_VARIANTS: Record<ChangeType, BadgeVariant> = {
   append: "default",
   update: "default",
   delete: "danger",
-  format: "default"
+  format: "default",
+  create_spreadsheet: "default",
+  create_sheet: "default",
+  delete_sheet: "danger"
 };
 
 function ChangeOutcome({ change }: { change: PendingChange }) {

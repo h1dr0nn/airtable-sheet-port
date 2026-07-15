@@ -1,6 +1,6 @@
 # MCP Tools
 
-The Rust sidecar (`crates/sheet-port-mcp`) registers 12 tools. All input
+The Rust sidecar (`crates/sheet-port-mcp`) registers 15 tools. All input
 schemas are provider-neutral (generated via `schemars`, with every bound enforced in
 `src/args.rs`); none expose raw Google or provider APIs. Every tool returns a single
 text content block containing pretty-printed JSON with the shapes below. Every call
@@ -504,10 +504,67 @@ Example call:
 }
 ```
 
+## `preview_create_spreadsheet`
+
+Purpose: stage the creation of a brand-new spreadsheet on the connected account. Nothing
+is created until `commit_change`; the commit's outcome carries `created` with the new
+`spreadsheetId` and `url`. Source-level (there is no `tableId` yet).
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `title` | string | 1 to 200 characters |
+
+Output shape: `{ "change": PendingChange, "requiresConfirmation": boolean }` (change type
+`create_spreadsheet`; the change's `tableId` is empty).
+
+Permission required: `write`, resolved against the **source-wide** rule (a rule with a null
+`tableId`), since a create has no table yet.
+
+## `preview_create_sheet`
+
+Purpose: stage adding a new sheet tab to an existing spreadsheet. Nothing is created until
+`commit_change`; the outcome's `created` carries the new tab's `sheetGid`. `tableId` is the
+spreadsheet (URL or id).
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `tableId` | string | min length 1 (the spreadsheet) |
+| `title` | string | 1 to 200 characters |
+
+Output shape: `{ "change": PendingChange, "requiresConfirmation": boolean }` (change type
+`create_sheet`).
+
+Permission required: `write` on the spreadsheet.
+
+## `preview_delete_sheet`
+
+Purpose: stage deleting a sheet tab. Nothing is deleted until `commit_change`. Destructive.
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `tableId` | string | min length 1 (URL, `spreadsheetId:gid`, or `spreadsheetId:SheetName`) |
+
+Output shape: `{ "change": PendingChange, "requiresConfirmation": boolean }` (change type
+`delete_sheet`).
+
+Permission required: `delete` (the `delete_records` permission, set by the **Bypass** access
+preset). Auto-approve alone never authorizes this - if the source is not set to Bypass, the
+preview is refused with a `Delete access denied` error.
+
 ## `commit_change`
 
 Purpose: apply one or more previously previewed changes. This is the only tool that writes
-to a table.
+to a table. Committing a `create_spreadsheet` or `create_sheet` change returns the new
+resource in the outcome's `created` field.
 
 Input schema (provide exactly one of the two forms):
 

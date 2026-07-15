@@ -476,6 +476,63 @@ impl CommitChangeArgs {
     }
 }
 
+/// Max length of a spreadsheet or sheet-tab title an agent may request.
+const TITLE_MAX_LEN: usize = 200;
+
+fn require_title(title: &str) -> Result<(), CoreError> {
+    let length = title.chars().count();
+    if !(1..=TITLE_MAX_LEN).contains(&length) {
+        return Err(invalid(format!(
+            "title must be between 1 and {TITLE_MAX_LEN} characters"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSpreadsheetArgs {
+    pub source_id: String,
+    pub title: String,
+}
+
+impl CreateSpreadsheetArgs {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        require_non_empty(&self.source_id, "sourceId")?;
+        require_title(&self.title)
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSheetArgs {
+    pub source_id: String,
+    pub table_id: String,
+    pub title: String,
+}
+
+impl CreateSheetArgs {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        require_non_empty(&self.source_id, "sourceId")?;
+        require_non_empty(&self.table_id, "tableId")?;
+        require_title(&self.title)
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSheetArgs {
+    pub source_id: String,
+    pub table_id: String,
+}
+
+impl DeleteSheetArgs {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        require_non_empty(&self.source_id, "sourceId")?;
+        require_non_empty(&self.table_id, "tableId")
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GetAuditLogArgs {

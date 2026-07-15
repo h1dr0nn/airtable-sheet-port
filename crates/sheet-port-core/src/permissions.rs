@@ -98,19 +98,27 @@ pub fn evaluate_write(
     table_id: &str,
     action: WriteAction,
 ) -> Result<WriteEvaluation, CoreError> {
-    let rule = find_rule(conn, source_id, Some(table_id))?;
+    // A source-level action (e.g. create_spreadsheet, which has no table yet)
+    // carries an empty table_id and is evaluated against the source-wide rule.
+    let scope = if table_id.is_empty() {
+        source_id.to_string()
+    } else {
+        format!("{source_id}/{table_id}")
+    };
+    let lookup_table = (!table_id.is_empty()).then_some(table_id);
+    let rule = find_rule(conn, source_id, lookup_table)?;
     let Some(rule) = rule.filter(|rule| rule.write) else {
         return Ok(WriteEvaluation {
             allowed: false,
             requires_confirmation: false,
-            reason: Some(format!("Write access denied for {source_id}/{table_id}")),
+            reason: Some(format!("Write access denied for {scope}")),
         });
     };
-    if action == WriteAction::Delete && !rule.delete_records {
+    if action.needs_delete_permission() && !rule.delete_records {
         return Ok(WriteEvaluation {
             allowed: false,
             requires_confirmation: false,
-            reason: Some(format!("Delete access denied for {source_id}/{table_id}")),
+            reason: Some(format!("Delete access denied for {scope}")),
         });
     }
     Ok(WriteEvaluation {

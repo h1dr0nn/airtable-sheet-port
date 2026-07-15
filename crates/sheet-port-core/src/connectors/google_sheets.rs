@@ -17,9 +17,9 @@ use crate::error::CoreError;
 use crate::google;
 use crate::sources;
 use crate::types::{
-    BorderStyle, CellFormat, CellStyle, ColumnWidth, DataSource, FieldSchema, FormatPlan,
-    GridColumn, GridData, GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch, SheetTab,
-    SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
+    BorderStyle, CellFormat, CellStyle, ColumnWidth, CreatedResource, DataSource, FieldSchema,
+    FormatPlan, GridColumn, GridData, GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch,
+    SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
 };
 
 const DRIVE_FILES_ENDPOINT: &str = "https://www.googleapis.com/drive/v3/files";
@@ -250,6 +250,85 @@ impl TableConnector for GoogleSheetsConnector {
         };
         let rows = fetch_formula_values(&token, &sheet.spreadsheet_id, &sheet.range(&range))?;
         Ok(records_from_rows(&header, &rows, start_row))
+    }
+
+    /// `spreadsheets.create` with just a title; returns the new id and url.
+    fn create_spreadsheet(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        title: &str,
+    ) -> Result<CreatedResource, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let url = url::Url::parse(SHEETS_ENDPOINT).map_err(|error| {
+            CoreError::Storage(format!("Could not build the Sheets URL: {error}"))
+        })?;
+        let body = google::post_json(
+            &token,
+            url.as_str(),
+            &json!({ "properties": { "title": title } }),
+        )?;
+        let spreadsheet_id = body["spreadsheetId"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| {
+                CoreError::Storage("Sheets create response had no spreadsheetId".to_string())
+            })?;
+        Ok(CreatedResource {
+            spreadsheet_id: Some(spreadsheet_id),
+            sheet_gid: None,
+            title: Some(title.to_string()),
+            url: body["spreadsheetUrl"].as_str().map(str::to_string),
+        })
+    }
+
+    /// `spreadsheets.batchUpdate` with an `addSheet` request; returns the new
+    /// tab's gid. Only the spreadsheet id of `table_id` is used.
+    fn create_sheet(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        title: &str,
+    ) -> Result<CreatedResource, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let parsed = ParsedTableId::parse(table_id)?;
+        let url = spreadsheet_batch_update_url(&parsed.spreadsheet_id)?;
+        let body = google::post_json(
+            &token,
+            url.as_str(),
+            &json!({ "requests": [{ "addSheet": { "properties": { "title": title } } }] }),
+        )?;
+        let gid = body["replies"][0]["addSheet"]["properties"]["sheetId"]
+            .as_i64()
+            .ok_or_else(|| {
+                CoreError::Storage("Sheets addSheet response had no sheetId".to_string())
+            })?;
+        Ok(CreatedResource {
+            spreadsheet_id: Some(parsed.spreadsheet_id),
+            sheet_gid: Some(gid.to_string()),
+            title: Some(title.to_string()),
+            url: None,
+        })
+    }
+
+    /// `spreadsheets.batchUpdate` with a `deleteSheet` request for the tab that
+    /// `table_id` resolves to.
+    fn delete_sheet(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+    ) -> Result<(), CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let url = spreadsheet_batch_update_url(&sheet.spreadsheet_id)?;
+        google::post_json(
+            &token,
+            url.as_str(),
+            &json!({ "requests": [{ "deleteSheet": { "sheetId": sheet.sheet_id } }] }),
+        )?;
+        Ok(())
     }
 
     /// `values.append` with RAW input; each record becomes one row with cells

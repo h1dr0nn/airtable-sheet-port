@@ -8,4 +8,4 @@
 -- removed by the v1 -> v2 migration in db.rs.
 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('seeded', '1');
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '4');

@@ -40,7 +40,14 @@ export type RecordPatch = {
   fields: Record<string, unknown>;
 };
 
-export type ChangeType = "append" | "update" | "delete" | "format";
+export type ChangeType =
+  | "append"
+  | "update"
+  | "delete"
+  | "format"
+  | "create_spreadsheet"
+  | "create_sheet"
+  | "delete_sheet";
 export type ConfirmationAction =
   | "append"
   | "update"
@@ -50,7 +57,15 @@ export type ConfirmationAction =
   | "format";
 
 /** Write action evaluated against permission rules; wider than ChangeType. */
-export type WriteAction = "append" | "update" | "delete" | "bulk_update" | "format";
+export type WriteAction =
+  | "append"
+  | "update"
+  | "delete"
+  | "bulk_update"
+  | "format"
+  | "create_spreadsheet"
+  | "create_sheet"
+  | "delete_sheet";
 
 export type HorizontalAlignment = "LEFT" | "CENTER" | "RIGHT";
 

@@ -17,8 +17,8 @@ use crate::db::{get_meta, now_iso};
 use crate::error::{db_error, parse_json, CoreError};
 use crate::permissions;
 use crate::types::{
-    AuditActor, ChangeDecider, ChangeStatus, ChangeType, FormatPlan, JsonMap, PendingChange,
-    ReadOptions, RecordPatch, TableRecord, WriteAction,
+    AuditActor, ChangeDecider, ChangeStatus, ChangeType, CreatedResource, FormatPlan, JsonMap,
+    PendingChange, ReadOptions, RecordPatch, TableRecord, WriteAction,
 };
 
 /// Internal write payload; persisted alongside a change but never returned to
@@ -47,6 +47,19 @@ pub enum ChangePayload {
     Format {
         plan: FormatPlan,
     },
+    /// Create a brand-new spreadsheet (source-level; the change's table_id is
+    /// empty). Commit returns the new spreadsheet id/url.
+    CreateSpreadsheet {
+        title: String,
+    },
+    /// Add a new sheet tab to the spreadsheet named by the change's table_id.
+    /// Commit returns the new tab's gid.
+    CreateSheet {
+        title: String,
+    },
+    /// Delete the sheet tab named by the change's table_id. Gated on the
+    /// `delete_records` permission, so auto-approve alone never authorizes it.
+    DeleteSheet {},
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,6 +73,10 @@ pub struct CommitOutcome {
     /// preview_format_table. Absent on success.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_error: Option<String>,
+    /// Set when the committed change created a resource (a new spreadsheet or
+    /// sheet tab), carrying its id/url so the agent can address it next.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<CreatedResource>,
 }
 
 // The internal `payload` column is intentionally absent: it must never reach
@@ -162,6 +179,66 @@ pub fn create_format_change(
         table_id,
         ChangeType::Format,
         &ChangePayload::Format { plan },
+        diff,
+        requires_confirmation,
+    )
+}
+
+/// Stages the creation of a brand-new spreadsheet. Source-level: the change's
+/// table_id is empty and the permission check resolves against the source-wide
+/// rule.
+pub fn create_create_spreadsheet_change(
+    conn: &Connection,
+    source_id: &str,
+    title: String,
+    requires_confirmation: bool,
+) -> Result<PendingChange, CoreError> {
+    let diff = serde_json::json!({ "title": title });
+    insert_change(
+        conn,
+        source_id,
+        "",
+        ChangeType::CreateSpreadsheet,
+        &ChangePayload::CreateSpreadsheet { title },
+        diff,
+        requires_confirmation,
+    )
+}
+
+/// Stages adding a new sheet tab to the spreadsheet named by `table_id`.
+pub fn create_create_sheet_change(
+    conn: &Connection,
+    source_id: &str,
+    table_id: &str,
+    title: String,
+    requires_confirmation: bool,
+) -> Result<PendingChange, CoreError> {
+    let diff = serde_json::json!({ "title": title, "spreadsheet": table_id });
+    insert_change(
+        conn,
+        source_id,
+        table_id,
+        ChangeType::CreateSheet,
+        &ChangePayload::CreateSheet { title },
+        diff,
+        requires_confirmation,
+    )
+}
+
+/// Stages deleting the sheet tab named by `table_id`.
+pub fn create_delete_sheet_change(
+    conn: &Connection,
+    source_id: &str,
+    table_id: &str,
+    requires_confirmation: bool,
+) -> Result<PendingChange, CoreError> {
+    let diff = serde_json::json!({ "deleteSheet": table_id });
+    insert_change(
+        conn,
+        source_id,
+        table_id,
+        ChangeType::DeleteSheet,
+        &ChangePayload::DeleteSheet {},
         diff,
         requires_confirmation,
     )
@@ -546,7 +623,7 @@ pub fn commit(
         }
     }
 
-    let records = execute(conn, registry, &change, &payload)?;
+    let exec = execute(conn, registry, &change, &payload)?;
     if !mark_committed(conn, change_id)? {
         return Err(CoreError::Conflict(format!(
             "Change {change_id} could not be marked committed (state changed concurrently)"
@@ -570,9 +647,17 @@ pub fn commit(
     };
     Ok(CommitOutcome {
         change: committed,
-        records,
+        records: exec.records,
         format_error,
+        created: exec.created,
     })
+}
+
+/// The result of executing a change's primary write: the affected records and,
+/// for structural changes, the resource that was created.
+struct ExecOutcome {
+    records: Vec<TableRecord>,
+    created: Option<CreatedResource>,
 }
 
 /// Commits several staged changes in order, returning one outcome per id. All
@@ -601,25 +686,54 @@ fn execute(
     registry: &ConnectorRegistry,
     change: &PendingChange,
     payload: &ChangePayload,
-) -> Result<Vec<TableRecord>, CoreError> {
-    match payload {
+) -> Result<ExecOutcome, CoreError> {
+    let records_only = |records| ExecOutcome {
+        records,
+        created: None,
+    };
+    let outcome = match payload {
         // A bundled format plan is applied by `commit` AFTER the rows are marked
         // committed, so it is intentionally ignored here.
-        ChangePayload::Append { records, .. } => {
-            registry.append_records(conn, &change.source_id, &change.table_id, records)
+        ChangePayload::Append { records, .. } => records_only(registry.append_records(
+            conn,
+            &change.source_id,
+            &change.table_id,
+            records,
+        )?),
+        ChangePayload::Update { patches } => records_only(registry.update_records(
+            conn,
+            &change.source_id,
+            &change.table_id,
+            patches,
+        )?),
+        ChangePayload::Delete { .. } => {
+            return Err(CoreError::Unsupported(
+                "Delete changes are not implemented in the MVP".to_string(),
+            ))
         }
-        ChangePayload::Update { patches } => {
-            registry.update_records(conn, &change.source_id, &change.table_id, patches)
-        }
-        ChangePayload::Delete { .. } => Err(CoreError::Unsupported(
-            "Delete changes are not implemented in the MVP".to_string(),
-        )),
         ChangePayload::Format { plan } => {
             registry.format_cells(conn, &change.source_id, &change.table_id, plan)?;
-            // Formatting writes no records; the committed change carries none.
-            Ok(Vec::new())
+            records_only(Vec::new())
         }
-    }
+        ChangePayload::CreateSpreadsheet { title } => ExecOutcome {
+            records: Vec::new(),
+            created: Some(registry.create_spreadsheet(conn, &change.source_id, title)?),
+        },
+        ChangePayload::CreateSheet { title } => ExecOutcome {
+            records: Vec::new(),
+            created: Some(registry.create_sheet(
+                conn,
+                &change.source_id,
+                &change.table_id,
+                title,
+            )?),
+        },
+        ChangePayload::DeleteSheet {} => {
+            registry.delete_sheet(conn, &change.source_id, &change.table_id)?;
+            records_only(Vec::new())
+        }
+    };
+    Ok(outcome)
 }
 
 /// Reads the auto-approve-writes setting fresh from `meta`. On (the default)
@@ -644,6 +758,9 @@ fn commit_action(change_type: ChangeType, payload: &ChangePayload) -> WriteActio
         ChangeType::Update => WriteAction::Update,
         ChangeType::Delete => WriteAction::Delete,
         ChangeType::Format => WriteAction::Format,
+        ChangeType::CreateSpreadsheet => WriteAction::CreateSpreadsheet,
+        ChangeType::CreateSheet => WriteAction::CreateSheet,
+        ChangeType::DeleteSheet => WriteAction::DeleteSheet,
     }
 }
 

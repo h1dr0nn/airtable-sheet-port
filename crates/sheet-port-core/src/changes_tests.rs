@@ -335,6 +335,69 @@ fn commit_many_commits_each_change_in_order() {
     assert_eq!(page.total, 5, "both appends land on top of the 3 seed rows");
 }
 
+/// A source-wide rule (table_id = null) so source-level actions like
+/// create_spreadsheet resolve a write permission.
+fn set_source_rule(conn: &Connection, write: bool, delete: bool) {
+    let rule = SavePermissionRule {
+        id: None,
+        source_id: SOURCE.to_string(),
+        table_id: None,
+        read: true,
+        write,
+        delete_records: delete,
+        require_confirmation_for: Vec::new(),
+    };
+    save_rule(conn, &rule).expect("set source rule");
+}
+
+#[test]
+fn create_spreadsheet_change_is_source_level_with_an_empty_table_id() {
+    let conn = demo_db();
+    let change =
+        create_create_spreadsheet_change(&conn, SOURCE, "Quarterly Plan".to_string(), false)
+            .expect("create");
+
+    assert_eq!(change.change_type, ChangeType::CreateSpreadsheet);
+    assert_eq!(
+        change.table_id, "",
+        "a create is source-level, no table yet"
+    );
+    assert_eq!(change.diff, json!({ "title": "Quarterly Plan" }));
+
+    let payload = get_payload(&conn, &change.id)
+        .expect("payload")
+        .expect("stored");
+    assert_eq!(
+        payload,
+        ChangePayload::CreateSpreadsheet {
+            title: "Quarterly Plan".to_string()
+        }
+    );
+}
+
+#[test]
+fn commit_create_spreadsheet_is_unsupported_on_the_mock_connector() {
+    let conn = demo_db();
+    let registry = registry();
+    set_source_rule(&conn, true, false);
+    let change = create_create_spreadsheet_change(&conn, SOURCE, "New Book".to_string(), false)
+        .expect("create");
+
+    let error = commit(&conn, &registry, &change.id).expect_err("mock cannot create spreadsheets");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support creating spreadsheets"),
+        "unexpected error: {error}"
+    );
+    let still = get_change(&conn, &change.id).expect("get").expect("exists");
+    assert_ne!(
+        still.status,
+        ChangeStatus::Committed,
+        "a failed execute must not mark the change committed (it is left policy-approved)"
+    );
+}
+
 #[test]
 fn commit_many_rejects_an_unknown_id_before_committing_any() {
     let conn = demo_db();

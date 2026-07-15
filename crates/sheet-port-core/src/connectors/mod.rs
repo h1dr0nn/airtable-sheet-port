@@ -15,8 +15,8 @@ use crate::constants::{READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN};
 use crate::error::CoreError;
 use crate::sources;
 use crate::types::{
-    DataSource, FormatPlan, GridData, GridRow, JsonMap, ReadOptions, RecordPatch, SheetTab,
-    SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
+    CreatedResource, DataSource, FormatPlan, GridData, GridRow, JsonMap, ReadOptions, RecordPatch,
+    SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
 };
 
 pub trait TableConnector: Send + Sync {
@@ -169,6 +169,50 @@ pub trait TableConnector: Send + Sync {
     ) -> Result<(), CoreError> {
         Err(CoreError::Unsupported(
             "This source does not support cell formatting".to_string(),
+        ))
+    }
+
+    // -----------------------------------------------------------------------
+    // Structural changes (docs/mcp-tools.md). Run only from the staged-change
+    // commit path, never directly from an agent. Connectors that cannot create
+    // or delete sheets inherit the Unsupported defaults below.
+    // -----------------------------------------------------------------------
+
+    /// Create a new spreadsheet titled `title`, returning its id and url.
+    fn create_spreadsheet(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _title: &str,
+    ) -> Result<CreatedResource, CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support creating spreadsheets".to_string(),
+        ))
+    }
+
+    /// Add a new sheet tab titled `title` to the spreadsheet named by
+    /// `table_id`, returning the new tab's gid.
+    fn create_sheet(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _title: &str,
+    ) -> Result<CreatedResource, CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support creating sheets".to_string(),
+        ))
+    }
+
+    /// Delete the sheet tab named by `table_id`.
+    fn delete_sheet(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+    ) -> Result<(), CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support deleting sheets".to_string(),
         ))
     }
 }
@@ -352,6 +396,37 @@ impl ConnectorRegistry {
     ) -> Result<(), CoreError> {
         self.for_source(conn, source_id)?
             .format_cells(conn, source_id, table_id, plan)
+    }
+
+    pub fn create_spreadsheet(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        title: &str,
+    ) -> Result<CreatedResource, CoreError> {
+        self.for_source(conn, source_id)?
+            .create_spreadsheet(conn, source_id, title)
+    }
+
+    pub fn create_sheet(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        title: &str,
+    ) -> Result<CreatedResource, CoreError> {
+        self.for_source(conn, source_id)?
+            .create_sheet(conn, source_id, table_id, title)
+    }
+
+    pub fn delete_sheet(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+    ) -> Result<(), CoreError> {
+        self.for_source(conn, source_id)?
+            .delete_sheet(conn, source_id, table_id)
     }
 
     fn for_source(

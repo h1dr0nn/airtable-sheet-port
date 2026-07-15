@@ -10,8 +10,9 @@ use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use sheet_port_core::CoreError;
 
 use crate::args::{
-    AppendRecordsArgs, CommitChangeArgs, FindRecordsArgs, FormatTableArgs, GetAuditLogArgs,
-    ListTablesArgs, PreviewUpdateArgs, ReadTableArgs, SourceTableArgs,
+    AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
+    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, PreviewUpdateArgs,
+    ReadTableArgs, SourceTableArgs,
 };
 use crate::state::BrokerState;
 use crate::tools;
@@ -173,6 +174,42 @@ impl SheetPortServer {
     ) -> CallToolResult {
         let state = Arc::clone(&self.state);
         respond_blocking(move || tools::preview_format_table(&state, args)).await
+    }
+
+    #[tool(
+        name = "preview_create_spreadsheet",
+        description = "Stage the creation of a brand-new spreadsheet titled `title` on the connected account and return the pending change. This does NOT create anything until commit_change; on commit the outcome's `created` carries the new spreadsheetId and url so you can write into it next. Needs source-wide write permission."
+    )]
+    async fn preview_create_spreadsheet(
+        &self,
+        Parameters(args): Parameters<CreateSpreadsheetArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::preview_create_spreadsheet(&state, args)).await
+    }
+
+    #[tool(
+        name = "preview_create_sheet",
+        description = "Stage adding a new sheet tab titled `title` to an existing spreadsheet (tableId = the spreadsheet URL or id) and return the pending change. Nothing is created until commit_change; on commit the outcome's `created` carries the new tab's gid. Needs write permission on the spreadsheet."
+    )]
+    async fn preview_create_sheet(
+        &self,
+        Parameters(args): Parameters<CreateSheetArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::preview_create_sheet(&state, args)).await
+    }
+
+    #[tool(
+        name = "preview_delete_sheet",
+        description = "Stage deleting a sheet tab (tableId = URL, spreadsheetId:gid, or spreadsheetId:SheetName) and return the pending change. Nothing is deleted until commit_change. This is destructive and needs the delete permission (the Bypass access preset); auto-approve alone never authorizes deleting a sheet, so if the source is not set to Bypass this is refused."
+    )]
+    async fn preview_delete_sheet(
+        &self,
+        Parameters(args): Parameters<DeleteSheetArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::preview_delete_sheet(&state, args)).await
     }
 
     #[tool(

@@ -85,6 +85,23 @@ pub struct TableRecord {
     pub fields: JsonMap,
 }
 
+/// A resource created by committing a structural change (a new spreadsheet or a
+/// new sheet tab). Returned on the [`CommitOutcome`](crate::changes::CommitOutcome)
+/// so the agent gets the id/url of what it just created. Only the fields that
+/// apply to the created resource are populated.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedResource {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spreadsheet_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sheet_gid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TablePage {
@@ -147,6 +164,9 @@ pub enum WriteAction {
     Delete,
     BulkUpdate,
     Format,
+    CreateSpreadsheet,
+    CreateSheet,
+    DeleteSheet,
 }
 
 impl WriteAction {
@@ -157,7 +177,17 @@ impl WriteAction {
             Self::Delete => "delete",
             Self::BulkUpdate => "bulk_update",
             Self::Format => "format",
+            Self::CreateSpreadsheet => "create_spreadsheet",
+            Self::CreateSheet => "create_sheet",
+            Self::DeleteSheet => "delete_sheet",
         }
+    }
+
+    /// Whether this action needs the `delete_records` permission (the Bypass
+    /// preset). Deleting a whole sheet tab is gated like a record delete, so
+    /// auto-approve alone never authorizes it.
+    pub fn needs_delete_permission(self) -> bool {
+        matches!(self, Self::Delete | Self::DeleteSheet)
     }
 }
 
@@ -168,6 +198,12 @@ pub enum ChangeType {
     Update,
     Delete,
     Format,
+    #[serde(rename = "create_spreadsheet")]
+    CreateSpreadsheet,
+    #[serde(rename = "create_sheet")]
+    CreateSheet,
+    #[serde(rename = "delete_sheet")]
+    DeleteSheet,
 }
 
 impl ChangeType {
@@ -177,6 +213,9 @@ impl ChangeType {
             Self::Update => "update",
             Self::Delete => "delete",
             Self::Format => "format",
+            Self::CreateSpreadsheet => "create_spreadsheet",
+            Self::CreateSheet => "create_sheet",
+            Self::DeleteSheet => "delete_sheet",
         }
     }
 
@@ -186,6 +225,9 @@ impl ChangeType {
             "update" => Some(Self::Update),
             "delete" => Some(Self::Delete),
             "format" => Some(Self::Format),
+            "create_spreadsheet" => Some(Self::CreateSpreadsheet),
+            "create_sheet" => Some(Self::CreateSheet),
+            "delete_sheet" => Some(Self::DeleteSheet),
             _ => None,
         }
     }
