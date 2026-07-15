@@ -353,8 +353,14 @@ Example response:
 ## `append_records`
 
 Purpose: create a pending append change and return its diff. Nothing is written to the
-table until `commit_change`. For Google Sheets, `tableId` may be a URL, spreadsheet id, or
+table until `commit_change`. On an empty tab the record field names seed the header row.
+For Google Sheets, `tableId` may be a URL, spreadsheet id, or
 `spreadsheetId:gid` / `spreadsheetId:SheetName` (see "Google Sheets `tableId` forms").
+
+Optionally, the append may carry a formatting plan (the same `formats`, `freezeRows`,
+`freezeColumns`, and `columnWidths` fields as `preview_format_table`). When present it is
+applied in the SAME commit, right after the rows land, so a fresh table is written and
+styled in one preview -> commit instead of two.
 
 Input schema:
 
@@ -363,12 +369,18 @@ Input schema:
 | `sourceId` | string | min length 1 |
 | `tableId` | string | min length 1 |
 | `records` | array of objects (field name -> value) | 1 to 100 items |
+| `formats` | array of format ops (see `preview_format_table`) | optional, at most 100 |
+| `freezeRows` | integer | optional, 0 to 100 |
+| `freezeColumns` | integer | optional, 0 to 100 |
+| `columnWidths` | array of `{ column, pixels }` | optional, at most 100 |
 
 Output shape: `{ "change": PendingChange, "requiresConfirmation": boolean }`
 
-Diff shape (in `change.diff`): `{ "after": records }`.
+Diff shape (in `change.diff`): `{ "after": records }`, plus `"format": FormatPlan` when a
+formatting plan was bundled.
 
-Permission required: `write` (evaluated as the `append` action).
+Permission required: `write` (evaluated as the `append` action; when a format plan is
+bundled, the `format` action is also checked so its confirmation requirement applies).
 
 Example call:
 
@@ -472,18 +484,28 @@ Example call:
 
 ## `commit_change`
 
-Purpose: apply a previously previewed change. This is the only tool that writes to a
-table.
+Purpose: apply one or more previously previewed changes. This is the only tool that writes
+to a table.
 
-Input schema:
+Input schema (provide exactly one of the two forms):
 
 | Field | Type | Bounds |
 |---|---|---|
-| `changeId` | string | min length 1 |
+| `changeId` | string | single change; min length 1 |
+| `changeIds` | array of strings | batch; 1 to 100 change ids, committed in order |
 
-Output shape: `{ "change": PendingChange, "records": TableRecord[] }` where
-`change.status` is `"committed"` and `records` are the written rows (updates return only
-the records that actually existed; appends return the new records with generated ids).
+Output shape:
+- Single (`changeId`): `{ "change": PendingChange, "records": TableRecord[] }` where
+  `change.status` is `"committed"` and `records` are the written rows (updates return only
+  the records that actually existed; appends return the new records with generated ids).
+- Batch (`changeIds`): `{ "committed": CommitOutcome[] }`, one outcome per change in the
+  order requested. All ids are checked to exist before any write, so a typo fails the batch
+  before anything is committed; there is no cross-request rollback, so a failure partway
+  through leaves the already-committed changes applied.
+
+When an `append_records` change bundled a formatting plan and the rows committed but the
+styling step failed, the outcome carries `"formatError": string` (the rows are committed,
+so re-committing would duplicate them; retry the styling with `preview_format_table`).
 
 Permission required: `write`, re-checked at commit time against fresh rules with the
 same action evaluated at preview (`update` vs `bulk_update` vs `append`). Revoking write

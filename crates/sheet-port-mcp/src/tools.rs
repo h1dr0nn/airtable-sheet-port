@@ -45,6 +45,14 @@ struct PreviewOutput {
     requires_confirmation: bool,
 }
 
+/// Response for a batch `commit_change` (the plural `changeIds` form): one
+/// outcome per committed change, in the order requested.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitBatchOutput {
+    committed: Vec<changes::CommitOutcome>,
+}
+
 #[derive(Serialize)]
 struct EventsOutput {
     events: Vec<AuditEvent>,
@@ -201,20 +209,33 @@ pub fn preview_update_records(
 }
 
 pub fn append_records(state: &BrokerState, args: AppendRecordsArgs) -> Result<String, CoreError> {
-    args.validate()?;
+    let format = args.validate()?;
     state.with_conn(|conn, _registry| {
-        let requires_confirmation = permissions::assert_can_write(
+        let mut requires_confirmation = permissions::assert_can_write(
             conn,
             &args.source_id,
             &args.table_id,
             WriteAction::Append,
         )?;
+        // A bundled format plan is also a write; require confirmation if either
+        // the append or the format action asks for it.
+        if format.is_some() {
+            let format_requires = permissions::assert_can_write(
+                conn,
+                &args.source_id,
+                &args.table_id,
+                WriteAction::Format,
+            )?;
+            requires_confirmation = requires_confirmation || format_requires;
+        }
         let record_count = args.records.len();
-        let change = changes::create_append_change(
+        let has_format = format.is_some();
+        let change = changes::create_append_with_format(
             conn,
             &args.source_id,
             &args.table_id,
             args.records,
+            format,
             requires_confirmation,
         )?;
         audit::record(
@@ -226,6 +247,7 @@ pub fn append_records(state: &BrokerState, args: AppendRecordsArgs) -> Result<St
             Some(&json!({
                 "changeId": change.id,
                 "recordCount": record_count,
+                "hasFormat": has_format,
                 "requiresConfirmation": requires_confirmation,
             })),
         )?;
@@ -237,32 +259,55 @@ pub fn append_records(state: &BrokerState, args: AppendRecordsArgs) -> Result<St
 }
 
 pub fn commit_change(state: &BrokerState, args: &CommitChangeArgs) -> Result<String, CoreError> {
-    args.validate()?;
+    let change_ids = args.ids()?;
     state.with_conn(|conn, registry| {
-        let pending = changes::get_change(conn, &args.change_id)?
-            .ok_or_else(|| CoreError::NotFound(format!("Unknown change {}", args.change_id)))?;
-        // Pre-check with the raw change type (parity with the TypeScript
-        // tool); changes::commit re-checks with the exact preview action,
-        // including the bulk_update escalation.
-        permissions::assert_can_write(
-            conn,
-            &pending.source_id,
-            &pending.table_id,
-            write_action_for(pending.change_type),
-        )?;
-        let outcome = changes::commit(conn, registry, &args.change_id)?;
-        audit::record(
-            conn,
-            AuditActor::Agent,
-            "commit_change",
-            Some(&outcome.change.source_id),
-            Some(&outcome.change.table_id),
-            Some(&json!({
-                "changeId": args.change_id,
-                "recordCount": outcome.records.len(),
-            })),
-        )?;
-        pretty(&outcome)
+        // Pre-check each change's write permission with the raw change type
+        // (parity with the TypeScript tool); changes::commit re-checks with the
+        // exact preview action, including the bulk_update escalation.
+        for change_id in &change_ids {
+            let pending = changes::get_change(conn, change_id)?
+                .ok_or_else(|| CoreError::NotFound(format!("Unknown change {change_id}")))?;
+            permissions::assert_can_write(
+                conn,
+                &pending.source_id,
+                &pending.table_id,
+                write_action_for(pending.change_type),
+            )?;
+        }
+
+        if args.is_batch() {
+            let outcomes = changes::commit_many(conn, registry, &change_ids)?;
+            let record_count: usize = outcomes.iter().map(|outcome| outcome.records.len()).sum();
+            audit::record(
+                conn,
+                AuditActor::Agent,
+                "commit_change",
+                None,
+                None,
+                Some(&json!({
+                    "changeIds": change_ids,
+                    "count": outcomes.len(),
+                    "recordCount": record_count,
+                })),
+            )?;
+            pretty(&CommitBatchOutput {
+                committed: outcomes,
+            })
+        } else {
+            let outcome = changes::commit(conn, registry, &change_ids[0])?;
+            audit::record(
+                conn,
+                AuditActor::Agent,
+                "commit_change",
+                Some(&outcome.change.source_id),
+                Some(&outcome.change.table_id),
+                Some(&json!({
+                    "changeId": change_ids[0],
+                    "recordCount": outcome.records.len(),
+                })),
+            )?;
+            pretty(&outcome)
+        }
     })
 }
 

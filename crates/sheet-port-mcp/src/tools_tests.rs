@@ -144,7 +144,8 @@ fn commit_requires_approval_then_commits_once() {
         .expect("change id")
         .to_string();
     let commit_args = CommitChangeArgs {
-        change_id: change_id.clone(),
+        change_id: Some(change_id.clone()),
+        change_ids: None,
     };
 
     let blocked = commit_change(&state, &commit_args).expect_err("commit must be blocked");
@@ -202,7 +203,8 @@ fn commit_unknown_change_reports_contract_message() {
     let error = commit_change(
         &state,
         &CommitChangeArgs {
-            change_id: "chg_missing".to_string(),
+            change_id: Some("chg_missing".to_string()),
+            change_ids: None,
         },
     )
     .expect_err("unknown change must fail");
@@ -248,6 +250,7 @@ fn tools_self_record_audit_events() {
             source_id: "mock-source".to_string(),
             table_id: "customers".to_string(),
             records: vec![sheet_port_core::types::JsonMap::new()],
+            format: crate::args::FormatSpec::default(),
         },
     )
     .expect("append preview");
@@ -265,28 +268,99 @@ fn tools_self_record_audit_events() {
     assert!(actions.contains(&"append_records_preview"));
 }
 
+fn stage_append(state: &BrokerState) -> String {
+    let output = parse(
+        &append_records(
+            state,
+            AppendRecordsArgs {
+                source_id: "mock-source".to_string(),
+                table_id: "customers".to_string(),
+                records: vec![sheet_port_core::types::JsonMap::new()],
+                format: crate::args::FormatSpec::default(),
+            },
+        )
+        .expect("append preview"),
+    );
+    output["change"]["id"]
+        .as_str()
+        .expect("change id")
+        .to_string()
+}
+
+#[test]
+fn append_records_bundles_a_format_plan_into_the_change() {
+    let state = temp_state();
+    let output = parse(
+        &append_records(
+            &state,
+            AppendRecordsArgs {
+                source_id: "mock-source".to_string(),
+                table_id: "customers".to_string(),
+                records: vec![sheet_port_core::types::JsonMap::new()],
+                format: crate::args::FormatSpec {
+                    freeze_rows: Some(1),
+                    ..Default::default()
+                },
+            },
+        )
+        .expect("append preview"),
+    );
+    assert_eq!(
+        output["change"]["diff"]["format"]["freezeRows"], 1,
+        "the bundled plan is part of the staged change"
+    );
+}
+
+#[test]
+fn commit_change_commits_a_batch_of_changes_in_one_call() {
+    let state = temp_state();
+    let ids = vec![stage_append(&state), stage_append(&state)];
+
+    let output = parse(
+        &commit_change(
+            &state,
+            &CommitChangeArgs {
+                change_id: None,
+                change_ids: Some(ids),
+            },
+        )
+        .expect("batch commit"),
+    );
+
+    let committed = output["committed"].as_array().expect("committed array");
+    assert_eq!(committed.len(), 2);
+    assert!(
+        committed
+            .iter()
+            .all(|outcome| outcome["change"]["status"] == "committed"),
+        "every change in the batch is committed"
+    );
+}
+
 /// A representative formatting plan: a bold, filled, underlined header plus a
 /// frozen header row.
 fn format_args() -> FormatTableArgs {
     FormatTableArgs {
         source_id: "mock-source".to_string(),
         table_id: "customers".to_string(),
-        formats: vec![crate::args::CellFormatArg {
-            range: "A1:E1".to_string(),
-            bold: Some(true),
-            italic: None,
-            font_size: None,
-            font_color: None,
-            background_color: Some("#f3f4f6".to_string()),
-            horizontal_alignment: None,
-            number_format: None,
-            number_format_type: None,
-            wrap: None,
-            border: Some("bottom".to_string()),
-        }],
-        freeze_rows: Some(1),
-        freeze_columns: None,
-        column_widths: Vec::new(),
+        format: crate::args::FormatSpec {
+            formats: vec![crate::args::CellFormatArg {
+                range: "A1:E1".to_string(),
+                bold: Some(true),
+                italic: None,
+                font_size: None,
+                font_color: None,
+                background_color: Some("#f3f4f6".to_string()),
+                horizontal_alignment: None,
+                number_format: None,
+                number_format_type: None,
+                wrap: None,
+                border: Some("bottom".to_string()),
+            }],
+            freeze_rows: Some(1),
+            freeze_columns: None,
+            column_widths: Vec::new(),
+        },
     }
 }
 

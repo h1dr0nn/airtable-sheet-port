@@ -31,6 +31,11 @@ use crate::types::{
 pub enum ChangePayload {
     Append {
         records: Vec<JsonMap>,
+        /// Optional formatting applied in the same commit, right after the rows
+        /// land, so a fresh table can be written and styled in one call. Absent
+        /// on plain appends.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<FormatPlan>,
     },
     Update {
         patches: Vec<RecordPatch>,
@@ -49,6 +54,12 @@ pub enum ChangePayload {
 pub struct CommitOutcome {
     pub change: PendingChange,
     pub records: Vec<TableRecord>,
+    /// Set only when a bundled append+format commit wrote the rows but the
+    /// follow-up formatting failed. The rows are committed (so re-committing
+    /// would duplicate them); the styling can be retried with
+    /// preview_format_table. Absent on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_error: Option<String>,
 }
 
 // The internal `payload` column is intentionally absent: it must never reach
@@ -67,13 +78,39 @@ pub fn create_append_change(
     records: Vec<JsonMap>,
     requires_confirmation: bool,
 ) -> Result<PendingChange, CoreError> {
-    let diff = serde_json::json!({ "after": records });
+    create_append_with_format(
+        conn,
+        source_id,
+        table_id,
+        records,
+        None,
+        requires_confirmation,
+    )
+}
+
+/// Stages an append that optionally carries a formatting plan applied in the
+/// same commit (see [`ChangePayload::Append`]). The diff shows the appended
+/// rows and, when present, the format plan so the change is fully previewable.
+pub fn create_append_with_format(
+    conn: &Connection,
+    source_id: &str,
+    table_id: &str,
+    records: Vec<JsonMap>,
+    format: Option<FormatPlan>,
+    requires_confirmation: bool,
+) -> Result<PendingChange, CoreError> {
+    let mut diff = serde_json::json!({ "after": records });
+    if let Some(plan) = &format {
+        diff["format"] = serde_json::to_value(plan).map_err(|error| {
+            CoreError::Storage(format!("Could not encode format plan: {error}"))
+        })?;
+    }
     insert_change(
         conn,
         source_id,
         table_id,
         ChangeType::Append,
-        &ChangePayload::Append { records },
+        &ChangePayload::Append { records, format },
         diff,
         requires_confirmation,
     )
@@ -518,10 +555,45 @@ pub fn commit(
     let committed = get_change(conn, change_id)?.ok_or_else(|| {
         CoreError::Storage(format!("Change {change_id} disappeared after commit"))
     })?;
+    // Bundled append+format: the rows are already committed above, so a failure
+    // to apply the styling must NOT fail the commit (re-committing would
+    // duplicate the rows). Surface it via `format_error` instead so the caller
+    // can retry styling with preview_format_table.
+    let format_error = match &payload {
+        ChangePayload::Append {
+            format: Some(plan), ..
+        } => registry
+            .format_cells(conn, &change.source_id, &change.table_id, plan)
+            .err()
+            .map(|error| error.to_string()),
+        _ => None,
+    };
     Ok(CommitOutcome {
         change: committed,
         records,
+        format_error,
     })
+}
+
+/// Commits several staged changes in order, returning one outcome per id. All
+/// ids are checked to exist first so a typo fails before any write lands; after
+/// that each change commits through [`commit`], so a mid-sequence failure leaves
+/// the already-committed changes applied (there is no cross-request rollback in
+/// the Sheets API).
+pub fn commit_many(
+    conn: &Connection,
+    registry: &ConnectorRegistry,
+    change_ids: &[String],
+) -> Result<Vec<CommitOutcome>, CoreError> {
+    for change_id in change_ids {
+        if get_change(conn, change_id)?.is_none() {
+            return Err(CoreError::NotFound(format!("Unknown change {change_id}")));
+        }
+    }
+    change_ids
+        .iter()
+        .map(|change_id| commit(conn, registry, change_id))
+        .collect()
 }
 
 fn execute(
@@ -531,7 +603,9 @@ fn execute(
     payload: &ChangePayload,
 ) -> Result<Vec<TableRecord>, CoreError> {
     match payload {
-        ChangePayload::Append { records } => {
+        // A bundled format plan is applied by `commit` AFTER the rows are marked
+        // committed, so it is intentionally ignored here.
+        ChangePayload::Append { records, .. } => {
             registry.append_records(conn, &change.source_id, &change.table_id, records)
         }
         ChangePayload::Update { patches } => {

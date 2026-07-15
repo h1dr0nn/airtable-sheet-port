@@ -165,13 +165,24 @@ pub struct AppendRecordsArgs {
     pub source_id: String,
     pub table_id: String,
     pub records: Vec<JsonMap>,
+    /// Optional formatting (same fields as preview_format_table) applied in the
+    /// same commit as the append, so a fresh table is written and styled at once.
+    #[serde(flatten)]
+    pub format: FormatSpec,
 }
 
 impl AppendRecordsArgs {
-    pub fn validate(&self) -> Result<(), CoreError> {
+    /// Validates the append and returns the bundled format plan when the caller
+    /// supplied any formatting, or `None` for a plain append.
+    pub fn validate(&self) -> Result<Option<FormatPlan>, CoreError> {
         require_non_empty(&self.source_id, "sourceId")?;
         require_non_empty(&self.table_id, "tableId")?;
-        require_batch_size(self.records.len(), "records")
+        require_batch_size(self.records.len(), "records")?;
+        if self.format.is_present() {
+            Ok(Some(self.format.to_plan()?))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -210,11 +221,12 @@ pub struct ColumnWidthArg {
     pub pixels: i64,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+/// The formatting fields shared by `preview_format_table` and the optional
+/// formatting bundled into `append_records`. Flattened into both arg structs so
+/// the wire shape stays identical in either place.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct FormatTableArgs {
-    pub source_id: String,
-    pub table_id: String,
+pub struct FormatSpec {
     #[serde(default)]
     pub formats: Vec<CellFormatArg>,
     #[serde(default)]
@@ -225,12 +237,19 @@ pub struct FormatTableArgs {
     pub column_widths: Vec<ColumnWidthArg>,
 }
 
-impl FormatTableArgs {
+impl FormatSpec {
+    /// Whether the caller supplied any formatting at all (used to decide if an
+    /// append carries a bundled plan).
+    pub fn is_present(&self) -> bool {
+        !self.formats.is_empty()
+            || self.freeze_rows.is_some()
+            || self.freeze_columns.is_some()
+            || !self.column_widths.is_empty()
+    }
+
     /// Validates every bound and enum, then returns the typed [`FormatPlan`] the
     /// staged-change layer stores. Rejects an empty plan (nothing to format).
-    pub fn validate(&self) -> Result<FormatPlan, CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
-        require_non_empty(&self.table_id, "tableId")?;
+    pub fn to_plan(&self) -> Result<FormatPlan, CoreError> {
         if self.formats.len() > FORMAT_OPS_MAX {
             return Err(invalid(format!(
                 "formats must contain at most {FORMAT_OPS_MAX} items"
@@ -271,6 +290,24 @@ impl FormatTableArgs {
             ));
         }
         Ok(plan)
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatTableArgs {
+    pub source_id: String,
+    pub table_id: String,
+    #[serde(flatten)]
+    pub format: FormatSpec,
+}
+
+impl FormatTableArgs {
+    /// Validates ids and returns the typed [`FormatPlan`]; rejects an empty plan.
+    pub fn validate(&self) -> Result<FormatPlan, CoreError> {
+        require_non_empty(&self.source_id, "sourceId")?;
+        require_non_empty(&self.table_id, "tableId")?;
+        self.format.to_plan()
     }
 }
 
@@ -395,12 +432,47 @@ fn parse_border(value: &str, field: &str) -> Result<BorderStyle, CoreError> {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitChangeArgs {
-    pub change_id: String,
+    /// Single change to commit (back-compat form; returns one outcome).
+    #[serde(default)]
+    pub change_id: Option<String>,
+    /// Several changes to commit in one call (returns an array of outcomes).
+    #[serde(default)]
+    pub change_ids: Option<Vec<String>>,
 }
 
 impl CommitChangeArgs {
-    pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.change_id, "changeId")
+    /// The ordered list of change ids to commit, merging the singular and plural
+    /// forms. Rejects when neither is given, an id is empty, or the batch is
+    /// larger than [`WRITE_BATCH_MAX`].
+    pub fn ids(&self) -> Result<Vec<String>, CoreError> {
+        let mut ids = Vec::new();
+        if let Some(change_id) = &self.change_id {
+            require_non_empty(change_id, "changeId")?;
+            ids.push(change_id.clone());
+        }
+        if let Some(change_ids) = &self.change_ids {
+            for (index, change_id) in change_ids.iter().enumerate() {
+                require_non_empty(change_id, &format!("changeIds[{index}]"))?;
+                ids.push(change_id.clone());
+            }
+        }
+        if ids.is_empty() {
+            return Err(invalid(
+                "provide changeId (single) or changeIds (batch)".to_string(),
+            ));
+        }
+        if ids.len() > WRITE_BATCH_MAX {
+            return Err(invalid(format!(
+                "changeIds must contain at most {WRITE_BATCH_MAX} items"
+            )));
+        }
+        Ok(ids)
+    }
+
+    /// True when the caller used the plural `changeIds` form, which returns an
+    /// array of outcomes; the singular form returns a single outcome object.
+    pub fn is_batch(&self) -> bool {
+        self.change_ids.as_ref().is_some_and(|ids| !ids.is_empty())
     }
 }
 

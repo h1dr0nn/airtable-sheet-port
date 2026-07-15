@@ -82,7 +82,13 @@ fn append_change_is_pending_with_after_only_diff() {
     let payload = get_payload(&conn, &change.id)
         .expect("payload")
         .expect("stored");
-    assert_eq!(payload, ChangePayload::Append { records });
+    assert_eq!(
+        payload,
+        ChangePayload::Append {
+            records,
+            format: None
+        }
+    );
 }
 
 #[test]
@@ -228,6 +234,135 @@ fn commit_auto_approves_by_policy_when_no_confirmation_needed() {
     let page =
         crate::mock_data::list_records(&conn, SOURCE, TABLE, ReadOptions::default()).expect("read");
     assert_eq!(page.total, 4, "append must land in the mock store");
+}
+
+fn freeze_only_plan() -> FormatPlan {
+    FormatPlan {
+        formats: Vec::new(),
+        freeze_rows: Some(1),
+        freeze_columns: None,
+        column_widths: Vec::new(),
+    }
+}
+
+#[test]
+fn append_with_format_stores_the_plan_in_payload_and_diff() {
+    let conn = demo_db();
+    let plan = freeze_only_plan();
+    let change = create_append_with_format(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("Delta"))])],
+        Some(plan.clone()),
+        false,
+    )
+    .expect("create");
+
+    assert_eq!(
+        change.diff["format"]["freezeRows"],
+        json!(1),
+        "the format plan is part of the previewable diff"
+    );
+    let payload = get_payload(&conn, &change.id)
+        .expect("payload")
+        .expect("stored");
+    match payload {
+        ChangePayload::Append { format, .. } => assert_eq!(format, Some(plan)),
+        other => panic!("expected an append payload, got {other:?}"),
+    }
+}
+
+#[test]
+fn commit_append_with_format_commits_rows_then_reports_a_format_failure() {
+    let conn = demo_db();
+    let registry = registry();
+    set_rule(&conn, true, &[]);
+    let change = create_append_with_format(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("Delta"))])],
+        Some(freeze_only_plan()),
+        false,
+    )
+    .expect("create");
+
+    let outcome = commit(&conn, &registry, &change.id).expect("commit");
+
+    assert_eq!(outcome.change.status, ChangeStatus::Committed);
+    assert_eq!(outcome.records.len(), 1, "the rows are appended");
+    assert!(
+        outcome.format_error.is_some(),
+        "the mock connector cannot format, so the styling failure is surfaced not swallowed"
+    );
+    let page =
+        crate::mock_data::list_records(&conn, SOURCE, TABLE, ReadOptions::default()).expect("read");
+    assert_eq!(page.total, 4, "rows land despite the format step failing");
+}
+
+#[test]
+fn commit_many_commits_each_change_in_order() {
+    let conn = demo_db();
+    let registry = registry();
+    set_rule(&conn, true, &[]);
+    let first = create_append_change(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("A"))])],
+        false,
+    )
+    .expect("first");
+    let second = create_append_change(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("B"))])],
+        false,
+    )
+    .expect("second");
+
+    let outcomes =
+        commit_many(&conn, &registry, &[first.id.clone(), second.id.clone()]).expect("commit many");
+
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes
+        .iter()
+        .all(|outcome| outcome.change.status == ChangeStatus::Committed));
+    let page =
+        crate::mock_data::list_records(&conn, SOURCE, TABLE, ReadOptions::default()).expect("read");
+    assert_eq!(page.total, 5, "both appends land on top of the 3 seed rows");
+}
+
+#[test]
+fn commit_many_rejects_an_unknown_id_before_committing_any() {
+    let conn = demo_db();
+    let registry = registry();
+    set_rule(&conn, true, &[]);
+    let valid = create_append_change(
+        &conn,
+        SOURCE,
+        TABLE,
+        vec![fields(&[("Name", json!("A"))])],
+        false,
+    )
+    .expect("valid");
+
+    let error = commit_many(
+        &conn,
+        &registry,
+        &[valid.id.clone(), "chg_nope".to_string()],
+    )
+    .expect_err("an unknown id must fail the batch");
+
+    assert_eq!(error.to_string(), "Unknown change chg_nope");
+    let still = get_change(&conn, &valid.id).expect("get").expect("exists");
+    assert_eq!(
+        still.status,
+        ChangeStatus::Pending,
+        "the pre-flight existence check runs before any change is committed"
+    );
 }
 
 #[test]
@@ -405,7 +540,8 @@ fn commit_action_escalates_large_updates_to_bulk() {
         commit_action(
             ChangeType::Append,
             &ChangePayload::Append {
-                records: Vec::new()
+                records: Vec::new(),
+                format: None
             }
         ),
         WriteAction::Append

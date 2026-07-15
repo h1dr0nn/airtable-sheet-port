@@ -88,6 +88,7 @@ fn append_records_enforces_batch_bounds() {
         source_id: "s".to_string(),
         table_id: "t".to_string(),
         records,
+        format: FormatSpec::default(),
     };
     assert!(base(Vec::new()).validate().is_err(), "no records");
     let too_many: Vec<JsonMap> = (0..101).map(|_| json_map()).collect();
@@ -96,13 +97,67 @@ fn append_records_enforces_batch_bounds() {
 }
 
 #[test]
-fn commit_change_requires_change_id() {
-    let error = CommitChangeArgs {
-        change_id: String::new(),
-    }
-    .validate()
-    .expect_err("empty changeId must fail");
-    assert_eq!(error.to_string(), "changeId must be a non-empty string");
+fn append_records_carries_a_bundled_format_plan_when_present() {
+    let args = AppendRecordsArgs {
+        source_id: "s".to_string(),
+        table_id: "t".to_string(),
+        records: vec![json_map()],
+        format: FormatSpec {
+            freeze_rows: Some(1),
+            ..FormatSpec::default()
+        },
+    };
+    let plan = args.validate().expect("valid").expect("plan present");
+    assert_eq!(plan.freeze_rows, Some(1));
+
+    let plain = AppendRecordsArgs {
+        source_id: "s".to_string(),
+        table_id: "t".to_string(),
+        records: vec![json_map()],
+        format: FormatSpec::default(),
+    };
+    assert!(
+        plain.validate().expect("valid").is_none(),
+        "a plain append carries no plan"
+    );
+}
+
+#[test]
+fn commit_change_requires_at_least_one_id() {
+    let neither = CommitChangeArgs {
+        change_id: None,
+        change_ids: None,
+    };
+    assert_eq!(
+        neither
+            .ids()
+            .expect_err("neither id form given")
+            .to_string(),
+        "provide changeId (single) or changeIds (batch)"
+    );
+
+    let empty = CommitChangeArgs {
+        change_id: Some(String::new()),
+        change_ids: None,
+    };
+    assert_eq!(
+        empty.ids().expect_err("empty changeId").to_string(),
+        "changeId must be a non-empty string"
+    );
+
+    let single = CommitChangeArgs {
+        change_id: Some("chg_1".to_string()),
+        change_ids: None,
+    };
+    assert_eq!(single.ids().expect("valid"), vec!["chg_1".to_string()]);
+    assert!(!single.is_batch(), "singular form is not a batch");
+
+    let batch = CommitChangeArgs {
+        change_id: None,
+        change_ids: Some(vec!["chg_1".to_string(), "chg_2".to_string()]),
+    };
+    assert_eq!(batch.ids().expect("valid").len(), 2);
+    assert!(batch.is_batch(), "plural form is a batch");
 }
 
 #[test]
@@ -114,10 +169,8 @@ fn get_audit_log_applies_default_and_bounds() {
     assert!(base(Some(501)).validate().is_err(), "limit above 500");
 }
 
-fn empty_format_args() -> FormatTableArgs {
-    FormatTableArgs {
-        source_id: "s".to_string(),
-        table_id: "t".to_string(),
+fn empty_spec() -> FormatSpec {
+    FormatSpec {
         formats: Vec::new(),
         freeze_rows: None,
         freeze_columns: None,
@@ -142,28 +195,54 @@ fn cell_format_arg(range: &str) -> CellFormatArg {
 }
 
 #[test]
-fn format_table_rejects_a_plan_that_changes_nothing() {
-    assert!(
-        empty_format_args().validate().is_err(),
-        "an empty plan is rejected"
-    );
+fn format_spec_rejects_a_plan_that_changes_nothing() {
+    assert!(empty_spec().to_plan().is_err(), "an empty plan is rejected");
 }
 
 #[test]
-fn format_table_accepts_a_freeze_only_plan() {
-    let plan = FormatTableArgs {
+fn format_table_args_validate_ids_then_delegate() {
+    let missing_id = FormatTableArgs {
+        source_id: String::new(),
+        table_id: "t".to_string(),
+        format: FormatSpec {
+            freeze_rows: Some(1),
+            ..empty_spec()
+        },
+    };
+    assert_eq!(
+        missing_id
+            .validate()
+            .expect_err("empty sourceId")
+            .to_string(),
+        "sourceId must be a non-empty string"
+    );
+
+    let ok = FormatTableArgs {
+        source_id: "s".to_string(),
+        table_id: "t".to_string(),
+        format: FormatSpec {
+            freeze_rows: Some(1),
+            ..empty_spec()
+        },
+    };
+    assert_eq!(ok.validate().expect("valid").freeze_rows, Some(1));
+}
+
+#[test]
+fn format_spec_accepts_a_freeze_only_plan() {
+    let plan = FormatSpec {
         freeze_rows: Some(1),
-        ..empty_format_args()
+        ..empty_spec()
     }
-    .validate()
+    .to_plan()
     .expect("freeze-only plan is valid");
     assert_eq!(plan.freeze_rows, Some(1));
     assert!(plan.formats.is_empty());
 }
 
 #[test]
-fn format_table_validates_colors_alignment_border_and_range() {
-    let good = FormatTableArgs {
+fn format_spec_validates_colors_alignment_border_and_range() {
+    let good = FormatSpec {
         formats: vec![CellFormatArg {
             bold: Some(true),
             background_color: Some("#F3F4F6".to_string()),
@@ -171,9 +250,9 @@ fn format_table_validates_colors_alignment_border_and_range() {
             border: Some("BOTTOM".to_string()),
             ..cell_format_arg("A1:D1")
         }],
-        ..empty_format_args()
+        ..empty_spec()
     };
-    let plan = good.validate().expect("valid formatting");
+    let plan = good.to_plan().expect("valid formatting");
     let format = &plan.formats[0];
     assert_eq!(
         format.background_color.as_deref(),
@@ -186,66 +265,66 @@ fn format_table_validates_colors_alignment_border_and_range() {
     );
     assert_eq!(format.border, Some(BorderStyle::Bottom));
 
-    let bad_color = FormatTableArgs {
+    let bad_color = FormatSpec {
         formats: vec![CellFormatArg {
             background_color: Some("f3f4f6".to_string()),
             ..cell_format_arg("A1")
         }],
-        ..empty_format_args()
+        ..empty_spec()
     };
-    assert!(bad_color.validate().is_err(), "missing # is rejected");
+    assert!(bad_color.to_plan().is_err(), "missing # is rejected");
 
-    let bad_align = FormatTableArgs {
+    let bad_align = FormatSpec {
         formats: vec![CellFormatArg {
             horizontal_alignment: Some("justify".to_string()),
             ..cell_format_arg("A1")
         }],
-        ..empty_format_args()
+        ..empty_spec()
     };
     assert!(
-        bad_align.validate().is_err(),
+        bad_align.to_plan().is_err(),
         "unknown alignment is rejected"
     );
 
-    let bad_range = FormatTableArgs {
+    let bad_range = FormatSpec {
         formats: vec![cell_format_arg("not-a-range")],
-        ..empty_format_args()
+        ..empty_spec()
     };
-    assert!(bad_range.validate().is_err(), "a bad A1 range is rejected");
+    assert!(bad_range.to_plan().is_err(), "a bad A1 range is rejected");
 }
 
 #[test]
-fn format_table_enforces_numeric_bounds() {
-    let bad_freeze = FormatTableArgs {
+fn format_spec_enforces_numeric_bounds() {
+    let bad_freeze = FormatSpec {
         freeze_rows: Some(101),
-        ..empty_format_args()
+        ..empty_spec()
     };
-    assert!(bad_freeze.validate().is_err(), "freeze above the cap");
+    assert!(bad_freeze.to_plan().is_err(), "freeze above the cap");
 
-    let bad_font = FormatTableArgs {
+    let bad_font = FormatSpec {
         formats: vec![CellFormatArg {
             font_size: Some(0),
             ..cell_format_arg("A1")
         }],
-        ..empty_format_args()
+        ..empty_spec()
     };
-    assert!(bad_font.validate().is_err(), "font size below the minimum");
+    assert!(bad_font.to_plan().is_err(), "font size below the minimum");
 
-    let bad_width = FormatTableArgs {
+    let bad_width = FormatSpec {
         column_widths: vec![ColumnWidthArg {
             column: "A".to_string(),
             pixels: 1,
         }],
-        ..empty_format_args()
+        ..empty_spec()
     };
-    assert!(bad_width.validate().is_err(), "width below the minimum");
+    assert!(bad_width.to_plan().is_err(), "width below the minimum");
 
-    let ok_width = FormatTableArgs {
+    let ok_width = FormatSpec {
         column_widths: vec![ColumnWidthArg {
             column: "A".to_string(),
             pixels: 160,
         }],
-        ..empty_format_args()
+        ..empty_spec()
     };
-    assert!(ok_width.validate().is_ok());
+    assert!(ok_width.to_plan().is_ok());
 }
