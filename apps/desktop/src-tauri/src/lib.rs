@@ -52,6 +52,10 @@ pub fn run() {
             // Auto-start the managed sidecar so the server is running on launch
             // without the user clicking Start. Best-effort; never blocks startup.
             commands::auto_start_managed_sidecar(app.handle());
+            // Re-register the remembered MCP clients so their configs always
+            // point at the current sidecar (heals stale paths after updates and
+            // entries dropped by clients that rewrite their config on exit).
+            commands::reregister_mcp_clients(app.handle());
             Ok(())
         })
         .on_window_event(handle_window_event)

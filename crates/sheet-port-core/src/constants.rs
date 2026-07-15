@@ -66,6 +66,13 @@ pub const META_FLAG_ON: &str = "1";
 /// absent key for settings whose default is on (e.g. auto-approve-writes).
 pub const META_FLAG_OFF: &str = "0";
 
+/// Meta key holding the JSON array of MCP client ids the user has configured
+/// from this app. Remembered so every launch re-registers those clients: that
+/// heals a stale sidecar path after an app update AND our entry getting
+/// dropped by clients that rewrite their config file from memory on exit
+/// (Claude Desktop does this).
+pub const META_CONFIGURED_MCP_CLIENTS: &str = "configured_mcp_clients";
+
 /// Meta key for the UI font scale appearance preference. Absent means the
 /// default ("normal"). See docs/ipc.md "Settings".
 pub const META_UI_FONT_SCALE: &str = "ui_font_scale";

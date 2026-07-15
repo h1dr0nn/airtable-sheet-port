@@ -12,9 +12,9 @@ use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
     HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
-    META_CLOSE_BEHAVIOR, META_FLAG_OFF, META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT,
-    META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE, META_UI_LANGUAGE,
-    READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
+    META_CLOSE_BEHAVIOR, META_CONFIGURED_MCP_CLIENTS, META_FLAG_OFF, META_FLAG_ON,
+    META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY,
+    META_UI_FONT_SCALE, META_UI_LANGUAGE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
 use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
@@ -28,7 +28,7 @@ use sheet_port_core::workbench::{self, WorkbenchFolder, WorkbenchItem, Workbench
 use sheet_port_core::{
     audit, changes, db, google, heartbeat, mcp_clients, permissions, sources, vault, CoreError,
 };
-use tauri::State;
+use tauri::{Manager, State};
 
 const POISONED_LOCK_MESSAGE: &str = "Database connection is unavailable (poisoned lock)";
 const CLIENT_ID_MISSING_MESSAGE: &str =
@@ -590,12 +590,92 @@ pub fn mcp_detect_clients(state: Db<'_>) -> Result<Vec<DetectedClient>, String> 
     Ok(mcp_clients::detect_clients())
 }
 
+/// The MCP client ids the user has configured from this app, from meta.
+/// A missing or malformed value reads as an empty list.
+fn configured_client_ids(conn: &Connection) -> Vec<String> {
+    db::get_meta(conn, META_CONFIGURED_MCP_CLIENTS)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_configured_client_ids(conn: &Connection, ids: &[String]) -> Result<(), String> {
+    let raw = serde_json::to_string(ids).map_err(|error| error.to_string())?;
+    db::set_meta(conn, META_CONFIGURED_MCP_CLIENTS, &raw).map_err(|error| error.to_string())
+}
+
+/// Remembers a client the user configured so app launches re-register it.
+fn remember_configured_client(conn: &Connection, id: &str) -> Result<(), String> {
+    let mut ids = configured_client_ids(conn);
+    if !ids.iter().any(|existing| existing == id) {
+        ids.push(id.to_string());
+        save_configured_client_ids(conn, &ids)?;
+    }
+    Ok(())
+}
+
+fn forget_configured_client(conn: &Connection, id: &str) -> Result<(), String> {
+    let ids: Vec<String> = configured_client_ids(conn)
+        .into_iter()
+        .filter(|existing| existing != id)
+        .collect();
+    save_configured_client_ids(conn, &ids)
+}
+
+/// Re-registers every remembered client on app launch. Self-healing for two
+/// real failure modes: the sidecar path going stale after an app update, and
+/// clients that rewrite their config file from memory on exit (Claude Desktop)
+/// silently dropping our entry. Best-effort: per-client failures are logged
+/// and never block startup.
+pub fn reregister_mcp_clients(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<DbState>() else {
+        return;
+    };
+    let Ok(conn) = state.conn.lock() else {
+        return;
+    };
+    let ids = configured_client_ids(&conn);
+    if ids.is_empty() {
+        return;
+    }
+    let (spec, _bin, _exists) = match server_spec_for_config(&conn) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            eprintln!("[sheet-port] client re-register skipped: {error}");
+            return;
+        }
+    };
+    for id in ids {
+        match mcp_clients::configure_client(&id, &spec) {
+            Ok(path) => {
+                let _ = audit::record(
+                    &conn,
+                    AuditActor::System,
+                    MCP_CLIENT_CONFIGURED_ACTION,
+                    None,
+                    None,
+                    Some(&json!({
+                        "client": id,
+                        "configPath": path.to_string_lossy(),
+                        "reregisteredOnLaunch": true,
+                    })),
+                );
+            }
+            Err(error) => {
+                eprintln!("[sheet-port] re-register of MCP client {id} failed: {error}");
+            }
+        }
+    }
+}
+
 /// Writes our server entry into a single client's config, transport-aware.
 #[tauri::command]
 pub fn mcp_configure_client(state: Db<'_>, id: String) -> Result<ConfigureResult, String> {
     let conn = lock_conn(&state)?;
     let (spec, bin, binary_exists) = server_spec_for_config(&conn)?;
     let path = mcp_clients::configure_client(&id, &spec).map_err(|error| error.to_string())?;
+    remember_configured_client(&conn, &id)?;
     audit::record(
         &conn,
         AuditActor::User,
@@ -622,6 +702,7 @@ pub fn mcp_configure_client(state: Db<'_>, id: String) -> Result<ConfigureResult
 pub fn mcp_unregister_client(state: Db<'_>, id: String) -> Result<(), String> {
     let conn = lock_conn(&state)?;
     let removed = mcp_clients::unregister_client(&id).map_err(|error| error.to_string())?;
+    forget_configured_client(&conn, &id)?;
     audit::record(
         &conn,
         AuditActor::User,
@@ -654,6 +735,7 @@ pub fn mcp_configure_all(state: Db<'_>) -> Result<Vec<ConfigureResult>, String> 
     let mut results = Vec::with_capacity(targets.len());
     for id in targets {
         let path = mcp_clients::configure_client(&id, &spec).map_err(|error| error.to_string())?;
+        remember_configured_client(&conn, &id)?;
         audit::record(
             &conn,
             AuditActor::User,

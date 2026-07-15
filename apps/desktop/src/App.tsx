@@ -11,6 +11,7 @@ import { TranslationProvider } from "./i18n/useTranslation.js";
 import { useSidebarCollapsed } from "./hooks/useSidebarCollapsed.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useUpdate } from "./hooks/useUpdate.js";
+import { useUpdateRestartNotice } from "./hooks/useUpdateRestartNotice.js";
 import { isTauri } from "./lib/ipc.js";
 import type { ScreenId } from "./lib/nav.js";
 import { Changes } from "./screens/Changes.js";
@@ -30,6 +31,13 @@ const SCREENS: Record<ScreenId, ComponentType<ScreenProps>> = {
   changes: Changes,
   settings: Settings
 };
+
+/** Invisible: fires the post-update "restart your MCP clients" toast. Lives
+ * inside TranslationProvider so the hook can translate the message. */
+function UpdateRestartNotice() {
+  useUpdateRestartNotice();
+  return null;
+}
 
 export function App() {
   // Arms the theme store early so system-scheme changes apply app-wide,
@@ -101,6 +109,7 @@ export function App() {
         </div>
         <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} onNavigate={setScreen} />
         <CloseBehaviorDialog open={isCloseDialogOpen} onOpenChange={setIsCloseDialogOpen} />
+        <UpdateRestartNotice />
         <ToastViewport />
       </div>
     </TranslationProvider>

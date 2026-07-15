@@ -306,7 +306,7 @@ export const en = {
   "settings.mcpServer.title": "MCP Server",
   "settings.mcpServer.transport": "Transport",
   "settings.mcpServer.transportDescription":
-    "Stdio spawns the sidecar per client; Local HTTP serves one shared endpoint.",
+    "Stdio spawns the sidecar per client; Local HTTP serves one shared endpoint. After app updates, Local HTTP picks up new tools automatically, while stdio clients must be restarted.",
   "settings.mcpServer.transportAria": "MCP Transport",
   "settings.mcpServer.transportStdio": "Stdio",
   "settings.mcpServer.transportHttp": "Local HTTP",
@@ -447,6 +447,8 @@ export const en = {
   "toast.autoApproveError": "Auto-approve not updated",
   "toast.autoApproveEnabled": "Auto-approve enabled",
   "toast.autoApproveDisabled": "Auto-approve disabled",
+  "toast.updatedRestartClients":
+    "Updated to v{version}. Restart your MCP clients (Claude Desktop, Claude Code, ...) to load the new tools.",
   "toast.fontSizeError": "Font size not updated",
   "toast.fontError": "Font not updated",
   "toast.languageError": "Language not updated",
@@ -812,7 +814,7 @@ const vi: Dictionary = {
   "settings.mcpServer.title": "Máy chủ MCP",
   "settings.mcpServer.transport": "Giao thức truyền",
   "settings.mcpServer.transportDescription":
-    "Stdio khởi chạy sidecar cho mỗi client; Local HTTP phục vụ một endpoint dùng chung.",
+    "Stdio khởi chạy sidecar cho mỗi client; Local HTTP phục vụ một endpoint dùng chung. Sau khi cập nhật app, Local HTTP tự nhận tool mới, còn client stdio phải khởi động lại.",
   "settings.mcpServer.transportAria": "Giao thức truyền MCP",
   "settings.mcpServer.transportStdio": "Stdio",
   "settings.mcpServer.transportHttp": "HTTP cục bộ",
@@ -953,6 +955,8 @@ const vi: Dictionary = {
   "toast.autoApproveError": "Không cập nhật được auto-approve",
   "toast.autoApproveEnabled": "Đã bật auto-approve",
   "toast.autoApproveDisabled": "Đã tắt auto-approve",
+  "toast.updatedRestartClients":
+    "Đã cập nhật lên v{version}. Khởi động lại MCP client (Claude Desktop, Claude Code, ...) để nạp tool mới.",
   "toast.fontSizeError": "Không cập nhật được cỡ chữ",
   "toast.fontError": "Không cập nhật được phông chữ",
   "toast.languageError": "Không cập nhật được ngôn ngữ",
