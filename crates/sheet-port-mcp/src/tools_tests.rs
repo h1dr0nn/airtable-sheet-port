@@ -288,6 +288,27 @@ fn stage_append(state: &BrokerState) -> String {
 }
 
 #[test]
+fn read_formulas_is_unsupported_on_the_mock_connector() {
+    let state = temp_state();
+    let error = read_formulas(
+        &state,
+        &ReadTableArgs {
+            source_id: "mock-source".to_string(),
+            table_id: "customers".to_string(),
+            limit: None,
+            offset: None,
+        },
+    )
+    .expect_err("the mock connector cannot read formulas");
+    assert!(
+        error
+            .to_string()
+            .contains("does not support reading formulas"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn append_records_bundles_a_format_plan_into_the_change() {
     let state = temp_state();
     let output = parse(

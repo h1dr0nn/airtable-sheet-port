@@ -1,4 +1,4 @@
-//! The 11 broker tools (docs/mcp-tools.md): permission checks in a fixed order,
+//! The broker tools (docs/mcp-tools.md): permission checks in a fixed order,
 //! an audit event per call, and pretty-printed JSON output. Each function
 //! returns the JSON text of the tool result; errors bubble as `CoreError` and
 //! the transport layer turns them into MCP tool errors.
@@ -131,6 +131,27 @@ pub fn read_table(state: &BrokerState, args: &ReadTableArgs) -> Result<String, C
             conn,
             AuditActor::Agent,
             "read_table",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            Some(&json!({ "limit": limit, "offset": offset, "count": records.len() })),
+        )?;
+        pretty(&RecordsOutput { records })
+    })
+}
+
+pub fn read_formulas(state: &BrokerState, args: &ReadTableArgs) -> Result<String, CoreError> {
+    let (limit, offset) = args.validate()?;
+    state.with_conn(|conn, registry| {
+        permissions::assert_can_read(conn, &args.source_id, Some(&args.table_id))?;
+        let options = ReadOptions {
+            limit: Some(limit),
+            offset: Some(offset),
+        };
+        let records = registry.read_formulas(conn, &args.source_id, &args.table_id, options)?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "read_formulas",
             Some(&args.source_id),
             Some(&args.table_id),
             Some(&json!({ "limit": limit, "offset": offset, "count": records.len() })),

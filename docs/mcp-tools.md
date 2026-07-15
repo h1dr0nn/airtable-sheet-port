@@ -1,6 +1,6 @@
 # MCP Tools
 
-The Rust sidecar (`crates/sheet-port-mcp`) registers exactly 11 tools. All input
+The Rust sidecar (`crates/sheet-port-mcp`) registers 12 tools. All input
 schemas are provider-neutral (generated via `schemars`, with every bound enforced in
 `src/args.rs`); none expose raw Google or provider APIs. Every tool returns a single
 text content block containing pretty-printed JSON with the shapes below. Every call
@@ -40,8 +40,8 @@ and `bulk_update`.
 ## Google Sheets `tableId` forms
 
 For a Google Sheets source, every table tool (`describe_table`, `read_table`,
-`find_records`, `get_table_style`, `preview_update_records`, `append_records`,
-`preview_format_table`) accepts the `tableId` in any
+`read_formulas`, `find_records`, `get_table_style`, `preview_update_records`,
+`append_records`, `preview_format_table`) accepts the `tableId` in any
 of these forms. This lets an agent paste a spreadsheet link the user shared and read the
 exact tab without extra lookups:
 
@@ -206,6 +206,28 @@ Example response:
   ]
 }
 ```
+
+## `read_formulas`
+
+Purpose: read records like `read_table`, but with each cell's raw formula preserved - a
+formula cell returns its `=...` text instead of the computed value (read-only). Use it
+before overwriting cells that may be computed, so the formula logic is visible and not
+clobbered. Same `tableId` forms and paging (`limit`/`offset`) as `read_table`.
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `tableId` | string | min length 1 |
+| `limit` | integer | optional, 1 to 500 (default 100) |
+| `offset` | integer | optional, >= 0 (default 0) |
+
+Output shape: `{ "records": TableRecord[] }` where a field value is the cell's formula
+string when it holds one, else its literal value.
+
+Permission required: `read` on the source/table. Only the Google Sheets connector supports
+this; others return an Unsupported error.
 
 ## `find_records`
 

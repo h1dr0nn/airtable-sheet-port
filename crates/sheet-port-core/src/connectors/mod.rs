@@ -58,6 +58,22 @@ pub trait TableConnector: Send + Sync {
         patches: &[RecordPatch],
     ) -> Result<Vec<TableRecord>, CoreError>;
 
+    /// Read cells with their formulas preserved (raw `=...` strings) instead of
+    /// the computed values, record-shaped like [`read_table`](Self::read_table),
+    /// so an agent can see and keep formula logic before overwriting a cell.
+    /// Connectors that cannot read formulas inherit the Unsupported default.
+    fn read_formulas(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _options: ReadOptions,
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support reading formulas".to_string(),
+        ))
+    }
+
     // -----------------------------------------------------------------------
     // Workbench grid access (docs/ipc.md "Workbench"). These are DIRECT reads
     // and writes with no pending-change/approval flow: the desktop user is the
@@ -236,6 +252,17 @@ impl ConnectorRegistry {
     ) -> Result<Vec<TableRecord>, CoreError> {
         self.for_source(conn, source_id)?
             .find_records(conn, source_id, table_id, query)
+    }
+
+    pub fn read_formulas(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        options: ReadOptions,
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        self.for_source(conn, source_id)?
+            .read_formulas(conn, source_id, table_id, options)
     }
 
     pub fn append_records(

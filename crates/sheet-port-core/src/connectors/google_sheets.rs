@@ -42,6 +42,10 @@ const RECORD_ID_PREFIX: &str = "row_";
 /// Values API `valueInputOption`: write cell values exactly as sent.
 const VALUE_INPUT_RAW: &str = "RAW";
 
+/// Values API `valueRenderOption`: return each cell's raw formula (`=...`)
+/// instead of its computed value (used by `read_formulas`).
+const VALUE_RENDER_FORMULA: &str = "FORMULA";
+
 /// Separator between a spreadsheet id and a sheet selector in a tableId
 /// (`{spreadsheetId}:{gid}` or `{spreadsheetId}:{SheetName}`).
 const TABLE_ID_SELECTOR_SEPARATOR: char = ':';
@@ -219,6 +223,33 @@ impl TableConnector for GoogleSheetsConnector {
             })
             .take(FIND_RECORDS_LIMIT)
             .collect())
+    }
+
+    /// Record-shaped read like [`read_table`](Self::read_table) but with the
+    /// `FORMULA` render option, so formula cells return their raw `=...` text.
+    fn read_formulas(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        options: ReadOptions,
+    ) -> Result<Vec<TableRecord>, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let header = self.fetch_header(&token, &sheet)?;
+        if header.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let offset = options.offset.unwrap_or(0).max(0);
+        let start_row = FIRST_DATA_ROW + offset;
+        let range = match options.limit {
+            Some(limit) if limit <= 0 => return Ok(Vec::new()),
+            Some(limit) => format!("A{start_row}:{LAST_COLUMN}{}", start_row + limit - 1),
+            None => format!("A{start_row}:{LAST_COLUMN}"),
+        };
+        let rows = fetch_formula_values(&token, &sheet.spreadsheet_id, &sheet.range(&range))?;
+        Ok(records_from_rows(&header, &rows, start_row))
     }
 
     /// `values.append` with RAW input; each record becomes one row with cells
@@ -915,12 +946,38 @@ fn fetch_values(
     range: &str,
 ) -> Result<Vec<Vec<Value>>, CoreError> {
     let url = values_get_url(spreadsheet_id, range)?;
-    let body = google::get_json(token, url.as_str())?;
-    let rows = body["values"].as_array().cloned().unwrap_or_default();
-    Ok(rows
+    Ok(rows_from_values_body(&google::get_json(
+        token,
+        url.as_str(),
+    )?))
+}
+
+/// Like [`fetch_values`] but with `valueRenderOption=FORMULA`, so a cell holding
+/// a formula comes back as its raw `=...` string instead of the computed value.
+fn fetch_formula_values(
+    token: &str,
+    spreadsheet_id: &str,
+    range: &str,
+) -> Result<Vec<Vec<Value>>, CoreError> {
+    let mut url = values_get_url(spreadsheet_id, range)?;
+    url.query_pairs_mut()
+        .append_pair("valueRenderOption", VALUE_RENDER_FORMULA);
+    Ok(rows_from_values_body(&google::get_json(
+        token,
+        url.as_str(),
+    )?))
+}
+
+/// Extracts the `values` 2D array from a `spreadsheets.values.get` body,
+/// defaulting missing rows/cells to empty.
+fn rows_from_values_body(body: &Value) -> Vec<Vec<Value>> {
+    body["values"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
         .into_iter()
         .map(|row| row.as_array().cloned().unwrap_or_default())
-        .collect())
+        .collect()
 }
 
 /// `{SHEETS_ENDPOINT}/{id}/values/{range}` with the id and range pushed as
@@ -1669,6 +1726,23 @@ mod tests {
             existing,
             vec![vec![json!("Aurora"), json!(4)]],
             "an existing header is not rewritten"
+        );
+    }
+
+    #[test]
+    fn rows_from_values_body_extracts_the_2d_array_and_defaults_empties() {
+        let body = json!({ "values": [["=SUM(A1:A2)", "x"], ["1"]] });
+        let rows = rows_from_values_body(&body);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0][0],
+            json!("=SUM(A1:A2)"),
+            "formulas pass through raw"
+        );
+        assert_eq!(rows[1].len(), 1, "short rows are kept as-is");
+        assert!(
+            rows_from_values_body(&json!({})).is_empty(),
+            "a body with no values is an empty grid"
         );
     }
 
