@@ -13,7 +13,7 @@ resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 # "bundled" compiles SQLite from source so no process depends on a system SQLite.
 rusqlite = { version = "0.37", features = ["bundled"] }
 # chrono chosen over `time` for RFC 3339 parsing of sidecar-written timestamps.

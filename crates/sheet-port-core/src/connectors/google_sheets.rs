@@ -223,6 +223,11 @@ impl TableConnector for GoogleSheetsConnector {
 
     /// `values.append` with RAW input; each record becomes one row with cells
     /// ordered by the header. Row ids come from the API's updatedRange.
+    ///
+    /// On an empty sheet (no header row yet) the field names of the incoming
+    /// records seed row 1 as the header before the records are appended below
+    /// it, so a fresh tab can be populated in one call - matching the Airtable
+    /// model where the record fields define the columns.
     fn append_records(
         &self,
         conn: &Connection,
@@ -235,18 +240,24 @@ impl TableConnector for GoogleSheetsConnector {
         }
         let token = google::access_token(conn, source_id)?;
         let sheet = ResolvedSheet::resolve(&token, table_id)?;
-        let header = self.fetch_header(&token, &sheet)?;
+        let existing_header = self.fetch_header(&token, &sheet)?;
+
+        // Empty sheet: derive the header from the record fields and write it as
+        // row 1. Otherwise map onto the header already in the sheet.
+        let seed_header = existing_header.is_empty();
+        let header = if seed_header {
+            header_from_records(records)
+        } else {
+            existing_header
+        };
         if header.is_empty() {
             return Err(CoreError::InvalidInput(format!(
-                "Spreadsheet {} has no header row to map fields onto",
+                "Cannot append to spreadsheet {}: the sheet is empty and the records carry no fields to build a header from",
                 sheet.spreadsheet_id
             )));
         }
 
-        let values: Vec<Vec<Value>> = records
-            .iter()
-            .map(|fields| row_values(&header, fields))
-            .collect();
+        let values = append_values(&header, records, seed_header);
         let url = values_append_url(
             &sheet.spreadsheet_id,
             &sheet.range(&format!("A{HEADER_ROW}")),
@@ -261,11 +272,18 @@ impl TableConnector for GoogleSheetsConnector {
                     "Google Sheets append response had no usable updatedRange".to_string(),
                 )
             })?;
+        // When we seeded the header it occupies `start_row`, so the records land
+        // on the row after it.
+        let first_record_row = if seed_header {
+            start_row + 1
+        } else {
+            start_row
+        };
         Ok(records
             .iter()
             .enumerate()
             .map(|(index, fields)| TableRecord {
-                id: record_id_for(start_row + index as i64),
+                id: record_id_for(first_record_row + index as i64),
                 fields: fields.clone(),
             })
             .collect())
@@ -289,7 +307,7 @@ impl TableConnector for GoogleSheetsConnector {
         let header = self.fetch_header(&token, &sheet)?;
         if header.is_empty() {
             return Err(CoreError::InvalidInput(format!(
-                "Spreadsheet {} has no header row to map fields onto",
+                "Spreadsheet {} is empty, so there are no records to update; use append_records to create the table first",
                 sheet.spreadsheet_id
             )));
         }
@@ -1041,6 +1059,32 @@ fn parse_start_row_from_range(range: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+/// Header field names for an empty sheet: the union of the records' field keys
+/// in first-seen order (serde_json's `preserve_order` keeps each record's JSON
+/// key order, so the columns follow the order the caller sent).
+fn header_from_records(records: &[JsonMap]) -> Vec<String> {
+    let mut header = Vec::new();
+    for record in records {
+        for key in record.keys() {
+            if !header.iter().any(|seen| seen == key) {
+                header.push(key.clone());
+            }
+        }
+    }
+    header
+}
+
+/// The `values` rows for an append: the record rows ordered by the header, with
+/// the header itself prepended as row 1 when we are seeding an empty sheet.
+fn append_values(header: &[String], records: &[JsonMap], seed_header: bool) -> Vec<Vec<Value>> {
+    let mut values = Vec::with_capacity(records.len() + usize::from(seed_header));
+    if seed_header {
+        values.push(header.iter().map(|name| json!(name)).collect());
+    }
+    values.extend(records.iter().map(|fields| row_values(header, fields)));
+    values
+}
+
 /// One sheet row ordered by the header; absent and null fields write as empty
 /// strings so RAW updates clear cells instead of skipping them.
 fn row_values(header: &[String], fields: &JsonMap) -> Vec<Value> {
@@ -1574,6 +1618,58 @@ mod tests {
         let values = row_values(&names, &fields);
 
         assert_eq!(values, vec![json!("Aurora"), json!(""), json!(true)]);
+    }
+
+    #[test]
+    fn header_from_records_unions_keys_in_first_seen_order() {
+        let mut first = JsonMap::new();
+        first.insert("Name".to_string(), json!("Aurora"));
+        first.insert("Seats".to_string(), json!(4));
+        let mut second = JsonMap::new();
+        second.insert("Name".to_string(), json!("Borealis"));
+        second.insert("Active".to_string(), json!(true));
+
+        let header = header_from_records(&[first, second]);
+
+        assert_eq!(
+            header,
+            vec![
+                "Name".to_string(),
+                "Seats".to_string(),
+                "Active".to_string()
+            ],
+            "keys union across records, each in first-seen order"
+        );
+    }
+
+    #[test]
+    fn header_from_records_is_empty_when_no_record_has_fields() {
+        assert!(header_from_records(&[JsonMap::new(), JsonMap::new()]).is_empty());
+    }
+
+    #[test]
+    fn append_values_prepends_the_header_row_when_seeding() {
+        let names = header(&["Name", "Seats"]);
+        let mut record = JsonMap::new();
+        record.insert("Name".to_string(), json!("Aurora"));
+        record.insert("Seats".to_string(), json!(4));
+
+        let seeded = append_values(&names, std::slice::from_ref(&record), true);
+        assert_eq!(
+            seeded,
+            vec![
+                vec![json!("Name"), json!("Seats")],
+                vec![json!("Aurora"), json!(4)],
+            ],
+            "row 1 is the header, the record follows"
+        );
+
+        let existing = append_values(&names, std::slice::from_ref(&record), false);
+        assert_eq!(
+            existing,
+            vec![vec![json!("Aurora"), json!(4)]],
+            "an existing header is not rewritten"
+        );
     }
 
     #[test]
