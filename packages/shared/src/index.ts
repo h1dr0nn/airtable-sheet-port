@@ -45,6 +45,7 @@ export type ChangeType =
   | "update"
   | "delete"
   | "format"
+  | "update_cells"
   | "create_spreadsheet"
   | "create_sheet"
   | "delete_sheet";

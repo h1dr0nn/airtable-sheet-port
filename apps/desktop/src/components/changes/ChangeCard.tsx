@@ -36,6 +36,7 @@ const TYPE_VARIANTS: Record<ChangeType, BadgeVariant> = {
   update: "default",
   delete: "danger",
   format: "default",
+  update_cells: "default",
   create_spreadsheet: "default",
   create_sheet: "default",
   delete_sheet: "danger"

@@ -335,6 +335,55 @@ fn commit_many_commits_each_change_in_order() {
     assert_eq!(page.total, 5, "both appends land on top of the 3 seed rows");
 }
 
+#[test]
+fn update_cells_change_previews_each_cell_write() {
+    let conn = demo_db();
+    let cells = vec![CellWrite {
+        column: "E".to_string(),
+        row: 48,
+        value: "350h".to_string(),
+    }];
+
+    let change =
+        create_update_cells_change(&conn, SOURCE, TABLE, cells.clone(), false).expect("create");
+
+    assert_eq!(change.change_type, ChangeType::UpdateCells);
+    assert_eq!(
+        change.diff,
+        json!({ "cells": [{ "cell": "E48", "value": "350h" }] })
+    );
+    let payload = get_payload(&conn, &change.id)
+        .expect("payload")
+        .expect("stored");
+    assert_eq!(payload, ChangePayload::UpdateCells { cells });
+}
+
+#[test]
+fn commit_update_cells_writes_the_targeted_mock_cell() {
+    let conn = demo_db();
+    let registry = registry();
+    set_rule(&conn, true, &[]);
+    // Cell B2 = data row 1, column B (the Email field on the demo fixture).
+    let cells = vec![CellWrite {
+        column: "B".to_string(),
+        row: 2,
+        value: "edited@cell.dev".to_string(),
+    }];
+    let change = create_update_cells_change(&conn, SOURCE, TABLE, cells, false).expect("create");
+
+    let outcome = commit(&conn, &registry, &change.id).expect("commit");
+
+    assert_eq!(outcome.change.status, ChangeStatus::Committed);
+    assert!(outcome.records.is_empty(), "cell writes carry no records");
+    let page =
+        crate::mock_data::list_records(&conn, SOURCE, TABLE, ReadOptions::default()).expect("read");
+    assert_eq!(
+        page.records[0].fields.get("Email"),
+        Some(&json!("edited@cell.dev")),
+        "the cell write must land on the mock record"
+    );
+}
+
 /// A source-wide rule (table_id = null) so source-level actions like
 /// create_spreadsheet resolve a write permission.
 fn set_source_rule(conn: &Connection, write: bool, delete: bool) {

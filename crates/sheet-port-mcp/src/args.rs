@@ -5,14 +5,14 @@
 
 use schemars::JsonSchema;
 use serde::Deserialize;
-use sheet_port_core::connectors::validate_a1_range;
+use sheet_port_core::connectors::{parse_cell_ref, validate_a1_range};
 use sheet_port_core::constants::{
     AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, FIND_QUERY_MAX_LEN,
     FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX, FREEZE_MAX, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
     READ_LIMIT_MIN, WRITE_BATCH_MAX,
 };
 use sheet_port_core::types::{
-    BorderStyle, CellFormat, ColumnWidth, FormatPlan, HorizontalAlignment, JsonMap,
+    BorderStyle, CellFormat, CellWrite, ColumnWidth, FormatPlan, HorizontalAlignment, JsonMap,
     NumberFormatType,
 };
 use sheet_port_core::CoreError;
@@ -478,6 +478,9 @@ impl CommitChangeArgs {
 
 /// Max length of a spreadsheet or sheet-tab title an agent may request.
 const TITLE_MAX_LEN: usize = 200;
+/// Max characters of a single coordinate-level cell value (Sheets' own cell
+/// limit is 50k characters).
+const CELL_VALUE_MAX_LEN: usize = 50_000;
 
 fn require_title(title: &str) -> Result<(), CoreError> {
     let length = title.chars().count();
@@ -487,6 +490,53 @@ fn require_title(title: &str) -> Result<(), CoreError> {
         )));
     }
     Ok(())
+}
+
+/// One agent-supplied cell write: an A1 reference plus the value to type.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CellWriteArg {
+    /// A1 cell reference like "E48".
+    pub cell: String,
+    /// Value typed into the cell (USER_ENTERED: numbers parse as numbers, a
+    /// leading `=` becomes a formula, anything else is text).
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCellsArgs {
+    pub source_id: String,
+    pub table_id: String,
+    pub cells: Vec<CellWriteArg>,
+}
+
+impl UpdateCellsArgs {
+    /// Validates ids, batch bounds, and every cell reference, returning the
+    /// typed writes the staged-change layer stores.
+    pub fn validate(&self) -> Result<Vec<CellWrite>, CoreError> {
+        require_non_empty(&self.source_id, "sourceId")?;
+        require_non_empty(&self.table_id, "tableId")?;
+        require_batch_size(self.cells.len(), "cells")?;
+        self.cells
+            .iter()
+            .enumerate()
+            .map(|(index, write)| {
+                let (column, row) = parse_cell_ref(&write.cell)
+                    .map_err(|error| invalid(format!("cells[{index}].cell: {error}")))?;
+                if write.value.chars().count() > CELL_VALUE_MAX_LEN {
+                    return Err(invalid(format!(
+                        "cells[{index}].value must be at most {CELL_VALUE_MAX_LEN} characters"
+                    )));
+                }
+                Ok(CellWrite {
+                    column,
+                    row,
+                    value: write.value.clone(),
+                })
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

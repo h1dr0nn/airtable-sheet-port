@@ -15,7 +15,7 @@ use sheet_port_core::{audit, changes, permissions, CoreError};
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
     FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, PreviewUpdateArgs,
-    ReadTableArgs, SourceTableArgs,
+    ReadTableArgs, SourceTableArgs, UpdateCellsArgs,
 };
 use crate::state::BrokerState;
 
@@ -137,6 +137,103 @@ pub fn read_table(state: &BrokerState, args: &ReadTableArgs) -> Result<String, C
             Some(&json!({ "limit": limit, "offset": offset, "count": records.len() })),
         )?;
         pretty(&RecordsOutput { records })
+    })
+}
+
+/// One `read_cells` row: the 1-based sheet row number plus its string cells
+/// keyed by A1 column letter.
+#[derive(Serialize)]
+struct CellsRow {
+    row: i64,
+    cells: sheet_port_core::types::GridRow,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CellsOutput {
+    /// A1 column letters present in the window.
+    columns: Vec<String>,
+    rows: Vec<CellsRow>,
+    /// Total sheet rows ignoring limit/offset.
+    total_rows: i64,
+}
+
+/// Raw coordinate-level read: every cell of the tab from row 1, keyed by A1
+/// letter, with NO header/record interpretation - the escape hatch for
+/// document-style sheets the record model cannot see.
+pub fn read_cells(state: &BrokerState, args: &ReadTableArgs) -> Result<String, CoreError> {
+    let (limit, offset) = args.validate()?;
+    state.with_conn(|conn, registry| {
+        permissions::assert_can_read(conn, &args.source_id, Some(&args.table_id))?;
+        let grid = registry.read_grid(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            Some(limit),
+            Some(offset),
+        )?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "read_cells",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            Some(&json!({ "limit": limit, "offset": offset, "count": grid.rows.len() })),
+        )?;
+        let rows = grid
+            .rows
+            .into_iter()
+            .enumerate()
+            // Grid rows start at sheet row 1; the window shifts by `offset`.
+            .map(|(index, cells)| CellsRow {
+                row: offset + index as i64 + 1,
+                cells,
+            })
+            .collect();
+        pretty(&CellsOutput {
+            columns: grid.columns.into_iter().map(|column| column.id).collect(),
+            rows,
+            total_rows: grid.total_rows,
+        })
+    })
+}
+
+pub fn preview_update_cells(
+    state: &BrokerState,
+    args: UpdateCellsArgs,
+) -> Result<String, CoreError> {
+    let cells = args.validate()?;
+    state.with_conn(|conn, _registry| {
+        let requires_confirmation = permissions::assert_can_write(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            WriteAction::Update,
+        )?;
+        let cell_count = cells.len();
+        let change = changes::create_update_cells_change(
+            conn,
+            &args.source_id,
+            &args.table_id,
+            cells,
+            requires_confirmation,
+        )?;
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "preview_update_cells",
+            Some(&args.source_id),
+            Some(&args.table_id),
+            Some(&json!({
+                "changeId": change.id,
+                "cellCount": cell_count,
+                "requiresConfirmation": requires_confirmation,
+            })),
+        )?;
+        pretty(&PreviewOutput {
+            change,
+            requires_confirmation,
+        })
     })
 }
 
@@ -527,6 +624,8 @@ fn write_action_for(change_type: ChangeType) -> WriteAction {
         ChangeType::Update => WriteAction::Update,
         ChangeType::Delete => WriteAction::Delete,
         ChangeType::Format => WriteAction::Format,
+        // Cell writes are updates for permission purposes.
+        ChangeType::UpdateCells => WriteAction::Update,
         ChangeType::CreateSpreadsheet => WriteAction::CreateSpreadsheet,
         ChangeType::CreateSheet => WriteAction::CreateSheet,
         ChangeType::DeleteSheet => WriteAction::DeleteSheet,

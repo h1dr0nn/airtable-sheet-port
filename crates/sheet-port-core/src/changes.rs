@@ -17,8 +17,8 @@ use crate::db::{get_meta, now_iso};
 use crate::error::{db_error, parse_json, CoreError};
 use crate::permissions;
 use crate::types::{
-    AuditActor, ChangeDecider, ChangeStatus, ChangeType, CreatedResource, FormatPlan, JsonMap,
-    PendingChange, ReadOptions, RecordPatch, TableRecord, WriteAction,
+    AuditActor, CellWrite, ChangeDecider, ChangeStatus, ChangeType, CreatedResource, FormatPlan,
+    JsonMap, PendingChange, ReadOptions, RecordPatch, TableRecord, WriteAction,
 };
 
 /// Internal write payload; persisted alongside a change but never returned to
@@ -46,6 +46,11 @@ pub enum ChangePayload {
     },
     Format {
         plan: FormatPlan,
+    },
+    /// Coordinate-level cell writes (A1 addressed, USER_ENTERED). The escape
+    /// hatch for document-style sheets the record model cannot address.
+    UpdateCells {
+        cells: Vec<CellWrite>,
     },
     /// Create a brand-new spreadsheet (source-level; the change's table_id is
     /// empty). Commit returns the new spreadsheet id/url.
@@ -179,6 +184,33 @@ pub fn create_format_change(
         table_id,
         ChangeType::Format,
         &ChangePayload::Format { plan },
+        diff,
+        requires_confirmation,
+    )
+}
+
+/// Stages coordinate-level cell writes. The diff lists each targeted cell with
+/// the value that will be typed into it, so the change is fully previewable
+/// without reading the sheet.
+pub fn create_update_cells_change(
+    conn: &Connection,
+    source_id: &str,
+    table_id: &str,
+    cells: Vec<CellWrite>,
+    requires_confirmation: bool,
+) -> Result<PendingChange, CoreError> {
+    let diff = serde_json::json!({
+        "cells": cells
+            .iter()
+            .map(|write| serde_json::json!({ "cell": write.a1(), "value": write.value }))
+            .collect::<Vec<_>>()
+    });
+    insert_change(
+        conn,
+        source_id,
+        table_id,
+        ChangeType::UpdateCells,
+        &ChangePayload::UpdateCells { cells },
         diff,
         requires_confirmation,
     )
@@ -715,6 +747,11 @@ fn execute(
             registry.format_cells(conn, &change.source_id, &change.table_id, plan)?;
             records_only(Vec::new())
         }
+        ChangePayload::UpdateCells { cells } => {
+            registry.update_cells(conn, &change.source_id, &change.table_id, cells)?;
+            // Cell writes are not record-shaped; the committed change carries none.
+            records_only(Vec::new())
+        }
         ChangePayload::CreateSpreadsheet { title } => ExecOutcome {
             records: Vec::new(),
             created: Some(registry.create_spreadsheet(conn, &change.source_id, title)?),
@@ -746,18 +783,24 @@ fn auto_approve_enabled(conn: &Connection) -> Result<bool, CoreError> {
 }
 
 /// Re-derives the evaluated action so commit re-checks the same policy the
-/// preview used: large updates escalate to bulk_update.
+/// preview used: large updates (record patches or cell writes) escalate to
+/// bulk_update.
 fn commit_action(change_type: ChangeType, payload: &ChangePayload) -> WriteAction {
-    if let ChangePayload::Update { patches } = payload {
-        if patches.len() > BULK_UPDATE_THRESHOLD {
-            return WriteAction::BulkUpdate;
-        }
+    let over_bulk_threshold = match payload {
+        ChangePayload::Update { patches } => patches.len() > BULK_UPDATE_THRESHOLD,
+        ChangePayload::UpdateCells { cells } => cells.len() > BULK_UPDATE_THRESHOLD,
+        _ => false,
+    };
+    if over_bulk_threshold {
+        return WriteAction::BulkUpdate;
     }
     match change_type {
         ChangeType::Append => WriteAction::Append,
         ChangeType::Update => WriteAction::Update,
         ChangeType::Delete => WriteAction::Delete,
         ChangeType::Format => WriteAction::Format,
+        // Cell writes are updates for permission purposes.
+        ChangeType::UpdateCells => WriteAction::Update,
         ChangeType::CreateSpreadsheet => WriteAction::CreateSpreadsheet,
         ChangeType::CreateSheet => WriteAction::CreateSheet,
         ChangeType::DeleteSheet => WriteAction::DeleteSheet,

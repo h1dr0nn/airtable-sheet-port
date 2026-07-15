@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS pending_changes (
   id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL,
   table_id TEXT NOT NULL,
-  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format', 'create_spreadsheet', 'create_sheet', 'delete_sheet')),
+  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format', 'update_cells', 'create_spreadsheet', 'create_sheet', 'delete_sheet')),
   created_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'committed', 'rejected')),

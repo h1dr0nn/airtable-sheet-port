@@ -1,6 +1,6 @@
 # MCP Tools
 
-The Rust sidecar (`crates/sheet-port-mcp`) registers 15 tools. All input
+The Rust sidecar (`crates/sheet-port-mcp`) registers 17 tools. All input
 schemas are provider-neutral (generated via `schemars`, with every bound enforced in
 `src/args.rs`); none expose raw Google or provider APIs. Every tool returns a single
 text content block containing pretty-printed JSON with the shapes below. Every call
@@ -228,6 +228,54 @@ string when it holds one, else its literal value.
 
 Permission required: `read` on the source/table. Only the Google Sheets connector supports
 this; others return an Unsupported error.
+
+## `read_cells`
+
+Purpose: raw coordinate-level read (read-only). Returns every cell of the tab from row 1,
+keyed by A1 column letter, with the real 1-based sheet row number on each row and NO
+header/record interpretation. The escape hatch for document-style sheets (merged banner
+rows, headers not on row 1, totals rows, multiple blocks) where `read_table` sees fewer
+columns than the sheet actually has. Same `tableId` forms as `read_table`.
+
+Input schema: same as `read_table` (`sourceId`, `tableId`, optional `limit`/`offset`
+paging over sheet rows).
+
+Output shape:
+
+```json
+{
+  "columns": ["A", "B", "C"],
+  "rows": [
+    { "row": 1, "cells": { "A": "TASK CHECKLIST", "B": "", "C": "" } },
+    { "row": 2, "cells": { "A": "Module", "B": "Task", "C": "Hours" } }
+  ],
+  "totalRows": 60
+}
+```
+
+Permission required: `read` on the source/table.
+
+## `preview_update_cells`
+
+Purpose: stage coordinate-level writes to individual cells by A1 reference (e.g. set
+`E48` to `350h`), returning the pending change; `commit_change` applies it. Values are
+written with USER_ENTERED semantics - numbers parse as numbers, a leading `=` becomes a
+live formula, anything else is text - matching what typing into the sheet would do. Use
+whenever the record tools cannot address a cell.
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | min length 1 |
+| `tableId` | string | min length 1 |
+| `cells` | array of `{ cell, value }` | 1 to 100 items; `cell` is an A1 ref within A..ZZ, row >= 1; `value` at most 50000 chars |
+
+Output shape: `{ "change": PendingChange, "requiresConfirmation": boolean }` (change type
+`update_cells`; the diff lists each `{ cell, value }`).
+
+Permission required: `write` (evaluated as the `update` action; more than 20 cells
+escalates to `bulk_update` like a large record update).
 
 ## `find_records`
 

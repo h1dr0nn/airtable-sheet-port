@@ -123,6 +123,36 @@ fn append_records_carries_a_bundled_format_plan_when_present() {
 }
 
 #[test]
+fn update_cells_parses_refs_and_rejects_bad_ones() {
+    let base = |cells| UpdateCellsArgs {
+        source_id: "s".to_string(),
+        table_id: "t".to_string(),
+        cells,
+    };
+    let write = |cell: &str| CellWriteArg {
+        cell: cell.to_string(),
+        value: "350h".to_string(),
+    };
+
+    let cells = base(vec![write("e48"), write("AA100")])
+        .validate()
+        .expect("valid refs");
+    assert_eq!(cells[0].column, "E", "letters normalize to uppercase");
+    assert_eq!(cells[0].row, 48);
+    assert_eq!(cells[0].a1(), "E48");
+    assert_eq!(cells[1].column, "AA");
+
+    assert!(base(Vec::new()).validate().is_err(), "no cells");
+    assert!(base(vec![write("48")]).validate().is_err(), "no column");
+    assert!(base(vec![write("E")]).validate().is_err(), "no row");
+    assert!(base(vec![write("E0")]).validate().is_err(), "row below 1");
+    assert!(
+        base(vec![write("AAA1")]).validate().is_err(),
+        "beyond the ZZ column window"
+    );
+}
+
+#[test]
 fn commit_change_requires_at_least_one_id() {
     let neither = CommitChangeArgs {
         change_id: None,

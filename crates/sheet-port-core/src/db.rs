@@ -82,8 +82,9 @@ INSERT INTO meta (key, value) VALUES ('schema_version', '3')
   ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 COMMIT;";
 
-/// v3 -> v4: widen the pending_changes.change_type CHECK to allow the structural
-/// change types ('create_spreadsheet', 'create_sheet', 'delete_sheet'). Same
+/// v3 -> v4: widen the pending_changes.change_type CHECK to allow the
+/// coordinate-level 'update_cells' type and the structural change types
+/// ('create_spreadsheet', 'create_sheet', 'delete_sheet'). Same
 /// rebuild-in-place approach as v2 -> v3; existing rows are copied verbatim.
 const MIGRATE_V3_TO_V4_SQL: &str = "\
 BEGIN IMMEDIATE;
@@ -93,7 +94,7 @@ CREATE TABLE pending_changes (
   id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL,
   table_id TEXT NOT NULL,
-  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format', 'create_spreadsheet', 'create_sheet', 'delete_sheet')),
+  change_type TEXT NOT NULL CHECK (change_type IN ('append', 'update', 'delete', 'format', 'update_cells', 'create_spreadsheet', 'create_sheet', 'delete_sheet')),
   created_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'committed', 'rejected')),

@@ -11,8 +11,8 @@ use super::{
 use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
 use crate::types::{
-    DataSource, FieldSchema, GridColumn, GridData, GridRow, JsonMap, ReadOptions, RecordPatch,
-    SheetTab, SourceKind, TableRecord, TableRef, TableSchema,
+    CellWrite, DataSource, FieldSchema, GridColumn, GridData, GridRow, JsonMap, ReadOptions,
+    RecordPatch, SheetTab, SourceKind, TableRecord, TableRef, TableSchema,
 };
 use crate::{mock_data, sources};
 
@@ -230,6 +230,30 @@ impl TableConnector for MockConnector {
                 fields,
             }],
         )?;
+        Ok(())
+    }
+
+    /// Coordinate-level writes mapped onto the grid semantics: each A1 cell is
+    /// one [`write_cell`](TableConnector::write_cell) (row 1 = the header row,
+    /// which stays read-only on a mock sheet).
+    fn update_cells(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        cells: &[CellWrite],
+    ) -> Result<(), CoreError> {
+        for cell in cells {
+            // CellWrite rows are 1-based sheet rows; write_cell indexes from 0.
+            self.write_cell(
+                conn,
+                source_id,
+                table_id,
+                cell.row - 1,
+                &cell.column,
+                &cell.value,
+            )?;
+        }
         Ok(())
     }
 

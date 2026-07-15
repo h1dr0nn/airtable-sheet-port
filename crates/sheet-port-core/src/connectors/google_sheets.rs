@@ -17,9 +17,9 @@ use crate::error::CoreError;
 use crate::google;
 use crate::sources;
 use crate::types::{
-    BorderStyle, CellFormat, CellStyle, ColumnWidth, CreatedResource, DataSource, FieldSchema,
-    FormatPlan, GridColumn, GridData, GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch,
-    SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
+    BorderStyle, CellFormat, CellStyle, CellWrite, ColumnWidth, CreatedResource, DataSource,
+    FieldSchema, FormatPlan, GridColumn, GridData, GridRow, JsonMap, NumberFormatType, ReadOptions,
+    RecordPatch, SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
 };
 
 const DRIVE_FILES_ENDPOINT: &str = "https://www.googleapis.com/drive/v3/files";
@@ -45,6 +45,11 @@ const VALUE_INPUT_RAW: &str = "RAW";
 /// Values API `valueRenderOption`: return each cell's raw formula (`=...`)
 /// instead of its computed value (used by `read_formulas`).
 const VALUE_RENDER_FORMULA: &str = "FORMULA";
+
+/// Values API `valueInputOption` for coordinate-level cell writes: parse the
+/// value as if the user typed it (numbers become numbers, `=` a formula) -
+/// matching what someone editing the sheet by hand would get.
+const VALUE_INPUT_USER_ENTERED: &str = "USER_ENTERED";
 
 /// Separator between a spreadsheet id and a sheet selector in a tableId
 /// (`{spreadsheetId}:{gid}` or `{spreadsheetId}:{SheetName}`).
@@ -250,6 +255,33 @@ impl TableConnector for GoogleSheetsConnector {
         };
         let rows = fetch_formula_values(&token, &sheet.spreadsheet_id, &sheet.range(&range))?;
         Ok(records_from_rows(&header, &rows, start_row))
+    }
+
+    /// One `values.batchUpdate` with USER_ENTERED input and one data entry per
+    /// cell, so any cell of the tab can be written regardless of the sheet's
+    /// header layout.
+    fn update_cells(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        cells: &[CellWrite],
+    ) -> Result<(), CoreError> {
+        if cells.is_empty() {
+            return Ok(());
+        }
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let url = values_batch_update_url(&sheet.spreadsheet_id)?;
+        google::post_json(
+            &token,
+            url.as_str(),
+            &json!({
+                "valueInputOption": VALUE_INPUT_USER_ENTERED,
+                "data": cell_update_entries(&sheet, cells),
+            }),
+        )?;
+        Ok(())
     }
 
     /// `spreadsheets.create` with just a title; returns the new id and url.
@@ -1221,6 +1253,21 @@ fn append_values(header: &[String], records: &[JsonMap], seed_header: bool) -> V
     values
 }
 
+/// The `data` entries of a cell-write `values.batchUpdate`: one single-cell
+/// range per write, scoped to the resolved tab. Pure so the request shape can
+/// be unit-tested without a network call.
+fn cell_update_entries(sheet: &ResolvedSheet, cells: &[CellWrite]) -> Vec<Value> {
+    cells
+        .iter()
+        .map(|write| {
+            json!({
+                "range": sheet.range(&write.a1()),
+                "values": [[write.value]],
+            })
+        })
+        .collect()
+}
+
 /// One sheet row ordered by the header; absent and null fields write as empty
 /// strings so RAW updates clear cells instead of skipping them.
 fn row_values(header: &[String], fields: &JsonMap) -> Vec<Value> {
@@ -1805,6 +1852,40 @@ mod tests {
             existing,
             vec![vec![json!("Aurora"), json!(4)]],
             "an existing header is not rewritten"
+        );
+    }
+
+    #[test]
+    fn cell_update_entries_scope_each_write_to_the_resolved_tab() {
+        let sheet = ResolvedSheet {
+            spreadsheet_id: "spreadsheet".to_string(),
+            spreadsheet_title: "Book".to_string(),
+            sheet_title: Some("Tab 27".to_string()),
+            sheet_id: 851827100,
+        };
+        let cells = vec![
+            CellWrite {
+                column: "E".to_string(),
+                row: 48,
+                value: "350h".to_string(),
+            },
+            CellWrite {
+                column: "A".to_string(),
+                row: 1,
+                value: "=SUM(B2:B9)".to_string(),
+            },
+        ];
+
+        let entries = cell_update_entries(&sheet, &cells);
+
+        assert_eq!(
+            entries[0],
+            json!({ "range": "'Tab 27'!E48", "values": [["350h"]] })
+        );
+        assert_eq!(
+            entries[1],
+            json!({ "range": "'Tab 27'!A1", "values": [["=SUM(B2:B9)"]] }),
+            "formula text passes through for USER_ENTERED parsing"
         );
     }
 

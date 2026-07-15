@@ -309,6 +309,87 @@ fn read_formulas_is_unsupported_on_the_mock_connector() {
 }
 
 #[test]
+fn read_cells_exposes_the_raw_grid_with_row_numbers() {
+    let state = temp_state();
+    let output = parse(
+        &read_cells(
+            &state,
+            &ReadTableArgs {
+                source_id: "mock-source".to_string(),
+                table_id: "customers".to_string(),
+                limit: Some(2),
+                offset: None,
+            },
+        )
+        .expect("read cells"),
+    );
+
+    assert_eq!(output["columns"][0], "A", "columns are A1 letters");
+    assert_eq!(output["rows"][0]["row"], 1, "row numbers are 1-based");
+    assert_eq!(
+        output["rows"][0]["cells"]["A"], "Name",
+        "row 1 is the raw header row, not interpreted away"
+    );
+    assert_eq!(output["rows"][1]["row"], 2);
+    assert_eq!(output["rows"][1]["cells"]["A"], "Aurora Labs");
+    assert_eq!(output["totalRows"], 4, "header + 3 records");
+}
+
+#[test]
+fn update_cells_previews_then_commits_the_cell_write() {
+    let state = temp_state();
+    let output = parse(
+        &preview_update_cells(
+            &state,
+            UpdateCellsArgs {
+                source_id: "mock-source".to_string(),
+                table_id: "customers".to_string(),
+                cells: vec![crate::args::CellWriteArg {
+                    cell: "B2".to_string(),
+                    value: "edited@cell.dev".to_string(),
+                }],
+            },
+        )
+        .expect("preview"),
+    );
+    assert_eq!(output["change"]["type"], "update_cells");
+    assert_eq!(
+        output["change"]["diff"]["cells"][0]["cell"], "B2",
+        "the diff lists each targeted cell"
+    );
+    let change_id = output["change"]["id"].as_str().expect("id").to_string();
+
+    let committed = parse(
+        &commit_change(
+            &state,
+            &CommitChangeArgs {
+                change_id: Some(change_id),
+                change_ids: None,
+            },
+        )
+        .expect("commit"),
+    );
+    assert_eq!(committed["change"]["status"], "committed");
+
+    let table = parse(
+        &read_table(
+            &state,
+            &ReadTableArgs {
+                source_id: "mock-source".to_string(),
+                table_id: "customers".to_string(),
+                limit: None,
+                offset: None,
+            },
+        )
+        .expect("read back"),
+    );
+    assert_eq!(
+        table["records"][0]["fields"]["Email"], "edited@cell.dev",
+        "the committed cell write lands on the record"
+    );
+}
+
+#[test]
 fn append_records_bundles_a_format_plan_into_the_change() {
     let state = temp_state();
     let output = parse(

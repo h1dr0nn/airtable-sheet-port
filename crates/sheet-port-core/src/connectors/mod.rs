@@ -15,8 +15,8 @@ use crate::constants::{READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN};
 use crate::error::CoreError;
 use crate::sources;
 use crate::types::{
-    CreatedResource, DataSource, FormatPlan, GridData, GridRow, JsonMap, ReadOptions, RecordPatch,
-    SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
+    CellWrite, CreatedResource, DataSource, FormatPlan, GridData, GridRow, JsonMap, ReadOptions,
+    RecordPatch, SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
 };
 
 pub trait TableConnector: Send + Sync {
@@ -169,6 +169,21 @@ pub trait TableConnector: Send + Sync {
     ) -> Result<(), CoreError> {
         Err(CoreError::Unsupported(
             "This source does not support cell formatting".to_string(),
+        ))
+    }
+
+    /// Coordinate-level cell writes (A1 addressed, USER_ENTERED semantics).
+    /// Runs only from the staged-change commit path. The escape hatch for
+    /// document-style sheets the record model cannot address.
+    fn update_cells(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _cells: &[CellWrite],
+    ) -> Result<(), CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support cell-level writes".to_string(),
         ))
     }
 
@@ -398,6 +413,17 @@ impl ConnectorRegistry {
             .format_cells(conn, source_id, table_id, plan)
     }
 
+    pub fn update_cells(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        cells: &[CellWrite],
+    ) -> Result<(), CoreError> {
+        self.for_source(conn, source_id)?
+            .update_cells(conn, source_id, table_id, cells)
+    }
+
     pub fn create_spreadsheet(
         &self,
         conn: &Connection,
@@ -480,6 +506,43 @@ pub(crate) fn column_index_for_id(id: &str) -> Option<usize> {
             .checked_add((character as u8 - b'A') as usize + 1)?;
     }
     Some(n - 1)
+}
+
+/// Largest sheet row a coordinate-level cell write may target; a generous
+/// bound that still rejects nonsense row numbers.
+const CELL_REF_MAX_ROW: i64 = 1_000_000;
+/// Column-letter window for cell refs, matching the connector's A:ZZ value
+/// window (702 columns).
+const CELL_REF_MAX_COLUMN_LETTERS: usize = 2;
+
+/// Parses an A1 cell reference like "E48" into its uppercase column letters and
+/// 1-based row, rejecting anything outside the connector's A:ZZ column window
+/// or a nonsense row. Used to validate agent-supplied cell addresses once, at
+/// the tool boundary.
+pub fn parse_cell_ref(cell: &str) -> Result<(String, i64), CoreError> {
+    let trimmed = cell.trim();
+    let letters: String = trimmed
+        .chars()
+        .take_while(|character| character.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let digits = &trimmed[letters.len()..];
+    let bad = || {
+        CoreError::InvalidInput(format!(
+            "'{cell}' is not a valid cell reference (expected column letters then a row, like E48)"
+        ))
+    };
+    if letters.is_empty() || letters.len() > CELL_REF_MAX_COLUMN_LETTERS {
+        return Err(bad());
+    }
+    if column_index_for_id(&letters).is_none() {
+        return Err(bad());
+    }
+    let row: i64 = digits.parse().map_err(|_| bad())?;
+    if !(1..=CELL_REF_MAX_ROW).contains(&row) {
+        return Err(bad());
+    }
+    Ok((letters, row))
 }
 
 /// Clamps a grid read window to the same bounds as `read_table` (default 100,

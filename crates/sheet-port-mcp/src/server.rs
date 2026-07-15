@@ -12,7 +12,7 @@ use sheet_port_core::CoreError;
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
     FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, PreviewUpdateArgs,
-    ReadTableArgs, SourceTableArgs,
+    ReadTableArgs, SourceTableArgs, UpdateCellsArgs,
 };
 use crate::state::BrokerState;
 use crate::tools;
@@ -25,7 +25,7 @@ const SERVER_VERSION: &str = "0.3.0";
 /// pass a pasted spreadsheet link straight through as the tableId. Kept
 /// accurate to the connector behavior (URL / id / id:gid / id:SheetName
 /// resolution, preview -> commit writes, tokens held by the desktop app).
-const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port exposes safe tools to read and edit the user's connected Google Sheets (and future providers). When the user mentions a Google Sheets link or a spreadsheet, use these tools instead of guessing: call list_sources to find the connected account, then read_table or find_records. read_formulas reads the same rows but keeps each cell's raw formula (its =... text) instead of the computed value, so check it before overwriting cells that may be computed and would otherwise be clobbered. read_table and the other table tools accept a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName as the tableId - so you can pass a pasted spreadsheet link directly, and the exact tab is selected from the gid or sheet name (no selector reads the first tab). All writes are staged: preview_update_records, append_records, or preview_format_table return a changeId, then commit_change applies it (some changes need the user to approve in the desktop app first). To fill an empty or brand-new tab, call append_records directly: the field names of the records become the header row and the data is written beneath it, so an empty sheet is never a reason to refuse a write. When you already know the layout, pass the formatting fields to append_records so the data and its house-style styling apply in a single commit instead of a separate preview_format_table. commit_change also takes a changeIds array to commit several staged changes in one call, which saves round-trips when you have staged more than one. Two tools handle appearance: get_table_style reads a tab's existing look (header and first-row cell styles, frozen rows, column widths), and preview_format_table stages formatting - per-range bold, italic, fontSize, fontColor and backgroundColor as #rrggbb, horizontalAlignment, numberFormat (with an optional numberFormatType such as DATE or CURRENCY), wrap and border (none/all/outer/bottom), plus freezeRows, freezeColumns, and columnWidths. House style whenever you lay out a fresh sheet or write new data: freeze the header row, make the header bold with a light neutral fill (for example #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat and right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained - one or two muted accent colors, no full gridlines, no loud fills. When the sheet ALREADY has data or formatting, call get_table_style first and match its existing header and data styling instead of imposing a new look. Never fabricate spreadsheet contents; read them with these tools. Never ask for or handle OAuth tokens - the desktop app holds them.";
+const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port exposes safe tools to read and edit the user's connected Google Sheets (and future providers). When the user mentions a Google Sheets link or a spreadsheet, use these tools instead of guessing: call list_sources to find the connected account, then read_table or find_records. read_formulas reads the same rows but keeps each cell's raw formula (its =... text) instead of the computed value, so check it before overwriting cells that may be computed and would otherwise be clobbered. The record tools assume row 1 is the header; when a sheet is document-style instead (a merged banner on row 1, headers further down, totals rows, multiple blocks) read_table may see only one column - switch to read_cells (the full grid by A1 coordinates with real row numbers) and preview_update_cells (stage writes to individual cells like E48, USER_ENTERED so numbers and =formulas work). Any cell is reachable that way; never tell the user a cell cannot be edited. read_table and the other table tools accept a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName as the tableId - so you can pass a pasted spreadsheet link directly, and the exact tab is selected from the gid or sheet name (no selector reads the first tab). All writes are staged: preview_update_records, append_records, or preview_format_table return a changeId, then commit_change applies it (some changes need the user to approve in the desktop app first). To fill an empty or brand-new tab, call append_records directly: the field names of the records become the header row and the data is written beneath it, so an empty sheet is never a reason to refuse a write. When you already know the layout, pass the formatting fields to append_records so the data and its house-style styling apply in a single commit instead of a separate preview_format_table. commit_change also takes a changeIds array to commit several staged changes in one call, which saves round-trips when you have staged more than one. Two tools handle appearance: get_table_style reads a tab's existing look (header and first-row cell styles, frozen rows, column widths), and preview_format_table stages formatting - per-range bold, italic, fontSize, fontColor and backgroundColor as #rrggbb, horizontalAlignment, numberFormat (with an optional numberFormatType such as DATE or CURRENCY), wrap and border (none/all/outer/bottom), plus freezeRows, freezeColumns, and columnWidths. House style whenever you lay out a fresh sheet or write new data: freeze the header row, make the header bold with a light neutral fill (for example #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat and right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained - one or two muted accent colors, no full gridlines, no loud fills. When the sheet ALREADY has data or formatting, call get_table_style first and match its existing header and data styling instead of imposing a new look. Never fabricate spreadsheet contents; read them with these tools. Never ask for or handle OAuth tokens - the desktop app holds them.";
 
 pub struct SheetPortServer {
     state: Arc<BrokerState>,
@@ -115,6 +115,28 @@ impl SheetPortServer {
     async fn find_records(&self, Parameters(args): Parameters<FindRecordsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
         respond_blocking(move || tools::find_records(&state, &args)).await
+    }
+
+    #[tool(
+        name = "read_cells",
+        description = "Raw coordinate-level read: every cell of the tab from row 1, keyed by A1 column letter, with the real sheet row number on each row and NO header interpretation. Use this whenever the sheet is document-style (merged banner rows, headers not on row 1, multiple blocks) and read_table shows fewer columns than the sheet actually has - read_cells always sees the full grid. Same tableId forms as read_table; limit/offset page over sheet rows.",
+        annotations(read_only_hint = true)
+    )]
+    async fn read_cells(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::read_cells(&state, &args)).await
+    }
+
+    #[tool(
+        name = "preview_update_cells",
+        description = "Stage writes to individual cells by A1 reference (e.g. set E48 to '350h') and return the pending change; pass the changeId to commit_change to apply. Values are typed as a user would (USER_ENTERED): numbers become numbers, a leading = becomes a formula, anything else is text. This is the escape hatch when the record tools cannot address a cell - document-style sheets, banner headers, totals rows - so never conclude a cell is unreachable before trying it. Same tableId forms as read_table."
+    )]
+    async fn preview_update_cells(
+        &self,
+        Parameters(args): Parameters<UpdateCellsArgs>,
+    ) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::preview_update_cells(&state, args)).await
     }
 
     #[tool(

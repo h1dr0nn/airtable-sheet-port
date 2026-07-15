@@ -85,6 +85,28 @@ pub struct TableRecord {
     pub fields: JsonMap,
 }
 
+/// One coordinate-level cell write: the A1 column letter, the 1-based sheet
+/// row, and the value to type into the cell (USER_ENTERED semantics: numbers
+/// parse as numbers, a leading `=` becomes a formula). The escape hatch for
+/// document-style sheets whose layout does not fit the row-1-header record
+/// model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellWrite {
+    /// A1 column letters (e.g. "E"), uppercase.
+    pub column: String,
+    /// 1-based sheet row (e.g. 48 for cell E48).
+    pub row: i64,
+    pub value: String,
+}
+
+impl CellWrite {
+    /// The A1 cell reference, e.g. "E48".
+    pub fn a1(&self) -> String {
+        format!("{}{}", self.column, self.row)
+    }
+}
+
 /// A resource created by committing a structural change (a new spreadsheet or a
 /// new sheet tab). Returned on the [`CommitOutcome`](crate::changes::CommitOutcome)
 /// so the agent gets the id/url of what it just created. Only the fields that
@@ -198,6 +220,8 @@ pub enum ChangeType {
     Update,
     Delete,
     Format,
+    #[serde(rename = "update_cells")]
+    UpdateCells,
     #[serde(rename = "create_spreadsheet")]
     CreateSpreadsheet,
     #[serde(rename = "create_sheet")]
@@ -213,6 +237,7 @@ impl ChangeType {
             Self::Update => "update",
             Self::Delete => "delete",
             Self::Format => "format",
+            Self::UpdateCells => "update_cells",
             Self::CreateSpreadsheet => "create_spreadsheet",
             Self::CreateSheet => "create_sheet",
             Self::DeleteSheet => "delete_sheet",
@@ -225,6 +250,7 @@ impl ChangeType {
             "update" => Some(Self::Update),
             "delete" => Some(Self::Delete),
             "format" => Some(Self::Format),
+            "update_cells" => Some(Self::UpdateCells),
             "create_spreadsheet" => Some(Self::CreateSpreadsheet),
             "create_sheet" => Some(Self::CreateSheet),
             "delete_sheet" => Some(Self::DeleteSheet),
