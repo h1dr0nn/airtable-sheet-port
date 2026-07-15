@@ -4,7 +4,7 @@ import {
   StatusDot,
   Tooltip,
   TooltipContent,
-  TooltipTrigger
+  TooltipTrigger,
 } from "@sheet-port/ui";
 import {
   ArrowUpCircle,
@@ -13,7 +13,7 @@ import {
   LayoutDashboard,
   Settings as SettingsIcon,
   Table2,
-  type LucideIcon
+  type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAppStatus } from "../hooks/useAppStatus.js";
@@ -33,7 +33,7 @@ const NAV_ICONS: Record<ScreenId, LucideIcon> = {
   sources: Database,
   tables: Table2,
   changes: GitPullRequest,
-  settings: SettingsIcon
+  settings: SettingsIcon,
 };
 
 /** Wraps a rail control in a tooltip only while collapsed, since labels are
@@ -42,7 +42,7 @@ const NAV_ICONS: Record<ScreenId, LucideIcon> = {
 function RailTooltip({
   collapsed,
   label,
-  children
+  children,
 }: {
   collapsed: boolean;
   label: string;
@@ -66,7 +66,12 @@ type SidebarProps = {
   collapsed: boolean;
 };
 
-export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps) {
+export function Sidebar({
+  active,
+  onNavigate,
+  update,
+  collapsed,
+}: SidebarProps) {
   const { data: status } = useAppStatus();
   const { t } = useTranslation();
   const pendingCount = status?.pendingCount ?? 0;
@@ -80,66 +85,80 @@ export function Sidebar({ active, onNavigate, update, collapsed }: SidebarProps)
         "flex min-w-0 shrink-0 flex-col overflow-hidden border-r border-edge bg-bg",
         "motion-safe:transition-[width] motion-safe:duration-[var(--dur-normal)]",
         "motion-safe:ease-[var(--ease-emphasized)]",
-        collapsed ? SIDEBAR_COLLAPSED_CLASS : SIDEBAR_EXPANDED_CLASS
+        collapsed ? SIDEBAR_COLLAPSED_CLASS : SIDEBAR_EXPANDED_CLASS,
       )}
     >
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4" aria-label="Main navigation">
-        {NAV.map((item) => {
-          const isActive = active === item.id;
-          const Icon = NAV_ICONS[item.id];
-          const label = t(item.labelKey);
-          return (
-            <RailTooltip key={item.id} collapsed={collapsed} label={label}>
-              <button
-                type="button"
-                aria-current={isActive ? "page" : undefined}
-                onClick={() => onNavigate(item.screen)}
-                className={cn(
-                  "relative flex w-full items-center rounded-lg py-2 text-left",
-                  "text-[13px] font-medium transition-colors",
-                  collapsed ? "justify-center px-0" : "gap-2.5 px-3",
-                  FOCUS_RING,
-                  isActive
-                    ? "bg-accent/[0.07] text-accent"
-                    : "text-ink-muted hover:bg-surface hover:text-ink"
-                )}
-              >
-                {/* Active marker: 3px rounded accent bar on the sidebar edge. */}
-                {isActive ? (
-                  <span
+      <nav
+        className="flex flex-1 flex-col overflow-y-auto px-3 py-4"
+        aria-label="Main navigation"
+      >
+        <div className="space-y-0.5">
+          {NAV.map((item) => {
+            const isActive = active === item.id;
+            const Icon = NAV_ICONS[item.id];
+            const label = t(item.labelKey);
+            return (
+              <RailTooltip key={item.id} collapsed={collapsed} label={label}>
+                <button
+                  type="button"
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => onNavigate(item.screen)}
+                  className={cn(
+                    "relative flex w-full items-center rounded-lg py-2 text-left",
+                    "text-[13px] font-medium transition-colors",
+                    collapsed ? "justify-center px-0" : "gap-2.5 px-3",
+                    FOCUS_RING,
+                    isActive
+                      ? "bg-accent/[0.07] text-accent"
+                      : "text-ink-muted hover:bg-surface hover:text-ink",
+                  )}
+                >
+                  {/* Active marker: 3px rounded accent bar on the sidebar edge. */}
+                  {isActive ? (
+                    <span
+                      aria-hidden
+                      className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent"
+                    />
+                  ) : null}
+                  <Icon
+                    size={NAV_ICON_SIZE}
+                    strokeWidth={NAV_ICON_STROKE}
                     aria-hidden
-                    className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent"
+                    className={cn(
+                      "shrink-0",
+                      isActive ? "text-accent" : "text-ink-faint",
+                    )}
                   />
-                ) : null}
-                <Icon
-                  size={NAV_ICON_SIZE}
-                  strokeWidth={NAV_ICON_STROKE}
-                  aria-hidden
-                  className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
-                />
-                {collapsed ? (
-                  <span className="sr-only">{label}</span>
-                ) : (
-                  <span className="truncate">{label}</span>
-                )}
-              </button>
-            </RailTooltip>
-          );
-        })}
+                  {collapsed ? (
+                    <span className="sr-only">{label}</span>
+                  ) : (
+                    <span className="truncate">{label}</span>
+                  )}
+                </button>
+              </RailTooltip>
+            );
+          })}
+        </div>
+
+        {/* Update prompt lives at the bottom of the nav (mt-auto) so it fills the
+            empty space below the menu instead of a separate footer box. */}
+        {update.available ? (
+          <div className="mt-auto pt-3">
+            <UpdateCard update={update} collapsed={collapsed} t={t} />
+          </div>
+        ) : null}
       </nav>
 
-      <div className={cn("border-t border-edge py-3", collapsed ? "px-2" : "px-3")}>
-        {update.available ? (
-          <UpdateCard update={update} collapsed={collapsed} t={t} />
-        ) : (
-          <StatusCluster
-            pendingCount={pendingCount}
-            mcpRunning={mcpRunning}
-            onNavigate={onNavigate}
-            collapsed={collapsed}
-            t={t}
-          />
-        )}
+      <div
+        className={cn("border-t border-edge py-3", collapsed ? "px-2" : "px-3")}
+      >
+        <StatusCluster
+          pendingCount={pendingCount}
+          mcpRunning={mcpRunning}
+          onNavigate={onNavigate}
+          collapsed={collapsed}
+          t={t}
+        />
       </div>
     </aside>
   );
@@ -155,7 +174,13 @@ type StatusClusterProps = {
 
 /** Default bottom cluster: pending approvals shortcut + MCP heartbeat status.
  * Collapsed condenses both into icon+dot rail controls with tooltips. */
-function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: StatusClusterProps) {
+function StatusCluster({
+  pendingCount,
+  mcpRunning,
+  onNavigate,
+  collapsed,
+  t,
+}: StatusClusterProps) {
   const mcpStatusLabel = mcpRunning ? t("common.running") : t("common.offline");
   if (collapsed) {
     const mcpLabel = `${t("dashboard.mcpServer")}: ${mcpStatusLabel}`;
@@ -173,10 +198,14 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: S
             className={cn(
               "relative flex h-9 w-9 items-center justify-center rounded-lg",
               "text-ink-muted transition-colors hover:bg-surface hover:text-ink",
-              FOCUS_RING
+              FOCUS_RING,
             )}
           >
-            <GitPullRequest size={15} strokeWidth={NAV_ICON_STROKE} aria-hidden />
+            <GitPullRequest
+              size={15}
+              strokeWidth={NAV_ICON_STROKE}
+              aria-hidden
+            />
             {pendingCount > 0 ? (
               <span
                 aria-hidden
@@ -208,7 +237,7 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: S
         className={cn(
           "flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left",
           "text-[13px] font-medium text-ink-muted transition-colors hover:bg-surface hover:text-ink",
-          FOCUS_RING
+          FOCUS_RING,
         )}
       >
         {t("dashboard.pendingApprovals")}
@@ -216,7 +245,9 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: S
           className={cn(
             "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5",
             "text-[11px] font-semibold tabular-nums",
-            pendingCount > 0 ? "bg-warning/15 text-warning" : "bg-edge/60 text-ink-muted"
+            pendingCount > 0
+              ? "bg-warning/15 text-warning"
+              : "bg-edge/60 text-ink-muted",
           )}
         >
           {pendingCount}
@@ -225,7 +256,12 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: S
       <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[12px]">
         <StatusDot status={mcpRunning ? "live" : "idle"} />
         <span className="text-ink-muted">{t("dashboard.mcpServer")}</span>
-        <span className={cn("ml-auto font-medium", mcpRunning ? "text-success" : "text-ink-muted")}>
+        <span
+          className={cn(
+            "ml-auto font-medium",
+            mcpRunning ? "text-success" : "text-ink-muted",
+          )}
+        >
           {mcpStatusLabel}
         </span>
       </div>
@@ -236,14 +272,25 @@ function StatusCluster({ pendingCount, mcpRunning, onNavigate, collapsed, t }: S
 /** Accent-tinted notification shown in place of the status cluster when a newer
  * version is available. The button drives update.install() (download + relaunch).
  * Collapsed shrinks to a single accent icon button that still triggers install. */
-function UpdateCard({ update, collapsed, t }: { update: UpdateState; collapsed: boolean; t: TFunction }) {
+function UpdateCard({
+  update,
+  collapsed,
+  t,
+}: {
+  update: UpdateState;
+  collapsed: boolean;
+  t: TFunction;
+}) {
   if (collapsed) {
     const label = update.version
       ? t("sidebar.updateAvailableVersion", { version: update.version })
       : t("sidebar.updateAvailable");
     return (
       <div className="flex justify-center">
-        <RailTooltip collapsed label={update.downloading ? t("sidebar.downloadingUpdate") : label}>
+        <RailTooltip
+          collapsed
+          label={update.downloading ? t("sidebar.downloadingUpdate") : label}
+        >
           <button
             type="button"
             aria-label={label}
@@ -253,7 +300,7 @@ function UpdateCard({ update, collapsed, t }: { update: UpdateState; collapsed: 
               "flex h-9 w-9 items-center justify-center rounded-lg",
               "border border-accent/30 bg-accent/[0.07] text-accent transition-colors",
               "hover:bg-accent/15 disabled:pointer-events-none disabled:opacity-60",
-              FOCUS_RING
+              FOCUS_RING,
             )}
           >
             <ArrowUpCircle size={16} strokeWidth={1.75} aria-hidden />
@@ -266,13 +313,20 @@ function UpdateCard({ update, collapsed, t }: { update: UpdateState; collapsed: 
   return (
     <div className="rounded-lg border border-accent/30 bg-accent/[0.07] p-3">
       <div className="flex items-center gap-2">
-        <ArrowUpCircle size={15} strokeWidth={1.75} aria-hidden className="shrink-0 text-accent" />
+        <ArrowUpCircle
+          size={15}
+          strokeWidth={1.75}
+          aria-hidden
+          className="shrink-0 text-accent"
+        />
         <div className="min-w-0">
           <p className="truncate text-[12.5px] font-semibold text-accent">
             {t("sidebar.updateAvailable")}
           </p>
           {update.version ? (
-            <p className="truncate text-[11px] text-ink-muted">v{update.version}</p>
+            <p className="truncate text-[11px] text-ink-muted">
+              v{update.version}
+            </p>
           ) : null}
         </div>
       </div>
@@ -284,7 +338,7 @@ function UpdateCard({ update, collapsed, t }: { update: UpdateState; collapsed: 
           "mt-2.5 flex w-full items-center justify-center rounded-md px-3 py-1.5",
           "bg-accent text-[12px] font-semibold text-accent-ink transition-colors hover:bg-accent-hover",
           "disabled:pointer-events-none disabled:opacity-60",
-          FOCUS_RING
+          FOCUS_RING,
         )}
       >
         {update.downloading ? t("sidebar.downloading") : t("sidebar.update")}
