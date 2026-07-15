@@ -12,9 +12,9 @@ use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
     HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
-    META_CLOSE_BEHAVIOR, META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT,
-    META_UI_FONT_FAMILY, META_UI_FONT_SCALE, META_UI_LANGUAGE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
-    READ_LIMIT_MIN,
+    META_CLOSE_BEHAVIOR, META_FLAG_OFF, META_FLAG_ON, META_GOOGLE_CLIENT_ID, META_MCP_PORT,
+    META_MCP_TRANSPORT, META_UI_FONT_FAMILY, META_UI_FONT_SCALE, META_UI_LANGUAGE,
+    READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
 use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
@@ -268,10 +268,11 @@ const SETTINGS_RESET_ACTION: &str = "settings_reset";
 #[tauri::command]
 pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
     let conn = lock_conn(&state)?;
+    // On by default: only an explicit "0" turns auto-approve off.
     let auto_approve_writes = db::get_meta(&conn, META_AUTO_APPROVE_WRITES)
         .map_err(|error| error.to_string())?
         .as_deref()
-        == Some(META_FLAG_ON);
+        != Some(META_FLAG_OFF);
     let font_scale = db::get_ui_font_scale(&conn).map_err(|error| error.to_string())?;
     let font_family = db::get_ui_font_family(&conn).map_err(|error| error.to_string())?;
     let language = db::get_language(&conn).map_err(|error| error.to_string())?;
@@ -339,17 +340,14 @@ pub fn set_font_family(state: Db<'_>, family: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Enables or disables auto-approve. Enabling writes meta "1"; disabling
-/// deletes the key so it reads back as the absent default.
+/// Enables or disables auto-approve. Auto-approve is the on-by-default state,
+/// so disabling writes an explicit "0" (the confirmation gate) and enabling
+/// writes "1"; a fresh install with no key reads as on.
 #[tauri::command]
 pub fn set_auto_approve(state: Db<'_>, enabled: bool) -> Result<(), String> {
     let conn = lock_conn(&state)?;
-    if enabled {
-        db::set_meta(&conn, META_AUTO_APPROVE_WRITES, META_FLAG_ON)
-            .map_err(|error| error.to_string())?;
-    } else {
-        db::delete_meta(&conn, META_AUTO_APPROVE_WRITES).map_err(|error| error.to_string())?;
-    }
+    let value = if enabled { META_FLAG_ON } else { META_FLAG_OFF };
+    db::set_meta(&conn, META_AUTO_APPROVE_WRITES, value).map_err(|error| error.to_string())?;
     audit::record(
         &conn,
         AuditActor::User,

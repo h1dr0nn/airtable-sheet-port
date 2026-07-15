@@ -146,7 +146,7 @@ this contract and are not reset by `reset_settings`.
 
 ```ts
 type AppSettings = {
-  autoApproveWrites: boolean;                 // meta key 'auto_approve_writes' === '1'
+  autoApproveWrites: boolean;                 // meta key 'auto_approve_writes' !== '0' (on by default)
   fontScale: "small" | "normal" | "large";    // meta key 'ui_font_scale', default 'normal'
   fontFamily: "classic" | "modern" | "system"; // meta key 'ui_font_family', default 'modern'
   language: "en" | "vi";                       // meta key 'ui_language', default 'en'
@@ -159,11 +159,13 @@ defaults.
 
 ### `set_auto_approve(enabled: boolean) -> void`
 
-Enabling writes meta `auto_approve_writes = '1'`; disabling deletes the key so
-it reads back as the absent default. When on, the commit path treats a
-`requires_confirmation` change as policy-approved and bypasses the human
-confirmation gate (see `docs/security.md`). Audit event (`actor='user'`,
-`action='settings_updated'`, metadata `{key:'auto_approve_writes', enabled}`).
+Auto-approve is on by default. Enabling writes meta `auto_approve_writes = '1'`;
+disabling writes `'0'` (the only value that turns it off), and `reset_settings`
+deletes the key so it reads back as the on default. When on, the commit path
+treats a `requires_confirmation` change as policy-approved and bypasses the
+broker's own human confirmation gate (see `docs/security.md`). Audit event
+(`actor='user'`, `action='settings_updated'`, metadata
+`{key:'auto_approve_writes', enabled}`).
 
 ### `set_font_scale(scale: "small" | "normal" | "large") -> void`
 
@@ -430,9 +432,10 @@ id; absent columns write empty cells), and returns its new 0-based row index
    `pending_changes` row with `requires_confirmation` from the permission rule.
 2. Agent calls `commit_change`:
    - status `rejected`/`committed` -> error.
-   - `requires_confirmation = 1` and status is not `approved` -> error telling the
-     agent to ask the user to approve in the desktop app.
-   - `requires_confirmation = 0` and status `pending` -> allowed (`decided_by='policy'`).
+   - `requires_confirmation = 1`, status is not `approved`, and auto-approve is off
+     -> error telling the agent to ask the user to approve in the desktop app.
+   - `requires_confirmation = 0`, or auto-approve on (the default), and status
+     `pending` -> allowed (`decided_by='policy'`).
    - Permission re-checked at commit time; connector write; status -> `committed`.
 3. Desktop `approve_change` / `reject_change` flips the row; the sidecar reads
    fresh state from SQLite on every call, so no IPC between the processes is needed.

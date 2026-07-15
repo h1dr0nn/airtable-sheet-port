@@ -161,17 +161,17 @@ describe("demo IPC google flow", () => {
     expect(await settle(ipc.listSources())).toEqual([]);
   });
 
-  it("auto-approve is off by default, toggles, and resetSettings clears it", async () => {
+  it("auto-approve is on by default, toggles, and resetSettings restores it", async () => {
     const ipc = createDemoIpc();
 
-    // Mirrors the backend default: meta key absent reads back as off.
-    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(false);
-
-    await settle(ipc.setAutoApprove(true));
+    // Mirrors the backend default: meta key absent reads back as on.
     expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(true);
 
-    await settle(ipc.resetSettings());
+    await settle(ipc.setAutoApprove(false));
     expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(false);
+
+    await settle(ipc.resetSettings());
+    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(true);
 
     const auditActions = (await settle(ipc.listAuditEvents(null, null))).map(
       (event) => event.action

@@ -9,6 +9,7 @@ use serde_json::json;
 
 use super::*;
 use crate::connectors::ConnectorRegistry;
+use crate::constants::META_FLAG_ON;
 use crate::permissions::save_rule;
 use crate::test_fixtures::{demo_db, DEMO_SOURCE_ID, DEMO_TABLE_ID};
 use crate::types::SavePermissionRule;
@@ -146,6 +147,8 @@ fn change_serialization_hides_payload_and_absent_optionals() {
 fn commit_blocks_pending_confirmation_change_with_exact_message() {
     let conn = demo_db();
     let registry = registry();
+    // Auto-approve is on by default, so opt into the confirmation gate first.
+    crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, "0").expect("disable");
     let change = create_append_change(
         &conn,
         SOURCE,
@@ -256,7 +259,7 @@ fn commit_auto_approves_confirmation_change_when_setting_on() {
 fn commit_blocks_confirmation_change_when_setting_off() {
     let conn = demo_db();
     let registry = registry();
-    // Default is off; also assert an explicit "0" is treated as off.
+    // Explicit "0" is the only thing that turns auto-approve off.
     crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, "0").expect("disable");
     let change = create_append_change(
         &conn,

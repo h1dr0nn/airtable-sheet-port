@@ -128,6 +128,17 @@ fn preview_update_creates_pending_change_without_payload() {
 #[test]
 fn commit_requires_approval_then_commits_once() {
     let state = temp_state();
+    // Auto-approve is on by default; opt into the confirmation gate to exercise
+    // the block -> approve -> commit flow.
+    state
+        .with_conn(|conn, _| {
+            db::set_meta(
+                conn,
+                sheet_port_core::constants::META_AUTO_APPROVE_WRITES,
+                "0",
+            )
+        })
+        .expect("disable auto-approve");
     let change_id = preview(&state, 1)["change"]["id"]
         .as_str()
         .expect("change id")

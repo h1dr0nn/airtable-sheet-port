@@ -158,8 +158,8 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   // Rotates the fake email so a second connect models a distinct account.
   let demoConnectCount = 0;
 
-  // App-managed preference mirror; off by default, cleared on reset.
-  let autoApproveWrites = false;
+  // App-managed preference mirror; on by default, restored to on on reset.
+  let autoApproveWrites = true;
   // UI font preferences; mirror the backend defaults, cleared on reset.
   let fontScale: FontScale = DEFAULT_FONT_SCALE;
   let fontFamily: FontFamily = DEFAULT_FONT_FAMILY;
@@ -517,8 +517,9 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     },
     async resetSettings(): Promise<void> {
       await delay();
-      // Prefs-only: mirrors reset_settings clearing the app-managed meta keys.
-      autoApproveWrites = false;
+      // Prefs-only: mirrors reset_settings clearing the app-managed meta keys,
+      // which returns auto-approve to its on default.
+      autoApproveWrites = true;
       fontScale = DEFAULT_FONT_SCALE;
       fontFamily = DEFAULT_FONT_FAMILY;
       language = DEFAULT_LANGUAGE;

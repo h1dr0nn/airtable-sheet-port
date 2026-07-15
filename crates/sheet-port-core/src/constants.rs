@@ -52,13 +52,19 @@ pub const AUDIT_LIMIT_MAX: i64 = 500;
 /// token-refresh flows.
 pub const META_GOOGLE_CLIENT_ID: &str = "google_client_id";
 
-/// Meta key for the auto-approve-writes opt-in. Absent (or any value other
-/// than "1") means off: agent writes still require human confirmation. Value
-/// "1" bypasses the confirmation gate at commit time (see docs/security.md).
+/// Meta key for the auto-approve-writes setting. Absent (the default) or "1"
+/// means on: agent writes commit without a separate desktop approval, since
+/// approval is the agent harness's job, not this broker's. Only an explicit
+/// "0" turns it off, restoring the desktop confirmation gate at commit time
+/// (see docs/security.md).
 pub const META_AUTO_APPROVE_WRITES: &str = "auto_approve_writes";
 
 /// Meta value that turns a boolean opt-in setting on.
 pub const META_FLAG_ON: &str = "1";
+
+/// Meta value that turns a boolean setting explicitly off. Distinct from an
+/// absent key for settings whose default is on (e.g. auto-approve-writes).
+pub const META_FLAG_OFF: &str = "0";
 
 /// Meta key for the UI font scale appearance preference. Absent means the
 /// default ("normal"). See docs/ipc.md "Settings".

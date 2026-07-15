@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::audit;
 use crate::connectors::ConnectorRegistry;
 use crate::constants::{
-    BULK_UPDATE_THRESHOLD, CHANGE_LIST_LIMIT, META_AUTO_APPROVE_WRITES, META_FLAG_ON,
+    BULK_UPDATE_THRESHOLD, CHANGE_LIST_LIMIT, META_AUTO_APPROVE_WRITES, META_FLAG_OFF,
 };
 use crate::db::{get_meta, now_iso};
 use crate::error::{db_error, parse_json, CoreError};
@@ -548,12 +548,13 @@ fn execute(
     }
 }
 
-/// Reads the auto-approve-writes opt-in fresh from `meta`. On means a
-/// requires_confirmation change may commit without a desktop approval; the
-/// setting is intentionally read at commit time so a desktop toggle applies
-/// across processes without any direct IPC.
+/// Reads the auto-approve-writes setting fresh from `meta`. On (the default)
+/// means a requires_confirmation change may commit without a desktop approval,
+/// since approval is the agent harness's responsibility; only an explicit "0"
+/// turns it off. Read at commit time so a desktop toggle applies across
+/// processes without any direct IPC.
 fn auto_approve_enabled(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(get_meta(conn, META_AUTO_APPROVE_WRITES)?.as_deref() == Some(META_FLAG_ON))
+    Ok(get_meta(conn, META_AUTO_APPROVE_WRITES)?.as_deref() != Some(META_FLAG_OFF))
 }
 
 /// Re-derives the evaluated action so commit re-checks the same policy the

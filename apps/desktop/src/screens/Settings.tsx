@@ -430,7 +430,8 @@ function PermissionsCard() {
   const { t } = useTranslation();
   const sourceList = sources ?? [];
   const ruleList = rules ?? [];
-  const autoApproveWrites = settings?.autoApproveWrites ?? false;
+  // Auto-approve is on by default; ?? true keeps the loading state consistent.
+  const autoApproveWrites = settings?.autoApproveWrites ?? true;
 
   return (
     <Card>

@@ -39,10 +39,11 @@ Mechanism (implemented in `crates/sheet-port-core/src/changes.rs`):
    - the change is unknown,
    - status is `rejected` (the user declined in the desktop app),
    - status is `committed` (already applied),
-   - `requires_confirmation` is set and status is not `approved` (the agent is told to
-     ask the user to approve in the desktop app).
-3. Only when `requires_confirmation` is false may a `pending` change auto-approve with
-   `decided_by = 'policy'`.
+   - `requires_confirmation` is set, status is not `approved`, and auto-approve is off
+     (the agent is told to ask the user to approve in the desktop app).
+3. A `pending` change auto-approves with `decided_by = 'policy'` when
+   `requires_confirmation` is false, or when it is true but auto-approve is on (the
+   default; see below).
 
 All status transitions are atomic guarded UPDATEs, so concurrent actors cannot race a
 change into an invalid state or apply it twice:
@@ -55,27 +56,29 @@ change into an invalid state or apply it twice:
 - Commit finalization: `UPDATE ... SET status = 'committed' WHERE id = ? AND
   status = 'approved'`; a missed guard aborts the commit with an error.
 
-## Auto-Approve Opt-In (Weakens the Guarantee)
+## Auto-Approve (On by Default)
 
-Auto-approve is an explicit, off-by-default opt-in that bypasses the human
-confirmation gate for agent writes. It is stored in the shared `meta` table
-under `auto_approve_writes` and toggled from the desktop app
-(`set_auto_approve`, see `docs/ipc.md`).
+Auto-approve bypasses the broker's own human confirmation gate for agent
+writes. Approving agent actions is the agent harness's responsibility, so the
+broker does not gate commits a second time by default. The setting is stored in
+the shared `meta` table under `auto_approve_writes` and toggled from the desktop
+app (`set_auto_approve`, see `docs/ipc.md`).
 
-- Default off: the meta key is absent, and commit blocks every unapproved
-  `requires_confirmation` change exactly as described above. The broker's
-  human-in-the-loop guarantee holds.
-- When on (value `"1"`): the commit path reads the flag fresh (never cached)
-  and treats a `requires_confirmation` change as policy-approved
-  (`decided_by = 'policy'`) instead of refusing it. The change still passes the
-  permission re-check and is still audited and committed atomically - only the
-  human approval step is skipped.
+- Default on: the meta key is absent (or `"1"`). The commit path reads the flag
+  fresh (never cached) and treats a `requires_confirmation` change as
+  policy-approved (`decided_by = 'policy'`) instead of refusing it. The change
+  still passes the permission re-check and is still audited and committed
+  atomically - only the broker's own human approval step is skipped.
+- When off (value `"0"`): commit blocks every unapproved `requires_confirmation`
+  change exactly as described above, restoring the broker's in-app
+  human-in-the-loop confirmation gate.
 
-This deliberately weakens the confirmation guarantee: with auto-approve on, an
-over-permissioned or prompt-injected agent can commit writes without a person
-approving each one. It exists for trusted, low-risk workflows and is kept off
-by default for that reason. Turning it on is recorded in the audit log
-(`settings_updated`); `reset_settings` returns it to the default off state.
+With auto-approve on, an over-permissioned or prompt-injected agent can commit
+writes without a person approving each one inside this app - the permission
+rules (read/write/delete per source) remain the enforced boundary, and the
+staged preview -> commit trail is kept for the audit log and the desktop
+history view. Turning the setting off is recorded in the audit log
+(`settings_updated`); `reset_settings` returns it to the default on state.
 
 ## Permission Re-Check at Commit
 

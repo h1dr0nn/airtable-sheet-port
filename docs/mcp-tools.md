@@ -489,9 +489,11 @@ Permission required: `write`, re-checked at commit time against fresh rules with
 same action evaluated at preview (`update` vs `bulk_update` vs `append`). Revoking write
 access after preview blocks the commit.
 
-Enforcement (see `docs/ipc.md`): when the change was created with
-`requiresConfirmation: true`, the user must approve it in the desktop app first. Changes
-without a confirmation requirement auto-approve at commit with `decidedBy: "policy"`.
+Enforcement (see `docs/ipc.md`): auto-approve is on by default, so a change commits with
+`decidedBy: "policy"` without a separate in-app approval - approving agent actions is the
+agent harness's job. Only if the user has turned auto-approve off does a change created
+with `requiresConfirmation: true` have to be approved in the desktop app first; changes
+without a confirmation requirement always auto-approve at commit.
 
 Example call:
 
