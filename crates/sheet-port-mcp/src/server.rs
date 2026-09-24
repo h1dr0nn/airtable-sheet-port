@@ -20,7 +20,7 @@ use crate::tools;
 
 /// Server identity agents see in `initialize`; matches the TypeScript sidecar.
 const SERVER_NAME: &str = "sheet-port";
-const SERVER_VERSION: &str = "0.3.0";
+const SERVER_VERSION: &str = "2.0.0";
 
 /// Guidance returned in `initialize`: the rules every tool shares, so each tool
 /// description can stay to one or two sentences. Kept accurate to the

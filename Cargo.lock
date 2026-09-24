@@ -3649,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "sheet-port"
-version = "0.3.0"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3665,7 +3665,7 @@ dependencies = [
 
 [[package]]
 name = "sheet-port-core"
-version = "0.3.0"
+version = "2.0.0"
 dependencies = [
  "chrono",
  "keyring",
@@ -3680,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "sheet-port-mcp"
-version = "0.3.0"
+version = "2.0.0"
 dependencies = [
  "hyper",
  "hyper-util",
