@@ -1,7 +1,7 @@
 //! Tauri command wrappers. Names, argument names, and JSON field names match
 //! docs/ipc.md exactly. All broker logic lives in `sheet-port-core`; each
 //! wrapper only locks the shared connection and delegates. Commands that may
-//! perform blocking connector HTTP (table reads, Google connect) are async
+//! perform blocking connector HTTP (table reads, Google bridges) are async
 //! and run on a blocking task so the main thread never stalls.
 
 use std::path::PathBuf;
@@ -11,9 +11,8 @@ use serde::Serialize;
 use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
-    HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_AUTO_APPROVE_WRITES,
-    META_CLOSE_BEHAVIOR, META_CONFIGURED_MCP_CLIENTS, META_FLAG_OFF, META_FLAG_ON,
-    META_GOOGLE_CLIENT_ID, META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY,
+    HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_CLOSE_BEHAVIOR,
+    META_CONFIGURED_MCP_CLIENTS, META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY,
     META_UI_FONT_SCALE, META_UI_LANGUAGE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
 use sheet_port_core::db::McpTransport;
@@ -31,8 +30,6 @@ use sheet_port_core::{
 use tauri::{Manager, State};
 
 const POISONED_LOCK_MESSAGE: &str = "Database connection is unavailable (poisoned lock)";
-const CLIENT_ID_MISSING_MESSAGE: &str =
-    "Google client ID is not configured. Set it in the desktop app settings";
 
 /// Connection, connector registry, and the resolved DB path, managed as Tauri
 /// state. `Arc` so async commands can move clones onto blocking tasks.
@@ -187,13 +184,7 @@ pub fn list_changes(state: Db<'_>, status: Option<String>) -> Result<Vec<Pending
     changes::list_changes(&conn, status.as_deref()).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-pub fn approve_change(state: Db<'_>, change_id: String) -> Result<PendingChange, String> {
-    let conn = lock_conn(&state)?;
-    changes::decide_change(&conn, &change_id, changes::ChangeDecision::Approve)
-        .map_err(|error| error.to_string())
-}
-
+/// Discards a staged (dry-run) change that is still pending.
 #[tauri::command]
 pub fn reject_change(state: Db<'_>, change_id: String) -> Result<PendingChange, String> {
     let conn = lock_conn(&state)?;
@@ -247,9 +238,6 @@ pub fn token_status(state: Db<'_>) -> Result<TokenStatus, String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    /// Auto-approve agent writes, bypassing the confirmation gate at commit
-    /// time. Off (meta key absent or not "1") by default.
-    pub auto_approve_writes: bool,
     /// UI font scale: "small" | "normal" | "large" (default "normal").
     pub font_scale: String,
     /// UI font family: "classic" | "modern" | "system" (default "modern").
@@ -268,17 +256,11 @@ const SETTINGS_RESET_ACTION: &str = "settings_reset";
 #[tauri::command]
 pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
     let conn = lock_conn(&state)?;
-    // On by default: only an explicit "0" turns auto-approve off.
-    let auto_approve_writes = db::get_meta(&conn, META_AUTO_APPROVE_WRITES)
-        .map_err(|error| error.to_string())?
-        .as_deref()
-        != Some(META_FLAG_OFF);
     let font_scale = db::get_ui_font_scale(&conn).map_err(|error| error.to_string())?;
     let font_family = db::get_ui_font_family(&conn).map_err(|error| error.to_string())?;
     let language = db::get_language(&conn).map_err(|error| error.to_string())?;
     let close_behavior = db::get_close_behavior(&conn).map_err(|error| error.to_string())?;
     Ok(AppSettings {
-        auto_approve_writes,
         font_scale,
         font_family,
         language,
@@ -340,26 +322,6 @@ pub fn set_font_family(state: Db<'_>, family: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Enables or disables auto-approve. Auto-approve is the on-by-default state,
-/// so disabling writes an explicit "0" (the confirmation gate) and enabling
-/// writes "1"; a fresh install with no key reads as on.
-#[tauri::command]
-pub fn set_auto_approve(state: Db<'_>, enabled: bool) -> Result<(), String> {
-    let conn = lock_conn(&state)?;
-    let value = if enabled { META_FLAG_ON } else { META_FLAG_OFF };
-    db::set_meta(&conn, META_AUTO_APPROVE_WRITES, value).map_err(|error| error.to_string())?;
-    audit::record(
-        &conn,
-        AuditActor::User,
-        SETTINGS_UPDATED_ACTION,
-        None,
-        None,
-        Some(&json!({ "key": META_AUTO_APPROVE_WRITES, "enabled": enabled })),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 /// Sets the window close behavior ("ask" | "tray" | "quit"); rejects any other
 /// value. Audit event `settings_updated` with the persisted value.
 #[tauri::command]
@@ -379,13 +341,11 @@ pub fn set_close_behavior(state: Db<'_>, behavior: String) -> Result<(), String>
 }
 
 /// Resets app-managed preferences to their defaults. Prefs-only: deletes the
-/// auto-approve and appearance (font scale/family) keys and does NOT touch
-/// Google tokens, the client id/secret, permission rules, sources, changes, or
-/// the audit log itself.
+/// appearance (font scale/family) and language keys and does NOT touch Google
+/// bridges, permission rules, sources, changes, or the audit log itself.
 #[tauri::command]
 pub fn reset_settings(state: Db<'_>) -> Result<(), String> {
     let conn = lock_conn(&state)?;
-    db::delete_meta(&conn, META_AUTO_APPROVE_WRITES).map_err(|error| error.to_string())?;
     db::delete_meta(&conn, META_UI_FONT_SCALE).map_err(|error| error.to_string())?;
     db::delete_meta(&conn, META_UI_FONT_FAMILY).map_err(|error| error.to_string())?;
     db::delete_meta(&conn, META_UI_LANGUAGE).map_err(|error| error.to_string())?;
@@ -984,140 +944,107 @@ pub fn mcp_server_stop(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSta
 // Google account linking (docs/ipc.md "Google Sheets account" section)
 // ---------------------------------------------------------------------------
 
-/// Shared, single-OAuth-app Google configuration. Connected accounts are NOT
-/// here; the UI reads them from `google_list_accounts` so it can show the full
-/// multi-account list.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GoogleConfig {
-    pub client_id: Option<String>,
-    /// The secret itself never crosses IPC; the UI only needs presence.
-    pub has_client_secret: bool,
-}
+const GOOGLE_BRIDGE_ADDED_ACTION: &str = "google_bridge_added";
+const GOOGLE_BRIDGE_REMOVED_ACTION: &str = "google_bridge_removed";
+const GOOGLE_BRIDGE_TESTED_ACTION: &str = "google_bridge_tested";
 
-#[derive(Serialize)]
-pub struct GoogleConnectResult {
-    pub email: String,
-}
-
-#[tauri::command]
-pub fn get_google_config(state: Db<'_>) -> Result<GoogleConfig, String> {
-    let conn = lock_conn(&state)?;
-    let client_id =
-        db::get_meta(&conn, META_GOOGLE_CLIENT_ID).map_err(|error| error.to_string())?;
-    Ok(GoogleConfig {
-        client_id,
-        has_client_secret: google::has_client_secret().unwrap_or(false),
+/// Runs a bridge call on a blocking task with its OWN SQLite connection. A
+/// bridge call waits on Apps Script (up to the HTTP timeout), and holding the
+/// shared mutex that long would freeze every other command (status polling
+/// included).
+async fn with_own_conn_blocking<T, F>(state: &Db<'_>, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, CoreError> + Send + 'static,
+{
+    let db_path = state.path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open_at(&db_path).map_err(|error| error.to_string())?;
+        task(&conn).map_err(|error| error.to_string())
     })
+    .await
+    .map_err(|error| format!("Background task failed: {error}"))?
 }
 
-/// Every connected Google account (sourceId + email), ordered by source id.
+/// Every connected Google account (one per bridge), ordered by source id.
 #[tauri::command]
 pub fn google_list_accounts(state: Db<'_>) -> Result<Vec<google::GoogleAccount>, String> {
     let conn = lock_conn(&state)?;
     google::list_accounts(&conn).map_err(|error| error.to_string())
 }
 
+/// Adds (or replaces) an Apps Script bridge from its web app URL and secret.
+/// Fetches a token to learn the account email, so it runs off the async
+/// runtime. The secret never reaches the audit log.
 #[tauri::command]
-pub fn set_google_client_id(state: Db<'_>, client_id: String) -> Result<(), String> {
-    let trimmed = client_id.trim();
-    if trimmed.is_empty() {
-        return Err("Google client ID must not be empty".to_string());
-    }
-    let conn = lock_conn(&state)?;
-    db::set_meta(&conn, META_GOOGLE_CLIENT_ID, trimmed).map_err(|error| error.to_string())?;
-    // The id itself is not audited: it is configuration, not an event detail.
-    audit::record(
-        &conn,
-        AuditActor::User,
-        "settings_updated",
-        None,
-        None,
-        Some(&json!({ "key": META_GOOGLE_CLIENT_ID })),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-/// Runs the interactive OAuth flow. Blocks (on a blocking task) until the
-/// user finishes or abandons the browser consent, so it uses its OWN SQLite
-/// connection: holding the shared mutex for minutes would freeze every other
-/// command (status polling included).
-#[tauri::command]
-pub async fn google_connect(state: Db<'_>) -> Result<GoogleConnectResult, String> {
-    let db_path = state.path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let conn = db::open_at(&db_path).map_err(|error| error.to_string())?;
-        let client_id = db::get_meta(&conn, META_GOOGLE_CLIENT_ID)
-            .map_err(|error| error.to_string())?
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| CLIENT_ID_MISSING_MESSAGE.to_string())?;
-        let email = match google::connect(&conn, &client_id) {
-            Ok(email) => email,
-            Err(error) => {
-                let message = error.to_string();
-                // Best-effort: a dismissed toast must not be the only trace of
-                // a failed connect, so the audit log keeps the reason.
-                let _ = audit::record(
-                    &conn,
-                    AuditActor::User,
-                    "google_connect_failed",
-                    Some(google::GOOGLE_SOURCE_ID),
-                    None,
-                    Some(&json!({ "error": message })),
-                );
-                return Err(message);
-            }
-        };
+pub async fn google_add_bridge(
+    state: Db<'_>,
+    url: String,
+    secret: String,
+) -> Result<google::GoogleAccount, String> {
+    with_own_conn_blocking(&state, move |conn| {
+        let account = google::add_bridge(conn, &url, &secret)?;
         audit::record(
-            &conn,
+            conn,
             AuditActor::User,
-            "google_connected",
-            Some(&google::source_id_for_email(&email)),
+            GOOGLE_BRIDGE_ADDED_ACTION,
+            Some(&account.source_id),
             None,
-            Some(&json!({ "email": email })),
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(GoogleConnectResult { email })
+            Some(&json!({
+                "email": account.email,
+                "deploymentId": account.deployment_id,
+            })),
+        )?;
+        Ok(account)
     })
     .await
-    .map_err(|error| format!("Background task failed: {error}"))?
 }
 
-/// Stores the Google OAuth client secret in the OS keychain (empty clears
-/// it). Google requires it on token exchange even for desktop-type clients.
+/// Removes one bridge by its "google-sheets:{accountKey}" source id (its
+/// keychain credential, source row, and cached routes). Idempotent.
 #[tauri::command]
-pub fn set_google_client_secret(state: Db<'_>, client_secret: String) -> Result<(), String> {
-    google::set_client_secret(&client_secret).map_err(|error| error.to_string())?;
+pub fn google_remove_bridge(state: Db<'_>, source_id: String) -> Result<(), String> {
     let conn = lock_conn(&state)?;
+    google::remove_bridge(&conn, &source_id).map_err(|error| error.to_string())?;
     audit::record(
         &conn,
         AuditActor::User,
-        "settings_updated",
-        None,
-        None,
-        Some(&json!({ "key": "google_client_secret" })),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-/// Removes one connected Google account by its "google-sheets:{accountKey}"
-/// source id (its keychain credential + source row). Idempotent.
-#[tauri::command]
-pub fn google_disconnect(state: Db<'_>, source_id: String) -> Result<(), String> {
-    let conn = lock_conn(&state)?;
-    google::disconnect(&conn, &source_id).map_err(|error| error.to_string())?;
-    audit::record(
-        &conn,
-        AuditActor::User,
-        "google_disconnected",
+        GOOGLE_BRIDGE_REMOVED_ACTION,
         Some(&source_id),
         None,
         None,
     )
     .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// Forces a fresh token fetch from one bridge. Blocks on the network, so it
+/// runs off the async runtime. The audit event records the outcome either way.
+#[tauri::command]
+pub async fn google_test_bridge(
+    state: Db<'_>,
+    source_id: String,
+) -> Result<google::GoogleAccount, String> {
+    with_own_conn_blocking(&state, move |conn| {
+        let result = google::test_bridge(conn, &source_id);
+        let metadata = match &result {
+            Ok(account) => json!({ "ok": true, "email": account.email }),
+            Err(error) => json!({ "ok": false, "error": error.to_string() }),
+        };
+        // Best effort: a failed audit write must not hide the test result.
+        if let Err(error) = audit::record(
+            conn,
+            AuditActor::User,
+            GOOGLE_BRIDGE_TESTED_ACTION,
+            Some(&source_id),
+            None,
+            Some(&metadata),
+        ) {
+            eprintln!("[sheet-port] could not audit the bridge test: {error}");
+        }
+        result
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,8 +1133,8 @@ pub fn set_autostart_enabled(
 // Workbench (docs/ipc.md "Workbench"). Folder/item CRUD are quick DB ops and
 // run synchronously; the sheet-tab, grid read, and grid write commands hit the
 // connector (Google network) so they run on a blocking task like read_table.
-// Grid writes are DIRECT (no pending-change/approval flow): the desktop user is
-// the approver, so they audit as actor=user at the command boundary.
+// Grid writes are DIRECT (no pending-change flow): they audit as actor=user at
+// the command boundary.
 // ---------------------------------------------------------------------------
 
 const WORKBENCH_CELL_UPDATED_ACTION: &str = "workbench_cell_updated";

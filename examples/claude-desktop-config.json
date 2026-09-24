@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "sheet-port": {
+    "airtable-sheet-port": {
       "command": "C:/absolute/path/to/airtable-sheet-port/target/release/sheet-port-mcp.exe",
       "args": []
     }

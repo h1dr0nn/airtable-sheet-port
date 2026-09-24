@@ -155,11 +155,11 @@ export function CommandPalette({ open, onOpenChange, onNavigate }: CommandPalett
               );
             })}
             <CommandItem
-              value="connect-google-sheets"
-              keywords={[t("palette.connectGoogleSheets")]}
-              onSelect={() => runAndClose(() => onNavigate("sources"))}
+              value="add-google-bridge"
+              keywords={[t("palette.addGoogleBridge")]}
+              onSelect={() => runAndClose(() => onNavigate("settings"))}
             >
-              {t("palette.connectGoogleSheets")}
+              {t("palette.addGoogleBridge")}
             </CommandItem>
           </CommandGroup>
         </CommandList>

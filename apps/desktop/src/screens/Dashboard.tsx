@@ -174,10 +174,7 @@ function DatabaseStatCard() {
 function TokenVaultStatCard() {
   const { data: tokens, isPending } = useTokenStatus();
   const { t } = useTranslation();
-  const rows = [
-    { label: t("dashboard.googleSheets"), stored: tokens?.googleSheets ?? false },
-    { label: t("dashboard.provider"), stored: tokens?.provider ?? false }
-  ];
+  const rows = [{ label: t("dashboard.googleSheets"), stored: tokens?.googleSheets ?? false }];
 
   return (
     <StatCard label={t("dashboard.tokenVault")}>

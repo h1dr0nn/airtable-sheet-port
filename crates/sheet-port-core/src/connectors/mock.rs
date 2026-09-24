@@ -6,7 +6,8 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use super::{
-    clamp_read_window, column_id_for_index, column_index_for_id, js_string, TableConnector,
+    clamp_read_window, column_id_for_index, column_index_for_id, grid_window, js_string, A1Range,
+    GridWindow, TableConnector,
 };
 use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
@@ -181,6 +182,50 @@ impl TableConnector for MockConnector {
             rows,
             total_rows,
         })
+    }
+
+    /// One A1 window over the same raw mirror as [`read_grid`](Self::read_grid)
+    /// (row 1 = the field-name header), sliced locally.
+    fn read_grid_range(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        range: &A1Range,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<GridWindow, CoreError> {
+        let schema = self.require_table(conn, source_id, table_id)?;
+        let records =
+            mock_data::list_records(conn, source_id, table_id, ReadOptions::default())?.records;
+        let first_row = range.start_row.unwrap_or(0);
+        let first_col = range.start_col.unwrap_or(0);
+        let header = schema
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect();
+        let body = records.iter().map(|record| {
+            schema
+                .fields
+                .iter()
+                .map(|field| {
+                    record
+                        .fields
+                        .get(&field.name)
+                        .map(js_string)
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        });
+        // Positional cells from the window's top-left cell, so the shared
+        // windowing sees the same shape the Values API returns.
+        let rows: Vec<Vec<String>> = std::iter::once(header)
+            .chain(body)
+            .skip(first_row)
+            .map(|row| row.into_iter().skip(first_col).collect())
+            .collect();
+        Ok(grid_window(&rows, range, limit, offset))
     }
 
     /// Maps the column letter and the 0-based `row_index` (over all rows, row 0

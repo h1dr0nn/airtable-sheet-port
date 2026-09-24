@@ -9,8 +9,8 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 
 use super::{
-    clamp_read_window, column_id_for_index, column_index_for_id, js_string, parse_a1_range,
-    A1Range, TableConnector,
+    clamp_read_window, column_id_for_index, column_index_for_id, grid_window, js_string,
+    parse_a1_range, window_a1, A1Range, GridWindow, TableConnector,
 };
 use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
@@ -548,6 +548,31 @@ impl TableConnector for GoogleSheetsConnector {
             rows,
             total_rows,
         })
+    }
+
+    /// One A1 window of the tab. Only the window is requested from the Values
+    /// API (which returns it anchored at the window's top-left cell and trims
+    /// trailing empty rows), so a deep slice of a large tab stays cheap.
+    fn read_grid_range(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        range: &A1Range,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<GridWindow, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let sheet = ResolvedSheet::resolve(&token, table_id)?;
+        let rows: Vec<Vec<String>> = fetch_values(
+            &token,
+            &sheet.spreadsheet_id,
+            &sheet.range(&window_a1(range)),
+        )?
+        .iter()
+        .map(|row| row.iter().map(js_string).collect())
+        .collect();
+        Ok(grid_window(&rows, range, limit, offset))
     }
 
     /// Writes one cell via `values.batchUpdate` (RAW). `row_index` is 0-based

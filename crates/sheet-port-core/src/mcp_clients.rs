@@ -234,11 +234,11 @@ fn codex_path() -> Option<PathBuf> {
 
 /// The data-driven client registry. Order is the order the UI lists them.
 ///
-/// TODO(mcp-clients): VSCode Copilot is intentionally `detectable = false`.
-/// Its workspace form is `.vscode/mcp.json` (requires a concrete project root
-/// we do not have here) and it uses a different `{ "servers": { ... } }` shape
-/// than the `mcpServers` clients. Add a `ConfigShape::Servers` variant plus a
-/// project-root-aware path before enabling it - do not point it at a guessed
+/// Note: VSCode Copilot is intentionally `detectable = false`. Its workspace
+/// form is `.vscode/mcp.json` (requires a concrete project root we do not have
+/// here) and it uses a different `{ "servers": { ... } }` shape than the
+/// `mcpServers` clients. Enabling it needs a `ConfigShape::Servers` variant
+/// plus a project-root-aware path; it must never point at a guessed
 /// user-level path.
 fn registry() -> Vec<ClientDef> {
     vec![
@@ -302,7 +302,7 @@ fn registry() -> Vec<ClientDef> {
             id: "vscode-copilot",
             display_name: "VS Code (Copilot)",
             shape: ConfigShape::McpServers,
-            // See registry() TODO: path + shape not settled, so never written.
+            // See the registry() note: path + shape not settled, so never written.
             detectable: false,
             config_path: || None,
         },

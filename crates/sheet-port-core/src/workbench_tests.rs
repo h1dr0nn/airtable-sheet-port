@@ -20,7 +20,7 @@ fn registry() -> ConnectorRegistry {
 }
 
 /// Inserts a connected, keyed Google account source so `add_spreadsheet` finds
-/// a source without running OAuth.
+/// a source without adding a real bridge.
 fn connect_google(conn: &rusqlite::Connection) {
     sources::upsert(
         conn,

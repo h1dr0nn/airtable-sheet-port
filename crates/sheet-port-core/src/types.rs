@@ -13,7 +13,6 @@ pub type JsonMap = serde_json::Map<String, Value>;
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     GoogleSheets,
-    Provider,
     Mock,
 }
 
@@ -21,16 +20,16 @@ impl SourceKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::GoogleSheets => "google_sheets",
-            Self::Provider => "provider",
             Self::Mock => "mock",
         }
     }
 
-    /// Parses the `sources.kind` column (guarded by a CHECK constraint).
+    /// Parses the `sources.kind` column. Kinds this build does not serve
+    /// (e.g. the retired 'provider' stub, still allowed by the CHECK
+    /// constraint) return None.
     pub fn from_db(raw: &str) -> Option<Self> {
         match raw {
             "google_sheets" => Some(Self::GoogleSheets),
-            "provider" => Some(Self::Provider),
             "mock" => Some(Self::Mock),
             _ => None,
         }
@@ -207,7 +206,7 @@ impl WriteAction {
 
     /// Whether this action needs the `delete_records` permission (the Bypass
     /// preset). Deleting a whole sheet tab is gated like a record delete, so
-    /// auto-approve alone never authorizes it.
+    /// write access alone never authorizes it.
     pub fn needs_delete_permission(self) -> bool {
         matches!(self, Self::Delete | Self::DeleteSheet)
     }
@@ -291,7 +290,7 @@ impl ChangeStatus {
 }
 
 /// 'user' when approved/rejected in the desktop app, 'policy' when the broker
-/// auto-approved a change that needs no confirmation.
+/// auto-approved a change at commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeDecider {
@@ -326,7 +325,6 @@ pub struct PendingChange {
     pub change_type: ChangeType,
     pub created_at: String,
     pub status: ChangeStatus,
-    pub requires_confirmation: bool,
     /// Agent-visible diff; the internal `payload` column is NEVER exposed.
     pub diff: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -390,7 +388,6 @@ pub struct PermissionRuleRow {
     pub read: bool,
     pub write: bool,
     pub delete_records: bool,
-    pub require_confirmation_for: Vec<String>,
     pub updated_at: String,
 }
 
@@ -403,7 +400,6 @@ pub struct SavePermissionRule {
     pub read: bool,
     pub write: bool,
     pub delete_records: bool,
-    pub require_confirmation_for: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -429,7 +425,6 @@ pub struct HeartbeatStatus {
 #[serde(rename_all = "camelCase")]
 pub struct TokenStatus {
     pub google_sheets: bool,
-    pub provider: bool,
 }
 
 // ---------------------------------------------------------------------------

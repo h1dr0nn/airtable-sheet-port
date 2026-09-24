@@ -7,7 +7,11 @@ async function settle<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
-describe("demo IPC google flow", () => {
+const BRIDGE_URL = "https://script.google.com/macros/s/AKfycbDemoDeployment1/exec";
+const SECOND_BRIDGE_URL = "https://script.google.com/a/macros/example.com/s/AKfycbDemoDeployment2/exec";
+const BRIDGE_SECRET = "demo-secret";
+
+describe("demo IPC google bridge flow", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -23,49 +27,31 @@ describe("demo IPC google flow", () => {
     expect(await settle(ipc.listPermissionRules())).toEqual([]);
     expect(await settle(ipc.listChanges(null))).toEqual([]);
     expect(await settle(ipc.listAuditEvents(null, null))).toEqual([]);
-    expect((await settle(ipc.tokenStatus())).googleSheets).toBe(false);
-
-    const config = await settle(ipc.getGoogleConfig());
-    // Pre-seeded so the browser preview's Connect button is clickable.
-    expect(config.clientId).not.toBeNull();
-    // Mirrors the real backend: no secret in the keychain until saved.
-    expect(config.hasClientSecret).toBe(false);
-    // Accounts live in google_list_accounts now; a fresh instance has none.
+    expect(await settle(ipc.tokenStatus())).toEqual({ googleSheets: false });
     expect(await settle(ipc.googleListAccounts())).toEqual([]);
   });
 
-  it("setGoogleClientSecret stores presence and empty string clears it", async () => {
+  it("adding a bridge links an account with tables and a seeded staged change", async () => {
     const ipc = createDemoIpc();
 
-    await settle(ipc.setGoogleClientSecret("GOCSPX-demo-secret"));
-    expect((await settle(ipc.getGoogleConfig())).hasClientSecret).toBe(true);
-
-    await settle(ipc.setGoogleClientSecret(""));
-    expect((await settle(ipc.getGoogleConfig())).hasClientSecret).toBe(false);
-  });
-
-  it("connect adds a connected google-sheets source with tables and a seeded change", async () => {
-    const ipc = createDemoIpc();
-
-    const { email } = await settle(ipc.googleConnect());
-    expect(email).toContain("@");
+    const account = await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
+    expect(account.email).toContain("@");
+    expect(account.deploymentId).toBe("AKfycbDemoDeployment1");
+    expect(account.bridgeUrl).toBe(BRIDGE_URL);
 
     const sources = await settle(ipc.listSources());
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({
-      id: "google-sheets",
+      id: account.sourceId,
       kind: "google_sheets",
       status: "connected"
     });
-    expect(sources[0]?.name).toContain(email);
+    expect(sources[0]?.name).toContain(account.email);
 
-    const accounts = await settle(ipc.googleListAccounts());
-    expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.email).toBe(email);
+    expect(await settle(ipc.googleListAccounts())).toEqual([account]);
     expect((await settle(ipc.tokenStatus())).googleSheets).toBe(true);
 
-    const tables = await settle(ipc.listTables("google-sheets"));
-    expect(tables.length).toBeGreaterThan(0);
+    const tables = await settle(ipc.listTables(account.sourceId));
     const firstTable = tables[0];
     if (!firstTable) {
       throw new Error("expected a demo table");
@@ -75,46 +61,84 @@ describe("demo IPC google flow", () => {
 
     const changes = await settle(ipc.listChanges("pending"));
     expect(changes).toHaveLength(1);
-    expect(changes[0]?.sourceId).toBe("google-sheets");
+    expect(changes[0]?.sourceId).toBe(account.sourceId);
 
     const auditActions = (await settle(ipc.listAuditEvents(null, null))).map(
       (event) => event.action
     );
-    expect(auditActions).toContain("google_connected");
+    expect(auditActions).toContain("google_bridge_added");
   });
 
-  it("disconnect removes the source and is idempotent", async () => {
+  it("rejects a malformed URL or an empty secret before calling the bridge", async () => {
     const ipc = createDemoIpc();
-    await settle(ipc.googleConnect());
-    const [account] = await settle(ipc.googleListAccounts());
-    if (!account) {
-      throw new Error("expected a connected demo account");
-    }
 
-    await settle(ipc.googleDisconnect(account.sourceId));
+    await expect(ipc.googleAddBridge("https://example.com/exec", BRIDGE_SECRET)).rejects.toThrow(
+      "bridge URL"
+    );
+    await expect(ipc.googleAddBridge(BRIDGE_URL, "   ")).rejects.toThrow("secret");
+    expect(await settle(ipc.googleListAccounts())).toEqual([]);
+  });
+
+  it("re-adding the same deployment replaces it instead of adding an account", async () => {
+    const ipc = createDemoIpc();
+
+    const first = await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
+    const again = await settle(ipc.googleAddBridge(BRIDGE_URL, "rotated-secret"));
+    expect(again.sourceId).toBe(first.sourceId);
+    expect(await settle(ipc.googleListAccounts())).toHaveLength(1);
+  });
+
+  it("a second deployment adds a distinct account and remove drops just one", async () => {
+    const ipc = createDemoIpc();
+
+    const first = await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
+    const second = await settle(ipc.googleAddBridge(SECOND_BRIDGE_URL, BRIDGE_SECRET));
+    expect(second.email).not.toBe(first.email);
+    expect(second.deploymentId).toBe("AKfycbDemoDeployment2");
+
+    await settle(ipc.googleRemoveBridge(first.sourceId));
+    expect(await settle(ipc.googleListAccounts())).toEqual([second]);
+  });
+
+  it("remove clears the source and is idempotent", async () => {
+    const ipc = createDemoIpc();
+    const account = await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
+
+    await settle(ipc.googleRemoveBridge(account.sourceId));
     expect(await settle(ipc.listSources())).toEqual([]);
     expect(await settle(ipc.googleListAccounts())).toEqual([]);
     expect((await settle(ipc.tokenStatus())).googleSheets).toBe(false);
-    expect(await settle(ipc.listTables("google-sheets"))).toEqual([]);
+    expect(await settle(ipc.listTables(account.sourceId))).toEqual([]);
 
-    // Second disconnect mirrors core::google::disconnect (no error).
-    await expect(settle(ipc.googleDisconnect(account.sourceId))).resolves.toBeUndefined();
+    // Second remove mirrors core::google::remove_bridge (no error).
+    await expect(settle(ipc.googleRemoveBridge(account.sourceId))).resolves.toBeUndefined();
   });
 
-  it("connect adds a second distinct account and disconnect removes just one", async () => {
+  it("test returns the account and records an audit event", async () => {
     const ipc = createDemoIpc();
+    const account = await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
 
-    await settle(ipc.googleConnect());
-    await settle(ipc.googleConnect());
-    const accounts = await settle(ipc.googleListAccounts());
-    expect(accounts).toHaveLength(2);
-    const emails = new Set(accounts.map((account) => account.email));
-    expect(emails.size).toBe(2);
+    expect(await settle(ipc.googleTestBridge(account.sourceId))).toEqual(account);
+    const auditActions = (await settle(ipc.listAuditEvents(null, null))).map(
+      (event) => event.action
+    );
+    expect(auditActions).toContain("google_bridge_tested");
 
-    await settle(ipc.googleDisconnect(accounts[0]!.sourceId));
-    const remaining = await settle(ipc.googleListAccounts());
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.sourceId).toBe(accounts[1]?.sourceId);
+    await expect(ipc.googleTestBridge("google-sheets:missing")).rejects.toThrow("No bridge");
+  });
+
+  it("discarding a pending change marks it rejected by the user", async () => {
+    const ipc = createDemoIpc();
+    await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
+    const [pending] = await settle(ipc.listChanges("pending"));
+    if (!pending) {
+      throw new Error("expected a seeded pending change");
+    }
+
+    const discarded = await settle(ipc.rejectChange(pending.id));
+    expect(discarded.status).toBe("rejected");
+    expect(discarded.decidedBy).toBe("user");
+    expect(await settle(ipc.listChanges("pending"))).toEqual([]);
   });
 
   it("font preferences default, persist, and reset with settings", async () => {
@@ -134,44 +158,6 @@ describe("demo IPC google flow", () => {
     settings = await settle(ipc.getSettings());
     expect(settings.fontScale).toBe("normal");
     expect(settings.fontFamily).toBe("modern");
-  });
-
-  it("setGoogleClientId trims the value and rejects blank input", async () => {
-    const ipc = createDemoIpc();
-
-    await settle(ipc.setGoogleClientId("  my-client-id.apps.googleusercontent.com  "));
-    expect((await settle(ipc.getGoogleConfig())).clientId).toBe(
-      "my-client-id.apps.googleusercontent.com"
-    );
-
-    // Attach the rejection handler before advancing timers so the rejected
-    // promise is never momentarily unhandled.
-    const assertion = expect(ipc.setGoogleClientId("   ")).rejects.toThrow(
-      "Google client ID must not be empty"
-    );
-    await vi.runAllTimersAsync();
-    await assertion;
-  });
-
-  it("connect fails when no client id is configured", async () => {
-    const ipc = createDemoIpc({ googleClientId: null });
-
-    // Rejects before any timer is scheduled, so no timer kick is needed.
-    await expect(ipc.googleConnect()).rejects.toThrow("Google client ID is not configured");
-    expect(await settle(ipc.listSources())).toEqual([]);
-  });
-
-  it("auto-approve is on by default, toggles, and resetSettings restores it", async () => {
-    const ipc = createDemoIpc();
-
-    // Mirrors the backend default: meta key absent reads back as on.
-    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(true);
-
-    await settle(ipc.setAutoApprove(false));
-    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(false);
-
-    await settle(ipc.resetSettings());
-    expect((await settle(ipc.getSettings())).autoApproveWrites).toBe(true);
 
     const auditActions = (await settle(ipc.listAuditEvents(null, null))).map(
       (event) => event.action

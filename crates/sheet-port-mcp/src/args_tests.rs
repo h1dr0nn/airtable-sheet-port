@@ -7,16 +7,105 @@ fn json_map() -> JsonMap {
 #[test]
 fn rejects_empty_source_id() {
     let args = ListTablesArgs {
-        source_id: String::new(),
+        source_id: Some(String::new()),
     };
     let error = args.validate().expect_err("empty sourceId must fail");
     assert_eq!(error.to_string(), "sourceId must be a non-empty string");
 }
 
 #[test]
+fn source_id_is_optional_but_never_empty() {
+    let omitted = SourceTableArgs {
+        source_id: None,
+        table_id: "t".to_string(),
+    };
+    assert!(
+        omitted.validate().is_ok(),
+        "an omitted sourceId auto-routes"
+    );
+
+    let missing_table = SourceTableArgs {
+        source_id: None,
+        table_id: String::new(),
+    };
+    assert_eq!(
+        missing_table
+            .validate()
+            .expect_err("tableId is required")
+            .to_string(),
+        "tableId must be a non-empty string"
+    );
+
+    let parsed: ListTablesArgs = serde_json::from_str("{}").expect("sourceId may be absent");
+    assert!(parsed.source_id.is_none());
+    assert!(parsed.validate().is_ok());
+}
+
+#[test]
+fn read_cells_parses_an_optional_range() {
+    let base = |range: Option<&str>| ReadCellsArgs {
+        source_id: None,
+        table_id: "t".to_string(),
+        range: range.map(str::to_string),
+        limit: None,
+        offset: None,
+    };
+    let (limit, offset, range) = base(None).validate().expect("no range");
+    assert_eq!((limit, offset), (100, 0));
+    assert!(range.is_none());
+
+    let (_, _, range) = base(Some("B40:F60")).validate().expect("block range");
+    let range = range.expect("parsed range");
+    assert_eq!((range.start_col, range.start_row), (Some(1), Some(39)));
+    assert!(base(Some("A:C")).validate().is_ok());
+    assert!(base(Some("5:9")).validate().is_ok());
+
+    let qualified = base(Some("Sheet1!A1:B2"))
+        .validate()
+        .expect_err("a sheet-qualified range is refused");
+    assert!(qualified.to_string().contains("tableId"), "{qualified}");
+    assert_eq!(
+        base(Some(""))
+            .validate()
+            .expect_err("empty range")
+            .to_string(),
+        "range must be a non-empty string"
+    );
+    assert!(base(Some("B40-F60")).validate().is_err());
+}
+
+#[test]
+fn delete_sheet_needs_confirm() {
+    let base = |confirm| DeleteSheetArgs {
+        source_id: None,
+        table_id: "t".to_string(),
+        confirm,
+        dry_run: false,
+    };
+    assert_eq!(
+        base(false).validate().expect_err("no confirm").to_string(),
+        "delete_sheet needs confirm: true"
+    );
+    assert!(base(true).validate().is_ok());
+    let parsed: DeleteSheetArgs =
+        serde_json::from_str(r#"{"tableId":"t"}"#).expect("confirm defaults to false");
+    assert!(parsed.validate().is_err());
+}
+
+#[test]
+fn dry_run_defaults_to_false() {
+    let parsed: CreateSpreadsheetArgs =
+        serde_json::from_str(r#"{"title":"Budget"}"#).expect("parses");
+    assert!(!parsed.dry_run);
+    let parsed: CreateSpreadsheetArgs =
+        serde_json::from_str(r#"{"title":"Budget","dryRun":true}"#).expect("parses");
+    assert!(parsed.dry_run);
+}
+
+#[test]
 fn read_table_applies_defaults() {
     let args = ReadTableArgs {
-        source_id: "mock-source".to_string(),
+        source_id: Some("mock-source".to_string()),
         table_id: "customers".to_string(),
         limit: None,
         offset: None,
@@ -27,7 +116,7 @@ fn read_table_applies_defaults() {
 #[test]
 fn read_table_rejects_out_of_range_limit_and_offset() {
     let base = |limit, offset| ReadTableArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         limit,
         offset,
@@ -49,7 +138,7 @@ fn read_table_rejects_out_of_range_limit_and_offset() {
 #[test]
 fn find_records_enforces_query_length() {
     let base = |query: String| FindRecordsArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         query,
     };
@@ -59,15 +148,16 @@ fn find_records_enforces_query_length() {
 }
 
 #[test]
-fn preview_update_enforces_patch_bounds_and_record_ids() {
+fn update_records_enforces_patch_bounds_and_record_ids() {
     let patch = |record_id: &str| PatchArg {
         record_id: record_id.to_string(),
         fields: json_map(),
     };
-    let base = |patches| PreviewUpdateArgs {
-        source_id: "s".to_string(),
+    let base = |patches| UpdateRecordsArgs {
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         patches,
+        dry_run: false,
     };
     assert!(base(Vec::new()).validate().is_err(), "no patches");
     let too_many: Vec<PatchArg> = (0..101).map(|_| patch("rec")).collect();
@@ -85,10 +175,11 @@ fn preview_update_enforces_patch_bounds_and_record_ids() {
 #[test]
 fn append_records_enforces_batch_bounds() {
     let base = |records| AppendRecordsArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         records,
         format: FormatSpec::default(),
+        dry_run: false,
     };
     assert!(base(Vec::new()).validate().is_err(), "no records");
     let too_many: Vec<JsonMap> = (0..101).map(|_| json_map()).collect();
@@ -99,22 +190,24 @@ fn append_records_enforces_batch_bounds() {
 #[test]
 fn append_records_carries_a_bundled_format_plan_when_present() {
     let args = AppendRecordsArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         records: vec![json_map()],
         format: FormatSpec {
             freeze_rows: Some(1),
             ..FormatSpec::default()
         },
+        dry_run: false,
     };
     let plan = args.validate().expect("valid").expect("plan present");
     assert_eq!(plan.freeze_rows, Some(1));
 
     let plain = AppendRecordsArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         records: vec![json_map()],
         format: FormatSpec::default(),
+        dry_run: false,
     };
     assert!(
         plain.validate().expect("valid").is_none(),
@@ -125,9 +218,10 @@ fn append_records_carries_a_bundled_format_plan_when_present() {
 #[test]
 fn update_cells_parses_refs_and_rejects_bad_ones() {
     let base = |cells| UpdateCellsArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         cells,
+        dry_run: false,
     };
     let write = |cell: &str| CellWriteArg {
         cell: cell.to_string(),
@@ -232,12 +326,13 @@ fn format_spec_rejects_a_plan_that_changes_nothing() {
 #[test]
 fn format_table_args_validate_ids_then_delegate() {
     let missing_id = FormatTableArgs {
-        source_id: String::new(),
+        source_id: Some(String::new()),
         table_id: "t".to_string(),
         format: FormatSpec {
             freeze_rows: Some(1),
             ..empty_spec()
         },
+        dry_run: false,
     };
     assert_eq!(
         missing_id
@@ -248,12 +343,13 @@ fn format_table_args_validate_ids_then_delegate() {
     );
 
     let ok = FormatTableArgs {
-        source_id: "s".to_string(),
+        source_id: Some("s".to_string()),
         table_id: "t".to_string(),
         format: FormatSpec {
             freeze_rows: Some(1),
             ..empty_spec()
         },
+        dry_run: false,
     };
     assert_eq!(ok.validate().expect("valid").freeze_rows, Some(1));
 }

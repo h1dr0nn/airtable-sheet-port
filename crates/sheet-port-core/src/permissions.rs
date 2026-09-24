@@ -9,53 +9,29 @@ use crate::db::now_iso;
 use crate::error::{db_error, CoreError};
 use crate::types::{AuditActor, PermissionRuleRow, SavePermissionRule, WriteAction};
 
-/// Must match `ConfirmationAction` in the shared contract.
-pub const ALLOWED_CONFIRMATION_ACTIONS: [&str; 6] = [
-    "append",
-    "update",
-    "delete",
-    "bulk_update",
-    "formula_change",
-    "format",
-];
+/// The legacy `require_confirmation` column is no longer read; saved rules
+/// always store an empty JSON list there.
+const RULE_COLUMNS: &str = "id, source_id, table_id, can_read, can_write, can_delete, updated_at";
 
-const RULE_COLUMNS: &str =
-    "id, source_id, table_id, can_read, can_write, can_delete, require_confirmation, updated_at";
+/// Value persisted into the legacy `require_confirmation` column.
+const EMPTY_CONFIRMATION_JSON: &str = "[]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteEvaluation {
     pub allowed: bool,
-    pub requires_confirmation: bool,
     pub reason: Option<String>,
 }
 
-fn map_rule(row: &Row<'_>) -> rusqlite::Result<(PermissionRuleRow, String)> {
-    let raw_confirmation: String = row.get(6)?;
-    Ok((
-        PermissionRuleRow {
-            id: row.get(0)?,
-            source_id: row.get(1)?,
-            table_id: row.get(2)?,
-            read: row.get(3)?,
-            write: row.get(4)?,
-            delete_records: row.get(5)?,
-            require_confirmation_for: Vec::new(),
-            updated_at: row.get(7)?,
-        },
-        raw_confirmation,
-    ))
-}
-
-fn finish_rule(
-    (mut rule, raw_confirmation): (PermissionRuleRow, String),
-) -> Result<PermissionRuleRow, CoreError> {
-    rule.require_confirmation_for = serde_json::from_str(&raw_confirmation).map_err(|error| {
-        CoreError::Storage(format!(
-            "Permission rule {} has invalid require_confirmation JSON: {error}",
-            rule.id
-        ))
-    })?;
-    Ok(rule)
+fn map_rule(row: &Row<'_>) -> rusqlite::Result<PermissionRuleRow> {
+    Ok(PermissionRuleRow {
+        id: row.get(0)?,
+        source_id: row.get(1)?,
+        table_id: row.get(2)?,
+        read: row.get(3)?,
+        write: row.get(4)?,
+        delete_records: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
 }
 
 /// Resolves the effective rule with table-specific precedence: an exact
@@ -65,7 +41,7 @@ pub fn find_rule(
     source_id: &str,
     table_id: Option<&str>,
 ) -> Result<Option<PermissionRuleRow>, CoreError> {
-    let row = match table_id {
+    match table_id {
         Some(table_id) => conn
             .query_row(
                 &format!(
@@ -88,8 +64,7 @@ pub fn find_rule(
             )
             .optional(),
     }
-    .map_err(|error| db_error("Could not look up permission rule", error))?;
-    row.map(finish_rule).transpose()
+    .map_err(|error| db_error("Could not look up permission rule", error))
 }
 
 pub fn evaluate_write(
@@ -110,23 +85,17 @@ pub fn evaluate_write(
     let Some(rule) = rule.filter(|rule| rule.write) else {
         return Ok(WriteEvaluation {
             allowed: false,
-            requires_confirmation: false,
             reason: Some(format!("Write access denied for {scope}")),
         });
     };
     if action.needs_delete_permission() && !rule.delete_records {
         return Ok(WriteEvaluation {
             allowed: false,
-            requires_confirmation: false,
             reason: Some(format!("Delete access denied for {scope}")),
         });
     }
     Ok(WriteEvaluation {
         allowed: true,
-        requires_confirmation: rule
-            .require_confirmation_for
-            .iter()
-            .any(|listed| listed == action.as_str()),
         reason: None,
     })
 }
@@ -149,13 +118,13 @@ pub fn assert_can_read(
     Ok(())
 }
 
-/// Returns whether the write requires user confirmation before commit.
+/// Fails with `PermissionDenied` unless the effective rule allows the write.
 pub fn assert_can_write(
     conn: &Connection,
     source_id: &str,
     table_id: &str,
     action: WriteAction,
-) -> Result<bool, CoreError> {
+) -> Result<(), CoreError> {
     let evaluation = evaluate_write(conn, source_id, table_id, action)?;
     if !evaluation.allowed {
         let reason = evaluation
@@ -163,7 +132,7 @@ pub fn assert_can_write(
             .unwrap_or_else(|| format!("Write access denied for {source_id}/{table_id}"));
         return Err(CoreError::PermissionDenied(reason));
     }
-    Ok(evaluation.requires_confirmation)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -180,41 +149,22 @@ pub fn list_rules(conn: &Connection) -> Result<Vec<PermissionRuleRow>, CoreError
         .map_err(|error| db_error("Could not list permission rules", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| db_error("Could not list permission rules", error))?;
-    rows.into_iter().map(finish_rule).collect()
+    Ok(rows)
 }
 
 fn get_rule(conn: &Connection, id: i64) -> Result<PermissionRuleRow, CoreError> {
     let sql = format!("SELECT {RULE_COLUMNS} FROM permission_rules WHERE id = ?1");
-    let row = conn
-        .query_row(&sql, [id], map_rule)
+    conn.query_row(&sql, [id], map_rule)
         .optional()
         .map_err(|error| db_error("Could not load permission rule", error))?
-        .ok_or_else(|| CoreError::NotFound(format!("Permission rule {id} was not found")))?;
-    finish_rule(row)
-}
-
-fn validate_confirmation_actions(actions: &[String]) -> Result<(), CoreError> {
-    for action in actions {
-        if !ALLOWED_CONFIRMATION_ACTIONS.contains(&action.as_str()) {
-            return Err(CoreError::InvalidInput(format!(
-                "Invalid confirmation action '{action}'. Allowed: {}",
-                ALLOWED_CONFIRMATION_ACTIONS.join(", ")
-            )));
-        }
-    }
-    Ok(())
+        .ok_or_else(|| CoreError::NotFound(format!("Permission rule {id} was not found")))
 }
 
 pub fn save_rule(
     conn: &Connection,
     rule: &SavePermissionRule,
 ) -> Result<PermissionRuleRow, CoreError> {
-    validate_confirmation_actions(&rule.require_confirmation_for)?;
-    let confirmation_json =
-        serde_json::to_string(&rule.require_confirmation_for).map_err(|error| {
-            CoreError::Storage(format!("Could not encode confirmation actions: {error}"))
-        })?;
-    let rule_id = upsert_rule(conn, rule, &confirmation_json)?;
+    let rule_id = upsert_rule(conn, rule)?;
 
     let snapshot = serde_json::to_value(rule).map_err(|error| {
         CoreError::Storage(format!(
@@ -232,11 +182,7 @@ pub fn save_rule(
     get_rule(conn, rule_id)
 }
 
-fn upsert_rule(
-    conn: &Connection,
-    rule: &SavePermissionRule,
-    confirmation_json: &str,
-) -> Result<i64, CoreError> {
+fn upsert_rule(conn: &Connection, rule: &SavePermissionRule) -> Result<i64, CoreError> {
     // SQLite's UNIQUE(source_id, table_id) treats NULL table_id rows as
     // distinct, so ON CONFLICT would not fire for source-wide rules. Resolve
     // the target row explicitly instead; callers hold the single shared
@@ -253,8 +199,8 @@ fn upsert_rule(
             .map_err(|error| db_error("Could not look up permission rule", error))?,
     };
     match target_id {
-        Some(id) => update_rule_row(conn, id, rule, confirmation_json),
-        None => insert_rule_row(conn, rule, confirmation_json),
+        Some(id) => update_rule_row(conn, id, rule),
+        None => insert_rule_row(conn, rule),
     }
 }
 
@@ -262,7 +208,6 @@ fn update_rule_row(
     conn: &Connection,
     id: i64,
     rule: &SavePermissionRule,
-    confirmation_json: &str,
 ) -> Result<i64, CoreError> {
     let updated = conn
         .execute(
@@ -276,7 +221,7 @@ fn update_rule_row(
                 rule.read,
                 rule.write,
                 rule.delete_records,
-                confirmation_json,
+                EMPTY_CONFIRMATION_JSON,
                 now_iso(),
                 id
             ],
@@ -290,11 +235,7 @@ fn update_rule_row(
     Ok(id)
 }
 
-fn insert_rule_row(
-    conn: &Connection,
-    rule: &SavePermissionRule,
-    confirmation_json: &str,
-) -> Result<i64, CoreError> {
+fn insert_rule_row(conn: &Connection, rule: &SavePermissionRule) -> Result<i64, CoreError> {
     conn.execute(
         "INSERT INTO permission_rules
              (source_id, table_id, can_read, can_write, can_delete,
@@ -306,7 +247,7 @@ fn insert_rule_row(
             rule.read,
             rule.write,
             rule.delete_records,
-            confirmation_json,
+            EMPTY_CONFIRMATION_JSON,
             now_iso()
         ],
     )

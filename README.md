@@ -1,165 +1,113 @@
 # Airtable - Sheet Port
 
-Airtable - Sheet Port is a safe local port for AI agents to access tables and
-spreadsheets.
+A local broker that gives AI agents typed, audited access to Google Sheets.
 
-It is a desktop permission broker for Google Sheets and local table workflows. The app
-owns tokens and local policy, while AI agents interact only through a narrow local MCP
-server with typed tools for reading, previewing, and committing table changes.
+Airtable - Sheet Port is a Tauri desktop app plus a Rust MCP sidecar (`sheet-port-mcp`).
+Agents talk only to the sidecar's 18 MCP tools (read, search, stage and commit writes,
+format, create and delete tabs). Google access goes through an Apps Script bridge you
+deploy on your own account, so there is no Cloud Console project and no OAuth client to
+set up. Every write goes through a staged change with a diff and lands in the audit log.
 
-## Current Status
+- **Desktop app:** manage Google bridges, permission rules (read / write / delete per
+  source or spreadsheet), change history, audit log, a spreadsheet workbench, MCP
+  client registration, and the optional loopback HTTP transport.
+- **MCP sidecar:** stdio (default) or `127.0.0.1` HTTP. It reads the OS keychain and the
+  shared SQLite database directly, so agents keep working when the desktop app is closed.
+- **All Rust:** `crates/sheet-port-core` holds every broker rule and is shared by both
+  processes. TypeScript exists only in the desktop UI.
 
-Working end to end today (against the built-in mock connector):
+See `docs/architecture.md` for the full picture and `docs/mcp-tools.md` for the tool
+reference.
 
-- The entire broker is Rust. Two local processes share one SQLite database (WAL):
-  the Tauri desktop app and the Rust MCP sidecar (`crates/sheet-port-mcp`). Both are
-  thin shells over one core crate (`crates/sheet-port-core`) that owns all broker
-  logic. No direct IPC; each process reads fresh state from the DB.
-- MCP sidecar with 9 typed tools (`list_sources`, `list_tables`, `describe_table`,
-  `read_table`, `find_records`, `preview_update_records`, `append_records`,
-  `commit_change`, `get_audit_log`) with strict input bounds.
-- Enforced approval flow: writes become pending changes with diffs;
-  `commit_change` refuses changes that require confirmation until the user approves
-  them in the desktop app; status transitions are atomic guarded UPDATEs; permissions
-  are re-checked at commit time.
-- Desktop UI live-wired via typed Tauri IPC (`docs/ipc.md`): Dashboard (sidecar
-  heartbeat status), Data Sources, Tables, Permissions editor, Changes
-  (approve/reject with diff viewer), Audit Log, and Settings with a dual light/dark
-  theme (Light / Dark / System, persisted in localStorage). Custom titlebar
-  (`decorations: false`), tight CSP, minimal capabilities.
-- Persistent audit log written by both processes (agent tool calls, user decisions,
-  permission edits).
-- SQLite-backed mock connector shared by the desktop UI and the sidecar; committed
-  changes persist and show up in both.
-- Keyring stub (service `sheet-port`): the desktop reports whether token entries exist;
-  secrets never leave the Rust process or the OS keychain.
+## Install
 
-Not yet: real Google OAuth, functional Google Sheets / provider connectors, delete
-flows, DB encryption at rest.
+### Download a release
 
-## Tech Stack
+Grab the installer for your platform from the GitHub Releases page (Windows, Linux,
+macOS x64 and arm64). The sidecar binary is bundled next to the app executable, and the
+app updates itself from signed releases.
 
-- Broker: Rust workspace (`Cargo.toml` at the repo root)
-  - `crates/sheet-port-core`: permissions, change lifecycle, audit, connectors,
-    heartbeat, keychain vault, shared SQLite access (rusqlite with bundled SQLite)
-  - `crates/sheet-port-mcp`: stdio MCP sidecar built on `rmcp` (tool schemas via
-    `schemars`, async runtime `tokio`)
-  - `apps/desktop/src-tauri`: Tauri 2 shell; thin `#[tauri::command]` wrappers over
-    the core crate
-- Frontend: React 18 + Vite, Tailwind CSS, TanStack Query + Table, Radix primitives
-  (`packages/ui`), lucide-react; TypeScript types mirrored in `packages/shared`
-- Persistence: shared SQLite (WAL); schema/seed live once at
-  `crates/sheet-port-core/sql/` and are embedded via `include_str!`
-- Secrets: OS keychain via the `keyring` crate (stub for now)
-- Monorepo glue: pnpm workspaces for the frontend packages only
+### Build from source
 
-## Repo Structure
-
-```txt
-crates/
-  sheet-port-core/    Broker core: db.rs, permissions.rs, changes.rs, audit.rs,
-                      heartbeat.rs, mock_data.rs, sources.rs, vault.rs, connectors/
-    sql/              schema.sql + seed.sql (single source of truth)
-  sheet-port-mcp/     Rust MCP sidecar (stdio), the 9 typed tools, heartbeat task
-apps/
-  desktop/            React/Vite frontend + Tauri 2 Rust shell
-    src/              Screens (incl. Settings/theme), hooks, typed IPC client
-                      (browser demo fallback)
-    src-tauri/        commands.rs (thin wrappers over sheet-port-core)
-packages/
-  shared/             TypeScript types for the frontend (mirrors docs/ipc.md)
-  ui/                 Small React UI primitives (Radix-based)
-docs/                 Scope, architecture, security, MCP tools, connectors,
-                      development, IPC contract (docs/ipc.md is canonical)
-examples/             Claude Desktop config
-scripts/              e2e-smoke.mjs (protocol-level MCP smoke test)
-```
-
-## Quick Start
-
-Build the MCP sidecar (requires the Rust toolchain):
+Requirements: Rust stable, Node.js 20+ (24 recommended for the e2e smoke), pnpm 9, and
+the Tauri 2 platform prerequisites.
 
 ```bash
-cargo build --release -p sheet-port-mcp
+pnpm install                                  # frontend packages
+cargo build --release -p sheet-port-mcp       # MCP sidecar -> target/release/sheet-port-mcp(.exe)
+pnpm --filter @sheet-port/desktop tauri:dev   # desktop app (Rust + React)
 ```
 
-Run the desktop app (requires Node 20+, pnpm 9, and the Tauri 2 prerequisites):
+The Tauri build bundles the sidecar as an `externalBin`, which must exist at
+`apps/desktop/src-tauri/binaries/sheet-port-mcp-<target-triple>`. `node
+scripts/stage-sidecar.mjs` builds and copies it there; `tauri:dev` and `tauri:build` run
+it automatically (`pnpm stage:sidecar` in `beforeDevCommand` / `beforeBuildCommand`), so
+you only need to run it by hand when building outside Tauri.
+
+## Configure
+
+### 1. Connect Google accounts (bridge)
+
+Each Google account is connected through its own Apps Script web app. In short: create a
+standalone project at script.google.com, paste `bridge/Code.gs` and
+`bridge/appsscript.json`, run `setup` to get a secret, deploy as a web app (execute as
+Me, access Anyone), then paste the `/exec` URL and the secret into **Settings > Google
+bridges** in the desktop app. Full steps, updating, rotation and revocation:
+[`bridge/README.md`](bridge/README.md).
+
+You can add several bridges. Each account becomes the source `google-sheets:{accountKey}`,
+and tools route to the right account automatically when `sourceId` is omitted.
+
+### 2. Connect an MCP client
+
+- **From the app:** the **MCP Clients** card in Settings detects Claude Desktop, Claude
+  Code, Cursor, Windsurf, Cline, Antigravity and Codex, and registers the sidecar in
+  their config (other servers in the file are preserved).
+- **By hand:** copy `examples/claude-desktop-config.json` into your client config and
+  point `command` at your `sheet-port-mcp` binary (the release build path, or the copy
+  bundled with the installed app).
+
+## Tests
 
 ```bash
-pnpm install
-pnpm --filter @sheet-port/desktop tauri:dev
+cargo test --workspace                          # core + sidecar unit tests
+cargo build -p sheet-port-mcp --features mock   # debug sidecar with the mock connector
+pnpm test                                       # frontend vitest + MCP e2e smoke
+pnpm test:e2e                                   # e2e smoke only (scripts/e2e-smoke.mjs)
 ```
 
-Run tests:
+The mock connector is compiled only with the cargo feature `mock`; release builds do not
+contain it. The e2e smoke drives the sidecar over stdio against a temporary database
+(`SHEET_PORT_DB`) and never touches your real data. More commands in
+`docs/development.md`.
 
-```bash
-cargo test --workspace          # all broker logic (core + MCP crates)
-cargo build -p sheet-port-mcp   # debug binary needed by the e2e smoke
-pnpm test                       # frontend vitest + MCP e2e smoke
-```
+## Releases
 
-Connect Claude Desktop: copy `examples/claude-desktop-config.json` into your Claude
-Desktop configuration and adjust the absolute path. The config launches the release
-binary at `target/release/sheet-port-mcp.exe` (`sheet-port-mcp` on macOS/Linux), so
-run `cargo build --release -p sheet-port-mcp` first.
+Pushing a tag runs `.github/workflows/build-release.yml`, which builds the
+Windows / Linux / macOS (x64 + arm64) matrix, signs the updater bundles, publishes a
+GitHub Release and commits the regenerated `updater.json`.
 
-Both processes share the same database
-(Windows `%APPDATA%\sheet-port\sheet-port.db`; see `docs/development.md` for macOS and
-Linux paths and the `SHEET_PORT_DB` override).
-
-## Dev Scripts
-
-| Command | What it does |
-|---|---|
-| `cargo build --release -p sheet-port-mcp` | Build the MCP sidecar binary |
-| `cargo test --workspace` | Rust unit tests for the whole broker |
-| `cargo clippy --workspace` | Rust lints |
-| `pnpm dev` | Frontend packages in watch mode (parallel) |
-| `pnpm build` | Build the TS packages and the frontend |
-| `pnpm typecheck` | Strict TypeScript, no emit |
-| `pnpm test` | Frontend vitest + MCP e2e smoke (`scripts/e2e-smoke.mjs`) |
-| `pnpm test:e2e` | MCP e2e smoke only (needs `cargo build -p sheet-port-mcp`) |
-| `pnpm lint` / `pnpm format` | Lint / Prettier |
-| `pnpm --filter @sheet-port/desktop dev` | Frontend only at `http://127.0.0.1:8477` (demo fixtures) |
-| `pnpm --filter @sheet-port/desktop tauri:dev` | Full desktop app (Rust + React) |
-
-## Releases and Auto-Update
-
-The desktop app self-updates via `tauri-plugin-updater`: it checks a signed manifest on
-GitHub at launch and surfaces an "Update Available" prompt in the sidebar (and a manual
-"Check for Updates" control in Settings). Releases are cut by pushing a git tag:
-
-| Tag pattern | Result |
+| Tag | Result |
 |---|---|
 | `release-v<x.y.z>` | Stable release |
-| `develop-v<x.y.z>` | Prerelease build |
+| `develop-v<x.y.z>` | Prerelease |
 
 ```bash
-git tag release-v0.0.2
-git push origin release-v0.0.2
+git tag release-v2.0.0
+git push origin release-v2.0.0
 ```
 
-The `.github/workflows/build-release.yml` workflow builds the Windows/Linux/macOS
-(x64 + arm64) matrix, signs the bundles, publishes a GitHub Release, and commits the
-regenerated `updater.json` back to `main`. This requires the maintainer to set the
-`TAURI_SIGNING_PRIVATE_KEY` (and, if used, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
-repository secrets once. See `docs/development.md` for key generation and full details.
+Signing key setup is in `docs/development.md`.
 
-## Security Note
+## Security
 
-Agents never receive provider OAuth tokens, API keys, raw provider API access, shell
-execution, JavaScript execution, or unrestricted writes. The whole broker path is Rust:
-tokens stay between the OS keychain and the Rust process, and no npm package ever runs
-inside the broker. Every write is a pending change with a diff; changes flagged by
-policy require user approval in the desktop app before `commit_change` succeeds,
-permissions are re-checked at commit, and everything is audited to SQLite. See
-`docs/security.md`.
+- Agents never see Google tokens, the bridge secret, raw Google APIs, a shell, or SQL.
+  Tokens and bridge secrets live in the OS keychain (service `sheet-port`).
+- There is **no human approval step inside the broker**. Write tools commit by default
+  and return the diff; approving what an agent does is the job of your agent harness
+  (for example its tool-permission prompts). Use `dryRun: true` to stage without writing,
+  and the permission rules to deny write or delete outright.
+- Anyone holding a bridge URL **and** its secret can mint one-hour tokens for that
+  Google account. Keep the secret private and rotate it if it leaks.
 
-## Roadmap
-
-- Real Google OAuth in Tauri with OS keychain token storage (next up)
-- Functional Google Sheets connector (range-to-record mapping)
-- Additional provider connector (bases, field type mapping, rate limits)
-- Delete flow with explicit confirmation semantics
-- Database encryption at rest
-- UI polish: approval notifications, policy presets, richer diff views
+Full trust model: `docs/security.md`.

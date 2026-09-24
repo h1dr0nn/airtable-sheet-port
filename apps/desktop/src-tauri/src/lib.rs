@@ -38,14 +38,6 @@ pub fn run() {
             // Opens (or creates) the SQLite DB shared with the MCP server and
             // applies schema + seed; see docs/ipc.md for the shared-state model.
             let state = commands::DbState::init().map_err(std::io::Error::other)?;
-            // One-time migration of a pre-multi-account Google connection into
-            // the keyed scheme. Best-effort: a keychain hiccup here must not
-            // block startup, so failures are logged and swallowed.
-            if let Ok(conn) = state.conn.lock() {
-                if let Err(error) = sheet_port_core::google::migrate_legacy_account(&conn) {
-                    eprintln!("[sheet-port] Google account migration failed: {error}");
-                }
-            }
             app.manage(state);
             app.manage(commands::ManagedSidecar::default());
             build_tray(app.handle())?;
@@ -69,13 +61,11 @@ pub fn run() {
             commands::save_permission_rule,
             commands::delete_permission_rule,
             commands::list_changes,
-            commands::approve_change,
             commands::reject_change,
             commands::list_audit_events,
             commands::clear_audit_log,
             commands::token_status,
             commands::get_settings,
-            commands::set_auto_approve,
             commands::set_font_scale,
             commands::set_font_family,
             commands::set_language,
@@ -94,12 +84,10 @@ pub fn run() {
             commands::window_quit,
             commands::get_autostart_enabled,
             commands::set_autostart_enabled,
-            commands::get_google_config,
-            commands::set_google_client_id,
-            commands::set_google_client_secret,
-            commands::google_connect,
             commands::google_list_accounts,
-            commands::google_disconnect,
+            commands::google_add_bridge,
+            commands::google_remove_bridge,
+            commands::google_test_bridge,
             commands::workbench_tree,
             commands::create_workbench_folder,
             commands::rename_workbench_folder,

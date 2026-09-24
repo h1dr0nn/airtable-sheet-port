@@ -1,13 +1,17 @@
 [package]
 name = "sheet-port-mcp"
 version = "0.3.0"
-description = "Airtable - Sheet Port MCP sidecar: stdio server exposing the 11 broker tools to AI agents."
+description = "Airtable - Sheet Port MCP sidecar: stdio server exposing the broker tools to AI agents."
 authors = ["Airtable - Sheet Port"]
 edition = "2021"
 
 [[bin]]
 name = "sheet-port-mcp"
 path = "src/main.rs"
+
+[features]
+# Passes through to sheet-port-core: registers the SQLite-backed mock connector.
+mock = ["sheet-port-core/mock"]
 
 [dependencies]
 sheet-port-core = { path = "../sheet-port-core" }
@@ -22,4 +26,8 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 
 [dev-dependencies]
+# Tests (unit and tests/http_transport.rs) run against the mock connector, so
+# `cargo test -p sheet-port-mcp` needs no --features flag. Release builds stay
+# mock-free because dev-dependency features never reach `cargo build`.
+sheet-port-core = { path = "../sheet-port-core", features = ["mock"] }
 uuid = { workspace = true }

@@ -2,12 +2,12 @@
 //! second connector for the same kind replaces the first.
 
 mod google_sheets;
+#[cfg(any(test, feature = "mock"))]
 mod mock;
-mod provider;
 
 pub use google_sheets::{parse_spreadsheet_id, spreadsheet_title, GoogleSheetsConnector};
+#[cfg(any(test, feature = "mock"))]
 pub use mock::MockConnector;
-pub use provider::ProviderConnector;
 
 use rusqlite::Connection;
 
@@ -76,8 +76,8 @@ pub trait TableConnector: Send + Sync {
 
     // -----------------------------------------------------------------------
     // Workbench grid access (docs/ipc.md "Workbench"). These are DIRECT reads
-    // and writes with no pending-change/approval flow: the desktop user is the
-    // approver. Connectors that cannot back a grid inherit the Unsupported
+    // and writes with no pending-change flow: the desktop user edits the grid
+    // directly. Connectors that cannot back a grid inherit the Unsupported
     // defaults below.
     // -----------------------------------------------------------------------
 
@@ -106,6 +106,24 @@ pub trait TableConnector: Send + Sync {
     ) -> Result<GridData, CoreError> {
         Err(CoreError::Unsupported(
             "This source does not support grid reads".to_string(),
+        ))
+    }
+
+    /// A page of one A1 window of a tab (see [`parse_cells_range`]) as raw
+    /// string cells. Only the window is fetched from the provider; columns
+    /// start at the window's first column and every row carries its real sheet
+    /// row number. `limit`/`offset` page over the window's rows.
+    fn read_grid_range(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _range: &A1Range,
+        _limit: Option<i64>,
+        _offset: Option<i64>,
+    ) -> Result<GridWindow, CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support range reads".to_string(),
         ))
     }
 
@@ -242,11 +260,12 @@ impl ConnectorRegistry {
         Self::default()
     }
 
-    /// Registry with the connectors the broker actually serves today; the
-    /// provider connector joins once its auth lands. MockConnector stays
-    /// registered for tests and the e2e smoke.
+    /// Registry with the connectors the broker serves: Google Sheets, plus the
+    /// SQLite-backed MockConnector in tests and builds with the `mock` feature
+    /// (used by the e2e smoke).
     pub fn with_default_connectors() -> Self {
         let mut registry = Self::new();
+        #[cfg(any(test, feature = "mock"))]
         registry.register(Box::new(MockConnector));
         registry.register(Box::new(GoogleSheetsConnector::new()));
         registry
@@ -366,6 +385,19 @@ impl ConnectorRegistry {
     ) -> Result<GridData, CoreError> {
         self.for_source(conn, source_id)?
             .read_grid(conn, source_id, table_id, limit, offset)
+    }
+
+    pub fn read_grid_range(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        range: &A1Range,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<GridWindow, CoreError> {
+        self.for_source(conn, source_id)?
+            .read_grid_range(conn, source_id, table_id, range, limit, offset)
     }
 
     pub fn write_cell(
@@ -691,6 +723,107 @@ pub(crate) fn parse_a1_range(range: &str) -> Result<A1Range, CoreError> {
 /// result. Used at the MCP boundary so a bad range fails at preview time.
 pub fn validate_a1_range(range: &str) -> Result<(), CoreError> {
     parse_a1_range(range).map(|_| ())
+}
+
+/// One row of a [`GridWindow`]: the 1-based sheet row number plus its string
+/// cells keyed by A1 column letter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridWindowRow {
+    pub row: i64,
+    pub cells: GridRow,
+}
+
+/// A page of one A1 window of a tab, as returned by
+/// [`TableConnector::read_grid_range`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridWindow {
+    /// A1 column letters of the window, starting at its first column.
+    pub columns: Vec<String>,
+    pub rows: Vec<GridWindowRow>,
+    /// Rows in the window that hold data, ignoring limit/offset.
+    pub total_rows: i64,
+}
+
+/// Parses the `range` of a windowed cell read: a bare A1 range within one tab
+/// such as `B40:F60`, `A:C`, or `5:9`. A sheet-qualified range (`Tab!A1:B2`)
+/// is rejected because the tab always comes from the tableId.
+pub fn parse_cells_range(range: &str) -> Result<A1Range, CoreError> {
+    if range.contains('!') {
+        return Err(CoreError::InvalidInput(format!(
+            "'{range}' must not name a sheet: pass the tab in tableId and only the A1 range here"
+        )));
+    }
+    parse_a1_range(range)
+}
+
+/// The provider-side A1 string for a parsed window, capped to the A:ZZ column
+/// window: `B40:F60` stays as is, `A:C` stays whole-column, and a whole-row
+/// window like `5:9` becomes `A5:ZZ9`.
+pub(crate) fn window_a1(range: &A1Range) -> String {
+    let first_col = column_id_for_index(range.start_col.unwrap_or(0));
+    let last_col = column_id_for_index(
+        range
+            .end_col
+            .map_or(GRID_MAX_COLUMNS, |end| end.min(GRID_MAX_COLUMNS))
+            - 1,
+    );
+    match (range.start_row, range.end_row) {
+        (Some(start), Some(end)) => format!("{first_col}{}:{last_col}{end}", start + 1),
+        _ => format!("{first_col}:{last_col}"),
+    }
+}
+
+/// Builds a [`GridWindow`] from rows positioned at the window's top-left cell
+/// (row 0 = the window's first row, cell 0 = its first column). Rows past the
+/// window's height are dropped, the width is the window's own column span (or
+/// the widest row for a whole-row window, capped at A:ZZ), and `limit`/`offset`
+/// page with the standard read bounds.
+pub(crate) fn grid_window(
+    rows: &[Vec<String>],
+    range: &A1Range,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> GridWindow {
+    let first_col = range.start_col.unwrap_or(0);
+    let first_row = range.start_row.unwrap_or(0);
+    let height = range.end_row.map_or(rows.len(), |end| {
+        end.saturating_sub(first_row).min(rows.len())
+    });
+    let rows = &rows[..height];
+    let max_width = GRID_MAX_COLUMNS.saturating_sub(first_col);
+    let width = match range.end_col {
+        Some(end) => end.saturating_sub(first_col),
+        None => rows.iter().map(Vec::len).max().unwrap_or(0).max(1),
+    }
+    .min(max_width);
+    let columns: Vec<String> = (first_col..first_col + width)
+        .map(column_id_for_index)
+        .collect();
+    let (limit, offset) = clamp_read_window(limit, offset);
+    let window_rows = rows
+        .iter()
+        .enumerate()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|(index, row)| GridWindowRow {
+            row: (first_row + index) as i64 + 1,
+            cells: columns
+                .iter()
+                .enumerate()
+                .map(|(position, column)| {
+                    (
+                        column.clone(),
+                        row.get(position).cloned().unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        })
+        .collect();
+    GridWindow {
+        columns,
+        rows: window_rows,
+        total_rows: rows.len() as i64,
+    }
 }
 
 #[cfg(test)]

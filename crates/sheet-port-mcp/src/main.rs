@@ -7,8 +7,12 @@
 //! The transport and port are read once from the shared `meta` table (or the
 //! SHEET_PORT_MCP_TRANSPORT / SHEET_PORT_MCP_PORT env overrides used by tests).
 //! Changing the setting requires a sidecar restart to take effect.
+//!
+//! `sheet-port-mcp bridge add|list|remove` manages Apps Script bridges
+//! headlessly instead of serving MCP (see cli.rs).
 
 mod args;
+mod cli;
 mod http;
 mod logging;
 mod server;
@@ -40,6 +44,25 @@ const ENV_PORT: &str = "SHEET_PORT_MCP_PORT";
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // `bridge ...` subcommands run headless and exit; they do blocking HTTP,
+    // so they run off the async runtime.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match tokio::task::spawn_blocking(move || cli::try_run(&args)).await {
+        Ok(None) => {}
+        Ok(Some(Ok(output))) => {
+            println!("{output}");
+            return ExitCode::SUCCESS;
+        }
+        Ok(Some(Err(error))) => {
+            log(&format!("error: {error}"));
+            return ExitCode::FAILURE;
+        }
+        // A panicked CLI command must fail, not fall through to serving MCP.
+        Err(error) => {
+            log(&format!("error: {error}"));
+            return ExitCode::FAILURE;
+        }
+    }
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -51,11 +74,6 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (conn, db_path) = db::open_default()?;
-    // One-time migration of a pre-multi-account Google connection into the
-    // keyed scheme. Best-effort: a keychain hiccup must not block serving.
-    if let Err(error) = sheet_port_core::google::migrate_legacy_account(&conn) {
-        log(&format!("Google account migration failed: {error}"));
-    }
     let state = Arc::new(BrokerState::new(conn));
     // i64 matches the mcp_heartbeat.pid column affinity.
     let pid = i64::from(std::process::id());

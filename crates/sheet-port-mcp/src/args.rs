@@ -5,7 +5,7 @@
 
 use schemars::JsonSchema;
 use serde::Deserialize;
-use sheet_port_core::connectors::{parse_cell_ref, validate_a1_range};
+use sheet_port_core::connectors::{parse_cell_ref, parse_cells_range, validate_a1_range, A1Range};
 use sheet_port_core::constants::{
     AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, FIND_QUERY_MAX_LEN,
     FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX, FREEZE_MAX, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
@@ -35,6 +35,15 @@ fn require_non_empty(value: &str, field: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// `sourceId` is optional everywhere (omitted = auto-routed), but an explicit
+/// empty string is a caller bug rather than a request to auto-route.
+fn require_source(source_id: Option<&str>) -> Result<(), CoreError> {
+    match source_id {
+        Some(source_id) => require_non_empty(source_id, "sourceId"),
+        None => Ok(()),
+    }
+}
+
 fn require_batch_size(len: usize, field: &str) -> Result<(), CoreError> {
     if !(WRITE_BATCH_MIN..=WRITE_BATCH_MAX).contains(&len) {
         return Err(invalid(format!(
@@ -54,28 +63,43 @@ fn bounded_limit(limit: Option<i64>, default: i64, min: i64, max: i64) -> Result
     Ok(limit)
 }
 
+/// The read-page bounds shared by read_table, read_formulas, and read_cells.
+fn read_window(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), CoreError> {
+    let limit = bounded_limit(limit, READ_LIMIT_DEFAULT, READ_LIMIT_MIN, READ_LIMIT_MAX)?;
+    let offset = offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(invalid("offset must be an integer >= 0".to_string()));
+    }
+    Ok((limit, offset))
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTablesArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
 }
 
 impl ListTablesArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")
+        require_source(self.source_id.as_deref())
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceTableArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
 }
 
 impl SourceTableArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")
     }
 }
@@ -83,7 +107,10 @@ impl SourceTableArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadTableArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     #[serde(default)]
     pub limit: Option<i64>,
@@ -94,33 +121,62 @@ pub struct ReadTableArgs {
 impl ReadTableArgs {
     /// Returns the effective `(limit, offset)` after defaults and bounds.
     pub fn validate(&self) -> Result<(i64, i64), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
-        let limit = bounded_limit(
-            self.limit,
-            READ_LIMIT_DEFAULT,
-            READ_LIMIT_MIN,
-            READ_LIMIT_MAX,
-        )?;
-        let offset = self.offset.unwrap_or(0);
-        if offset < 0 {
-            return Err(invalid("offset must be an integer >= 0".to_string()));
-        }
-        Ok((limit, offset))
+        read_window(self.limit, self.offset)
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadCellsArgs {
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
+    pub table_id: String,
+    /// Optional A1 window within the tab, like "B40:F60", "A:C", or "5:9" (no sheet name).
+    #[serde(default)]
+    pub range: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+impl ReadCellsArgs {
+    /// Returns the effective `(limit, offset)` plus the parsed window when a
+    /// `range` was given.
+    pub fn validate(&self) -> Result<(i64, i64, Option<A1Range>), CoreError> {
+        require_source(self.source_id.as_deref())?;
+        require_non_empty(&self.table_id, "tableId")?;
+        let range = self
+            .range
+            .as_deref()
+            .map(|range| {
+                require_non_empty(range, "range")?;
+                parse_cells_range(range)
+            })
+            .transpose()?;
+        let (limit, offset) = read_window(self.limit, self.offset)?;
+        Ok((limit, offset, range))
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FindRecordsArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     pub query: String,
 }
 
 impl FindRecordsArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
         let length = self.query.chars().count();
         if !(FIND_QUERY_MIN_LEN..=FIND_QUERY_MAX_LEN).contains(&length) {
@@ -141,15 +197,21 @@ pub struct PatchArg {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewUpdateArgs {
-    pub source_id: String,
+pub struct UpdateRecordsArgs {
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     pub patches: Vec<PatchArg>,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
-impl PreviewUpdateArgs {
+impl UpdateRecordsArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
         require_batch_size(self.patches.len(), "patches")?;
         for (index, patch) in self.patches.iter().enumerate() {
@@ -162,20 +224,26 @@ impl PreviewUpdateArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AppendRecordsArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     pub records: Vec<JsonMap>,
-    /// Optional formatting (same fields as preview_format_table) applied in the
-    /// same commit as the append, so a fresh table is written and styled at once.
+    /// Optional formatting (same fields as format_table) applied in the same
+    /// commit as the append, so a fresh table is written and styled at once.
     #[serde(flatten)]
     pub format: FormatSpec,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl AppendRecordsArgs {
     /// Validates the append and returns the bundled format plan when the caller
     /// supplied any formatting, or `None` for a plain append.
     pub fn validate(&self) -> Result<Option<FormatPlan>, CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
         require_batch_size(self.records.len(), "records")?;
         if self.format.is_present() {
@@ -221,7 +289,7 @@ pub struct ColumnWidthArg {
     pub pixels: i64,
 }
 
-/// The formatting fields shared by `preview_format_table` and the optional
+/// The formatting fields shared by `format_table` and the optional
 /// formatting bundled into `append_records`. Flattened into both arg structs so
 /// the wire shape stays identical in either place.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -296,16 +364,22 @@ impl FormatSpec {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FormatTableArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     #[serde(flatten)]
     pub format: FormatSpec,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl FormatTableArgs {
     /// Validates ids and returns the typed [`FormatPlan`]; rejects an empty plan.
     pub fn validate(&self) -> Result<FormatPlan, CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
         self.format.to_plan()
     }
@@ -506,16 +580,22 @@ pub struct CellWriteArg {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCellsArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     pub cells: Vec<CellWriteArg>,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl UpdateCellsArgs {
     /// Validates ids, batch bounds, and every cell reference, returning the
     /// typed writes the staged-change layer stores.
     pub fn validate(&self) -> Result<Vec<CellWrite>, CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
         require_batch_size(self.cells.len(), "cells")?;
         self.cells
@@ -542,13 +622,18 @@ impl UpdateCellsArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSpreadsheetArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
     pub title: String,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl CreateSpreadsheetArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_title(&self.title)
     }
 }
@@ -556,14 +641,20 @@ impl CreateSpreadsheetArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSheetArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
     pub title: String,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl CreateSheetArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
+        require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
         require_title(&self.title)
     }
@@ -572,14 +663,27 @@ impl CreateSheetArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteSheetArgs {
-    pub source_id: String,
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
     pub table_id: String,
+    /// Must be true: deleting a tab is destructive.
+    #[serde(default)]
+    pub confirm: bool,
+    /// true stages the change and returns its diff without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl DeleteSheetArgs {
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_non_empty(&self.source_id, "sourceId")?;
-        require_non_empty(&self.table_id, "tableId")
+        require_source(self.source_id.as_deref())?;
+        require_non_empty(&self.table_id, "tableId")?;
+        if !self.confirm {
+            return Err(invalid("delete_sheet needs confirm: true".to_string()));
+        }
+        Ok(())
     }
 }
 

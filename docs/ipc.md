@@ -26,7 +26,7 @@ type AppStatus = {
   mcpRunning: boolean;      // any mcp_heartbeat row with last_seen within 30s
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
-  pendingCount: number;     // pending_changes WHERE status = 'pending'
+  pendingCount: number;     // pending_changes WHERE status = 'pending' (staged dry runs)
 };
 ```
 
@@ -36,14 +36,14 @@ Rows from `sources`, mapped to `DataSource` (id, kind, name, status).
 
 ### `list_tables(sourceId: string) -> TableRef[]`
 
-Routed through the `ConnectorRegistry` by the source's kind (mock ->
-`mock_tables`, google_sheets -> Drive spreadsheet listing). Unknown
-sourceId -> `Ok([])`.
+Routed through the `ConnectorRegistry` by the source's kind (google_sheets ->
+Drive spreadsheet listing; mock -> `mock_tables`, only in builds with the cargo
+feature `mock`). Unknown sourceId -> `Ok([])`.
 
 ### `describe_table(sourceId: string, tableId: string) -> TableSchema`
 
-Routed through the `ConnectorRegistry` (mock -> `mock_tables.fields` JSON,
-google_sheets -> header row + inferred types). Unknown table ->
+Routed through the `ConnectorRegistry` (google_sheets -> header row + inferred
+types; mock -> `mock_tables.fields` JSON under the `mock` feature). Unknown table ->
 `Err("Unknown ... table ...")`.
 
 ### `read_table(sourceId: string, tableId: string, limit: number | null, offset: number | null) -> TablePage`
@@ -68,10 +68,12 @@ type PermissionRuleRow = {
   read: boolean;
   write: boolean;
   deleteRecords: boolean;
-  requireConfirmationFor: string[]; // ConfirmationAction[]
   updatedAt: string;
 };
 ```
+
+Rules carry only the three toggles; the per-action confirmation list was removed
+in 2.0.0. A rule created for a new bridge source allows read, write and delete.
 
 ### `save_permission_rule(rule: SavePermissionRule) -> PermissionRuleRow`
 
@@ -83,7 +85,6 @@ type SavePermissionRule = {
   read: boolean;
   write: boolean;
   deleteRecords: boolean;
-  requireConfirmationFor: string[];
 };
 ```
 
@@ -99,16 +100,18 @@ Writes audit event `permission_rule_deleted`.
 `PendingChange` from `@sheet-port/shared` (diff = parsed JSON; `payload` is NEVER
 returned). `status = null` -> all, newest first, limit 200.
 
-### `approve_change(changeId: string) -> PendingChange`
-
-Transition `pending -> approved` only (else `Err`). Sets `decided_at` (now, ISO),
-`decided_by='user'`. Audit event `change_approved` (actor user).
+The Changes screen is a history view of these rows. Most agent writes are staged
+and committed in one call, so they appear already `committed`; only changes an
+agent staged with `dryRun: true` stay `pending`.
 
 ### `reject_change(changeId: string) -> PendingChange`
 
-Transition `pending -> rejected` only. Same bookkeeping, audit `change_rejected`.
+Discards a staged change: transition `pending -> rejected` only (else `Err`).
+Sets `decided_at` (now, ISO), `decided_by='user'`. Audit event `change_rejected`
+(actor user). `commit_change` refuses a rejected change afterwards.
 
-Note: commit stays agent-side (`commit_change` MCP tool). The desktop only decides.
+There is no approve command: the desktop cannot commit and does not gate
+commits. Committing stays agent-side (`commit_change` MCP tool).
 
 ### `list_audit_events(limit: number | null, offset: number | null) -> AuditEvent[]`
 
@@ -127,13 +130,13 @@ event.
 type TokenStatus = {
   googleSheets: boolean; // at least one Google account is connected (a keyed
                          // 'google-sheets:{accountKey}' source row exists)
-  provider: boolean;     // OS keychain entry exists (service "sheet-port", user "provider")
 };
 ```
 
 `googleSheets` reflects whether any Google account is connected. The OS keychain
 cannot be enumerated, so account presence is derived from the `sources` table,
-which the connect/disconnect flow keeps in lockstep with the keychain entries.
+which `google_add_bridge` / `google_remove_bridge` keep in lockstep with the
+keychain entries. The `provider` field was removed in 2.0.0.
 No tokens are ever returned to the frontend or agents.
 
 ## Settings (app-managed preferences)
@@ -146,7 +149,6 @@ this contract and are not reset by `reset_settings`.
 
 ```ts
 type AppSettings = {
-  autoApproveWrites: boolean;                 // meta key 'auto_approve_writes' !== '0' (on by default)
   fontScale: "small" | "normal" | "large";    // meta key 'ui_font_scale', default 'normal'
   fontFamily: "classic" | "modern" | "system"; // meta key 'ui_font_family', default 'modern'
   language: "en" | "vi";                       // meta key 'ui_language', default 'en'
@@ -156,16 +158,6 @@ type AppSettings = {
 `fontScale` / `fontFamily` / `language` are appearance preferences the frontend
 applies to the UI. Absent (or out-of-contract) meta values read back as their
 defaults.
-
-### `set_auto_approve(enabled: boolean) -> void`
-
-Auto-approve is on by default. Enabling writes meta `auto_approve_writes = '1'`;
-disabling writes `'0'` (the only value that turns it off), and `reset_settings`
-deletes the key so it reads back as the on default. When on, the commit path
-treats a `requires_confirmation` change as policy-approved and bypasses the
-broker's own human confirmation gate (see `docs/security.md`). Audit event
-(`actor='user'`, `action='settings_updated'`, metadata
-`{key:'auto_approve_writes', enabled}`).
 
 ### `set_font_scale(scale: "small" | "normal" | "large") -> void`
 
@@ -189,9 +181,9 @@ out-of-contract stored value reads back as the default (`'en'`). Audit event
 ### `reset_settings() -> void`
 
 Resets app-managed preferences to their defaults: deletes the
-`auto_approve_writes`, `ui_font_scale`, `ui_font_family`, and `ui_language` meta
-keys. Prefs-only - does NOT touch Google tokens, the client id/secret,
-permission rules, sources, pending changes, or the audit log. Audit event
+`ui_font_scale`, `ui_font_family`, and `ui_language` meta keys. Prefs-only -
+does NOT touch Google bridges or tokens, permission rules, sources, changes, or
+the audit log. Audit event
 (`actor='user'`, `action='settings_reset'`).
 
 ## MCP transport
@@ -265,78 +257,59 @@ Kills the managed sidecar child if one is running. Idempotent: no managed child
 is not an error. Audit event (`actor='user'`, `action='mcp_server_stopped'`,
 metadata `{pid}`) is written only when a child was actually stopped.
 
-## Google Sheets account (multi-account)
+## Google Sheets accounts (bridge pool)
 
-Multiple Google accounts can be connected at once. Each connected account is
-its own source row with id `google-sheets:{accountKey}` (accountKey = the
-sanitized email), kind `google_sheets`, name `Google Sheets ({email})`, plus
-its own OS keychain entry `google_sheets:{accountKey}` holding that account's
-tokens. The OAuth client id (`meta.google_client_id`) and client secret
-(keychain `google_client_secret`) are SHARED across all accounts - there is a
-single OAuth app.
+Google access goes through Apps Script bridges (`bridge/`, setup in
+`bridge/README.md`); there is no OAuth flow, client id, or client secret. The
+app keeps a pool of bridges, one per Google account:
 
-Backward compatibility: on startup, a pre-multi-account single connection (bare
-`google-sheets` source row + legacy `google_sheets` keychain entry) is migrated
-into the keyed scheme (accountKey derived from the stored email, or `default`).
-The migration is idempotent and best-effort.
+- Each bridge is `{bridgeUrl, secret, deploymentId}` (deploymentId parsed from
+  the `/exec` URL) plus a cached access token, stored in the OS keychain under
+  service `sheet-port`, user `google_sheets:{accountKey}`. accountKey is the
+  sanitized email the bridge reports.
+- Each account is one source row: id `google-sheets:{accountKey}`, kind
+  `google_sheets`, name `Google Sheets ({email})`. Adding a bridge for an email
+  that is already connected replaces it.
+- The token is re-fetched from the bridge when it is within 60s of expiry. The
+  MCP sidecar reads the keychain directly, so agents work while the desktop app
+  is closed.
+- The secret and tokens never cross IPC.
 
-### `get_google_config() -> GoogleConfig`
-
-```ts
-type GoogleConfig = {
-  clientId: string | null;   // meta key 'google_client_id' (shared)
-  hasClientSecret: boolean;  // keychain 'google_client_secret' present (shared)
-};
-```
-
-Shared config only. The connected accounts are read separately from
-`google_list_accounts` so the UI can render the full list.
-
-### `google_list_accounts() -> GoogleAccount[]`
+Removed in 2.0.0: `get_google_config`, `set_google_client_id`,
+`set_google_client_secret`, `google_connect`, `google_disconnect`.
 
 ```ts
 type GoogleAccount = {
-  sourceId: string; // 'google-sheets:{accountKey}'
-  email: string;
+  sourceId: string;     // 'google-sheets:{accountKey}'
+  email: string;        // as reported by the bridge
+  deploymentId: string; // parsed from the bridge URL
+  bridgeUrl: string;    // the /exec URL (not secret on its own)
 };
 ```
 
-Every connected Google account, ordered by source id. Derived from the keyed
-`google_sheets` source rows.
+### `google_list_accounts() -> GoogleAccount[]`
 
-### `set_google_client_id(clientId: string) -> void`
+Every connected account, ordered by source id.
 
-Trims and stores the OAuth desktop client id in `meta` (`google_client_id`).
-Empty -> `Err("Google client ID must not be empty")`. Audit event
-(`actor='user'`, `action='settings_updated'`, metadata `{key}` only - the id
-value is never audited).
+### `google_add_bridge(url: string, secret: string) -> GoogleAccount`
 
-### `set_google_client_secret(clientSecret: string) -> void`
+Parses the deploymentId from the `/exec` URL, then calls the bridge once with
+the secret. On `ok: true` it derives accountKey from the reported email, stores
+the bridge and the fresh token in the keychain, upserts the
+`google-sheets:{accountKey}` source row, and gives the new source read, write
+and delete permission. An existing account with the same email is replaced. A
+wrong secret or an unreachable bridge -> `Err` with a user-displayable message.
+The secret is never written to the audit log.
 
-Stores the shared OAuth client secret in the OS keychain (empty clears it).
-Audit event (`actor='user'`, `action='settings_updated'`, metadata
-`{key:'google_client_secret'}`).
+### `google_remove_bridge(sourceId: string) -> void`
 
-### `google_connect() -> { email: string }`
+Removes ONE account: its keychain entry and its source row. Rejects a
+`sourceId` that is not a keyed Google account.
 
-Connects a NEW account (or updates an existing one when the same email is used
-again). Runs the full interactive OAuth flow (system browser consent + loopback
-redirect + PKCE token exchange) using the stored client id; missing id ->
-`Err("Google client ID is not configured. Set it in the desktop app settings")`.
-Blocks until the user finishes or the flow times out, so it is an async command
-executed on a blocking task with its OWN SQLite connection (the shared one stays
-free for status polling). On success the account key is derived from the
-signed-in email, that account's tokens land in the OS keychain, its
-`google-sheets:{accountKey}` sources row is upserted, and an audit event
-`google_connected` (actor user, source = the account's source id, metadata
-`{email}`) is written.
+### `google_test_bridge(sourceId: string) -> GoogleAccount`
 
-### `google_disconnect(sourceId: string) -> void`
-
-Removes ONE account: its keychain credential and its
-`google-sheets:{accountKey}` sources row (idempotent). Rejects a `sourceId`
-that is not a keyed Google account. Audit event `google_disconnected` (actor
-user, source = `sourceId`).
+Fetches a token from the account's bridge and returns the account as the bridge
+reports it. `Err` when the bridge rejects the secret or cannot be reached.
 
 ## Workbench
 
@@ -345,7 +318,7 @@ A user-curated tree of spreadsheets grouped into folders, distinct from the raw
 `workbench_items` (see `schema.sql`); deleting a folder falls its items back to
 Ungrouped (`folder_id` NULL) via `ON DELETE SET NULL`. Every folder/item
 mutation records an audit event (actor user). Grid reads and writes are DIRECT
-(no pending-change/approval flow): the desktop user is the approver.
+(not staged as pending changes): the desktop user edits the sheet in place.
 
 ```ts
 type WorkbenchFolder = { id: string; name: string; position: number };
@@ -426,19 +399,19 @@ Appends a row at the bottom, ordered by column letter (values keyed by column
 id; absent columns write empty cells), and returns its new 0-based row index
 (= the previous `totalRows`). Audit `workbench_row_appended` (actor user).
 
-## Confirmation enforcement (cross-process)
+## Change pipeline (cross-process)
 
-1. Agent calls `preview_update_records` / `append_records` -> sidecar inserts a
-   `pending_changes` row with `requires_confirmation` from the permission rule.
-2. Agent calls `commit_change`:
-   - status `rejected`/`committed` -> error.
-   - `requires_confirmation = 1`, status is not `approved`, and auto-approve is off
-     -> error telling the agent to ask the user to approve in the desktop app.
-   - `requires_confirmation = 0`, or auto-approve on (the default), and status
-     `pending` -> allowed (`decided_by='policy'`).
-   - Permission re-checked at commit time; connector write; status -> `committed`.
-3. Desktop `approve_change` / `reject_change` flips the row; the sidecar reads
-   fresh state from SQLite on every call, so no IPC between the processes is needed.
+1. An agent write tool (`update_records`, `append_records`, `update_cells`,
+   `format_table`, `create_spreadsheet`, `create_sheet`, `delete_sheet`) makes the
+   sidecar check the permission rule and insert a `pending_changes` row with the
+   diff.
+2. Without `dryRun`, the same call commits it: permission re-checked, connector
+   write, status -> `committed`. With `dryRun: true` the row stays `pending` until
+   `commit_change`.
+3. `commit_change` refuses `rejected` and `committed` rows; there is no approval
+   state to wait for.
+4. Desktop `reject_change` discards a `pending` row; the sidecar reads fresh state
+   from SQLite on every call, so no IPC between the processes is needed.
 
 ## Window / capabilities
 

@@ -1,6 +1,6 @@
 //! Ports the ChangeService and ChangeStore vitest suites onto the real
 //! SQLite layer plus the mock connector. Covers every commit enforcement
-//! branch; error wording is asserted verbatim because agents match on it.
+//! branch (there is no approval gate: pending changes commit by policy); error wording is asserted verbatim because agents match on it.
 //! Fresh databases are empty since schema v2, so each test opens a demo_db
 //! with the mock-source/customers fixture installed.
 
@@ -9,7 +9,6 @@ use serde_json::json;
 
 use super::*;
 use crate::connectors::ConnectorRegistry;
-use crate::constants::META_FLAG_ON;
 use crate::permissions::save_rule;
 use crate::test_fixtures::{demo_db, DEMO_SOURCE_ID, DEMO_TABLE_ID};
 use crate::types::SavePermissionRule;
@@ -22,7 +21,7 @@ fn registry() -> ConnectorRegistry {
 }
 
 /// Overwrites the fixture customers rule so each test controls the policy.
-fn set_rule(conn: &Connection, write: bool, require_confirmation_for: &[&str]) {
+fn set_rule(conn: &Connection, write: bool) {
     let rule = SavePermissionRule {
         id: None,
         source_id: SOURCE.to_string(),
@@ -30,10 +29,6 @@ fn set_rule(conn: &Connection, write: bool, require_confirmation_for: &[&str]) {
         read: true,
         write,
         delete_records: false,
-        require_confirmation_for: require_confirmation_for
-            .iter()
-            .map(|action| action.to_string())
-            .collect(),
     };
     save_rule(conn, &rule).expect("set rule");
 }
@@ -71,11 +66,10 @@ fn append_change_is_pending_with_after_only_diff() {
     let conn = demo_db();
     let records = vec![fields(&[("Name", json!("Delta"))])];
 
-    let change = create_append_change(&conn, SOURCE, TABLE, records.clone(), true).expect("create");
+    let change = create_append_change(&conn, SOURCE, TABLE, records.clone()).expect("create");
 
     assert_eq!(change.status, ChangeStatus::Pending);
     assert_eq!(change.change_type, ChangeType::Append);
-    assert!(change.requires_confirmation);
     assert_eq!(change.diff, json!({ "after": [{ "Name": "Delta" }] }));
     assert!(change.id.starts_with("chg_"));
 
@@ -99,8 +93,7 @@ fn update_change_builds_before_after_diff_per_record() {
         patch("rec_missing", &[("Name", json!("Ghost"))]),
     ];
 
-    let change =
-        create_update_change(&conn, &registry(), SOURCE, TABLE, patches, false).expect("create");
+    let change = create_update_change(&conn, &registry(), SOURCE, TABLE, patches).expect("create");
 
     let mut expected_after = seed_1_fields();
     expected_after["Seats"] = json!(25);
@@ -121,7 +114,6 @@ fn change_serialization_hides_payload_and_absent_optionals() {
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        true,
     )
     .expect("create");
 
@@ -150,33 +142,6 @@ fn change_serialization_hides_payload_and_absent_optionals() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn commit_blocks_pending_confirmation_change_with_exact_message() {
-    let conn = demo_db();
-    let registry = registry();
-    // Auto-approve is on by default, so opt into the confirmation gate first.
-    crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, "0").expect("disable");
-    let change = create_append_change(
-        &conn,
-        SOURCE,
-        TABLE,
-        vec![fields(&[("Name", json!("Delta"))])],
-        true,
-    )
-    .expect("create");
-
-    let error = commit(&conn, &registry, &change.id).expect_err("must block");
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "Change {} requires user approval in the Airtable - Sheet Port desktop app before commit",
-            change.id
-        )
-    );
-    let still = get_change(&conn, &change.id).expect("get").expect("exists");
-    assert_eq!(still.status, ChangeStatus::Pending);
-}
-
-#[test]
 fn commit_succeeds_after_user_approval() {
     let conn = demo_db();
     let registry = registry();
@@ -186,7 +151,6 @@ fn commit_succeeds_after_user_approval() {
         SOURCE,
         TABLE,
         vec![patch("rec_seed_1", &[("Seats", json!(25))])],
-        true,
     )
     .expect("create");
     assert!(transition(
@@ -213,16 +177,15 @@ fn commit_succeeds_after_user_approval() {
 }
 
 #[test]
-fn commit_auto_approves_by_policy_when_no_confirmation_needed() {
+fn commit_auto_approves_pending_change_by_policy() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
+    set_rule(&conn, true);
     let change = create_append_change(
         &conn,
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        false,
     )
     .expect("create");
 
@@ -255,7 +218,6 @@ fn append_with_format_stores_the_plan_in_payload_and_diff() {
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
         Some(plan.clone()),
-        false,
     )
     .expect("create");
 
@@ -277,14 +239,13 @@ fn append_with_format_stores_the_plan_in_payload_and_diff() {
 fn commit_append_with_format_commits_rows_then_reports_a_format_failure() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
+    set_rule(&conn, true);
     let change = create_append_with_format(
         &conn,
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
         Some(freeze_only_plan()),
-        false,
     )
     .expect("create");
 
@@ -305,23 +266,11 @@ fn commit_append_with_format_commits_rows_then_reports_a_format_failure() {
 fn commit_many_commits_each_change_in_order() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
-    let first = create_append_change(
-        &conn,
-        SOURCE,
-        TABLE,
-        vec![fields(&[("Name", json!("A"))])],
-        false,
-    )
-    .expect("first");
-    let second = create_append_change(
-        &conn,
-        SOURCE,
-        TABLE,
-        vec![fields(&[("Name", json!("B"))])],
-        false,
-    )
-    .expect("second");
+    set_rule(&conn, true);
+    let first = create_append_change(&conn, SOURCE, TABLE, vec![fields(&[("Name", json!("A"))])])
+        .expect("first");
+    let second = create_append_change(&conn, SOURCE, TABLE, vec![fields(&[("Name", json!("B"))])])
+        .expect("second");
 
     let outcomes =
         commit_many(&conn, &registry, &[first.id.clone(), second.id.clone()]).expect("commit many");
@@ -344,8 +293,7 @@ fn update_cells_change_previews_each_cell_write() {
         value: "350h".to_string(),
     }];
 
-    let change =
-        create_update_cells_change(&conn, SOURCE, TABLE, cells.clone(), false).expect("create");
+    let change = create_update_cells_change(&conn, SOURCE, TABLE, cells.clone()).expect("create");
 
     assert_eq!(change.change_type, ChangeType::UpdateCells);
     assert_eq!(
@@ -362,14 +310,14 @@ fn update_cells_change_previews_each_cell_write() {
 fn commit_update_cells_writes_the_targeted_mock_cell() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
+    set_rule(&conn, true);
     // Cell B2 = data row 1, column B (the Email field on the demo fixture).
     let cells = vec![CellWrite {
         column: "B".to_string(),
         row: 2,
         value: "edited@cell.dev".to_string(),
     }];
-    let change = create_update_cells_change(&conn, SOURCE, TABLE, cells, false).expect("create");
+    let change = create_update_cells_change(&conn, SOURCE, TABLE, cells).expect("create");
 
     let outcome = commit(&conn, &registry, &change.id).expect("commit");
 
@@ -394,7 +342,6 @@ fn set_source_rule(conn: &Connection, write: bool, delete: bool) {
         read: true,
         write,
         delete_records: delete,
-        require_confirmation_for: Vec::new(),
     };
     save_rule(conn, &rule).expect("set source rule");
 }
@@ -402,9 +349,8 @@ fn set_source_rule(conn: &Connection, write: bool, delete: bool) {
 #[test]
 fn create_spreadsheet_change_is_source_level_with_an_empty_table_id() {
     let conn = demo_db();
-    let change =
-        create_create_spreadsheet_change(&conn, SOURCE, "Quarterly Plan".to_string(), false)
-            .expect("create");
+    let change = create_create_spreadsheet_change(&conn, SOURCE, "Quarterly Plan".to_string())
+        .expect("create");
 
     assert_eq!(change.change_type, ChangeType::CreateSpreadsheet);
     assert_eq!(
@@ -429,8 +375,8 @@ fn commit_create_spreadsheet_is_unsupported_on_the_mock_connector() {
     let conn = demo_db();
     let registry = registry();
     set_source_rule(&conn, true, false);
-    let change = create_create_spreadsheet_change(&conn, SOURCE, "New Book".to_string(), false)
-        .expect("create");
+    let change =
+        create_create_spreadsheet_change(&conn, SOURCE, "New Book".to_string()).expect("create");
 
     let error = commit(&conn, &registry, &change.id).expect_err("mock cannot create spreadsheets");
     assert!(
@@ -440,26 +386,24 @@ fn commit_create_spreadsheet_is_unsupported_on_the_mock_connector() {
         "unexpected error: {error}"
     );
     let still = get_change(&conn, &change.id).expect("get").expect("exists");
-    assert_ne!(
+    assert_eq!(
         still.status,
-        ChangeStatus::Committed,
-        "a failed execute must not mark the change committed (it is left policy-approved)"
+        ChangeStatus::Pending,
+        "a failed execute puts the change back to pending so it stays staged"
     );
+    assert_eq!(still.decided_by, None);
+    assert_eq!(still.decided_at, None);
+    // Still discardable from the desktop app.
+    decide_change(&conn, &change.id, ChangeDecision::Reject).expect("reject after failed commit");
 }
 
 #[test]
 fn commit_many_rejects_an_unknown_id_before_committing_any() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
-    let valid = create_append_change(
-        &conn,
-        SOURCE,
-        TABLE,
-        vec![fields(&[("Name", json!("A"))])],
-        false,
-    )
-    .expect("valid");
+    set_rule(&conn, true);
+    let valid = create_append_change(&conn, SOURCE, TABLE, vec![fields(&[("Name", json!("A"))])])
+        .expect("valid");
 
     let error = commit_many(
         &conn,
@@ -478,55 +422,46 @@ fn commit_many_rejects_an_unknown_id_before_committing_any() {
 }
 
 #[test]
-fn commit_auto_approves_confirmation_change_when_setting_on() {
+fn commit_succeeds_directly_for_a_rule_that_used_to_require_confirmation() {
     let conn = demo_db();
     let registry = registry();
-    crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, META_FLAG_ON).expect("enable");
+    set_rule(&conn, true);
+    // A rule saved before the approval gate was removed still carries its
+    // confirmation list in the legacy column; it must no longer block commit.
+    conn.execute(
+        "UPDATE permission_rules SET require_confirmation = '[\"append\",\"update\"]'
+         WHERE source_id = ?1 AND table_id = ?2",
+        params![SOURCE, TABLE],
+    )
+    .expect("legacy confirmation list");
     let change = create_append_change(
         &conn,
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        true,
     )
     .expect("create");
+    let stored: i64 = conn
+        .query_row(
+            "SELECT requires_confirmation FROM pending_changes WHERE id = ?1",
+            [&change.id],
+            |row| row.get(0),
+        )
+        .expect("stored flag");
+    assert_eq!(
+        stored, 0,
+        "new changes always persist 0 in the legacy column"
+    );
 
-    let outcome = commit(&conn, &registry, &change.id).expect("commit bypasses gate");
+    let outcome = commit(&conn, &registry, &change.id).expect("commit without approval");
 
     assert_eq!(outcome.change.status, ChangeStatus::Committed);
     assert_eq!(
         outcome.change.decided_by,
         Some(ChangeDecider::Policy),
-        "auto-approved writes are decided by policy, not the user"
+        "a pending change is approved by policy at commit, not by the user"
     );
     assert_eq!(outcome.records.len(), 1);
-}
-
-#[test]
-fn commit_blocks_confirmation_change_when_setting_off() {
-    let conn = demo_db();
-    let registry = registry();
-    // Explicit "0" is the only thing that turns auto-approve off.
-    crate::db::set_meta(&conn, META_AUTO_APPROVE_WRITES, "0").expect("disable");
-    let change = create_append_change(
-        &conn,
-        SOURCE,
-        TABLE,
-        vec![fields(&[("Name", json!("Delta"))])],
-        true,
-    )
-    .expect("create");
-
-    let error = commit(&conn, &registry, &change.id).expect_err("must block");
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "Change {} requires user approval in the Airtable - Sheet Port desktop app before commit",
-            change.id
-        )
-    );
-    let still = get_change(&conn, &change.id).expect("get").expect("exists");
-    assert_eq!(still.status, ChangeStatus::Pending);
 }
 
 #[test]
@@ -538,7 +473,6 @@ fn commit_rejects_change_rejected_in_desktop_app() {
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        true,
     )
     .expect("create");
     decide_change(&conn, &change.id, ChangeDecision::Reject).expect("reject");
@@ -557,13 +491,12 @@ fn commit_rejects_change_rejected_in_desktop_app() {
 fn commit_rejects_double_commit() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
+    set_rule(&conn, true);
     let change = create_append_change(
         &conn,
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        false,
     )
     .expect("create");
     commit(&conn, &registry, &change.id).expect("first commit");
@@ -587,16 +520,15 @@ fn commit_rejects_unknown_change_id() {
 fn commit_fails_when_write_revoked_after_preview() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
+    set_rule(&conn, true);
     let change = create_append_change(
         &conn,
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        false,
     )
     .expect("create");
-    set_rule(&conn, false, &[]);
+    set_rule(&conn, false);
 
     let error = commit(&conn, &registry, &change.id).expect_err("must fail");
     assert!(matches!(error, CoreError::PermissionDenied(_)));
@@ -612,13 +544,12 @@ fn commit_fails_when_write_revoked_after_preview() {
 fn commit_reports_missing_payload() {
     let conn = demo_db();
     let registry = registry();
-    set_rule(&conn, true, &[]);
+    set_rule(&conn, true);
     let change = create_append_change(
         &conn,
         SOURCE,
         TABLE,
         vec![fields(&[("Name", json!("Delta"))])],
-        false,
     )
     .expect("create");
     // Simulate a nullish stored payload (JSON null), the TS "no payload" case.
@@ -680,7 +611,6 @@ fn commit_refuses_delete_payloads_in_mvp() {
         read: true,
         write: true,
         delete_records: true,
-        require_confirmation_for: Vec::new(),
     };
     save_rule(&conn, &rule_write_delete).expect("rule");
     // Insert a delete change directly: previews cannot create one yet.
@@ -719,37 +649,22 @@ fn insert_pending(conn: &Connection, id: &str, status: &str) {
 }
 
 #[test]
-fn approve_transitions_pending_to_approved_and_audits() {
+fn reject_transitions_pending_to_rejected_and_audits() {
     let conn = demo_db();
     insert_pending(&conn, "chg_1", "pending");
 
-    let change = decide_change(&conn, "chg_1", ChangeDecision::Approve).expect("approve");
+    let change = decide_change(&conn, "chg_1", ChangeDecision::Reject).expect("reject");
 
-    assert_eq!(change.status, ChangeStatus::Approved);
+    assert_eq!(change.status, ChangeStatus::Rejected);
     assert_eq!(change.decided_by, Some(ChangeDecider::User));
     assert!(change.decided_at.is_some());
-    assert!(change.requires_confirmation);
 
     let audits = crate::audit::list(&conn, None, None).expect("audit list");
     assert!(audits.iter().any(|event| {
-        event.action == "change_approved"
+        event.action == "change_rejected"
             && event.actor == AuditActor::User
             && event.source_id.as_deref() == Some(SOURCE)
     }));
-}
-
-#[test]
-fn approve_refuses_already_approved_change() {
-    let conn = demo_db();
-    insert_pending(&conn, "chg_2", "pending");
-    decide_change(&conn, "chg_2", ChangeDecision::Approve).expect("first approve");
-
-    let error = decide_change(&conn, "chg_2", ChangeDecision::Approve)
-        .expect_err("second approve must fail");
-    assert!(
-        error.to_string().contains("'approved'"),
-        "error should name the actual status: {error}"
-    );
 }
 
 #[test]
@@ -768,8 +683,7 @@ fn reject_refuses_non_pending_change() {
 #[test]
 fn decide_change_reports_missing_change() {
     let conn = demo_db();
-    let error =
-        decide_change(&conn, "chg_missing", ChangeDecision::Approve).expect_err("must fail");
+    let error = decide_change(&conn, "chg_missing", ChangeDecision::Reject).expect_err("must fail");
     assert!(
         error.to_string().contains("not found"),
         "unexpected error: {error}"

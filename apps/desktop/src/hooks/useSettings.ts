@@ -6,30 +6,11 @@ import { ipc, type FontFamily, type FontScale, type Language } from "../lib/ipc.
 import { queryKeys } from "../lib/queryKeys.js";
 import { useTheme } from "./useTheme.js";
 
-/** App-managed preferences stored in the shared meta table (e.g. auto-approve). */
+/** App-managed preferences stored in the shared meta table (fonts, language, close behavior). */
 export function useSettings() {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => ipc.getSettings()
-  });
-}
-
-/** Toggles auto-approve; enabling bypasses the human confirmation gate. */
-export function useSetAutoApprove() {
-  const queryClient = useQueryClient();
-  const { t } = useTranslation();
-
-  return useMutation({
-    mutationFn: (enabled: boolean) => ipc.setAutoApprove(enabled),
-    onError: (error: unknown) => {
-      toast.error(t("toast.autoApproveError"), { description: getErrorMessage(error) });
-    },
-    onSuccess: (_result, enabled) => {
-      toast.success(enabled ? t("toast.autoApproveEnabled") : t("toast.autoApproveDisabled"));
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
-    }
   });
 }
 

@@ -6,9 +6,10 @@
   is Rust
 - Tauri 2 platform prerequisites for desktop builds
 - Node.js 20+ and pnpm 9, needed only for the React frontend
-  (the e2e smoke script additionally uses the built-in `node:sqlite` module to
-  simulate desktop approvals, so running `pnpm test` needs a Node release that ships
-  it unflagged; Node 24 is recommended)
+  (the e2e smoke script additionally uses the built-in `node:sqlite` module to seed
+  its test database, so running `pnpm test` needs a Node release that ships it
+  unflagged; Node 24 is recommended)
+- A Google account per bridge you want to test against (see `bridge/README.md`)
 
 ## Install
 
@@ -19,17 +20,30 @@ pnpm install   # frontend packages only; cargo fetches Rust deps on first build
 ## Dev Commands
 
 ```bash
-cargo build -p sheet-port-mcp               # MCP sidecar (debug, used by the e2e smoke)
-cargo build --release -p sheet-port-mcp     # MCP sidecar (release, used by Claude Desktop)
-pnpm dev                                    # frontend packages in watch mode (parallel)
-pnpm --filter @sheet-port/desktop dev       # frontend only, Vite dev server
-pnpm --filter @sheet-port/desktop tauri:dev # full desktop app (Rust + React)
+cargo build -p sheet-port-mcp --features mock  # MCP sidecar (debug + mock connector, used by the e2e smoke)
+cargo build --release -p sheet-port-mcp        # MCP sidecar (release, used by MCP clients)
+pnpm dev                                       # frontend packages in watch mode (parallel)
+pnpm --filter @sheet-port/desktop dev          # frontend only, Vite dev server
+pnpm --filter @sheet-port/desktop tauri:dev    # full desktop app (Rust + React)
+node scripts/stage-sidecar.mjs                 # build + stage the sidecar externalBin by hand
 ```
 
 The frontend intentionally uses the app-specific local port `8477`
-(`http://127.0.0.1:8477`). In a plain browser (without Tauri) the UI falls back to
-in-memory demo fixtures; run `tauri:dev` to exercise the real Rust backend, the custom
-titlebar (the window uses `decorations: false`), and the shared database.
+(`http://127.0.0.1:8477`). In Vite dev mode in a plain browser (without Tauri) the UI
+falls back to in-memory demo fixtures; production builds never include them. Run
+`tauri:dev` to exercise the real Rust backend, the custom titlebar (the window uses
+`decorations: false`), and the shared database.
+
+### Sidecar staging
+
+Tauri bundles the sidecar as an `externalBin` (`binaries/sheet-port-mcp` in
+`tauri.conf.json`), so the file
+`apps/desktop/src-tauri/binaries/sheet-port-mcp-<target-triple><ext>` must exist before
+`tauri dev` / `tauri build`. `scripts/stage-sidecar.mjs` runs
+`cargo build -p sheet-port-mcp --target <triple>` (plus `--release` unless
+`TAURI_ENV_DEBUG=true`) and copies the result there. It runs automatically as
+`pnpm stage:sidecar` in `beforeDevCommand` / `beforeBuildCommand`; the target triple
+comes from `TAURI_ENV_TARGET_TRIPLE`, falling back to the host triple from `rustc -vV`.
 
 ## Build Commands
 
@@ -45,19 +59,30 @@ pnpm format
 ## Test Commands
 
 ```bash
-cargo test --workspace          # all broker logic (sheet-port-core: 78 tests, sheet-port-mcp: 14)
-cargo build -p sheet-port-mcp   # build the debug sidecar binary for the e2e smoke
-pnpm test                       # frontend vitest + MCP e2e smoke
-pnpm test:e2e                   # MCP e2e smoke only
+cargo test --workspace                          # all broker logic (core + sidecar)
+cargo build -p sheet-port-mcp --features mock   # debug sidecar with the mock connector for the e2e smoke
+pnpm test                                       # frontend vitest + MCP e2e smoke
+pnpm test:e2e                                   # MCP e2e smoke only
 ```
 
-The MCP end-to-end smoke (`scripts/e2e-smoke.mjs`) spawns
-`target/debug/sheet-port-mcp` (`.exe` on Windows) over stdio against a temp database
-(via `SHEET_PORT_DB`) and drives the preview -> approve -> commit enforcement,
-including the "commit refused without approval" path and the heartbeat row. It fails
-fast with a clear message when the binary is missing, so run
-`cargo build -p sheet-port-mcp` first. Rust tests use isolated temp-file databases and
-never touch your real data.
+The mock connector (`connectors/mock.rs`, `mock_data.rs`) is compiled only with the
+cargo feature `mock`. Tests that need it enable the feature; release builds and the
+Tauri bundle never contain it.
+
+The MCP end-to-end smoke (`scripts/e2e-smoke.mjs`) seeds a temp database (via
+`SHEET_PORT_DB`) with a mock source, spawns `target/debug/sheet-port-mcp` (`.exe` on
+Windows) over stdio, and drives the tools end to end: reads, stage-and-commit writes,
+`dryRun` followed by `commit_change`, and the heartbeat row. It fails fast with a clear
+message when the binary is missing, so build it with the `mock` feature first. Rust tests
+use isolated temp-file databases and never touch your real data or keychain.
+
+### Testing against Google
+
+There are no Google credentials in the repo. To test the real connector, deploy a bridge
+from `bridge/` on a test account (`bridge/README.md`), add it under **Settings > Google
+bridges** in `tauri:dev`, and point an MCP client at your debug or release sidecar. The
+bridge entry lands in your real OS keychain (service `sheet-port`); remove it from the
+app when done. Add a second bridge on another account to exercise account routing.
 
 ## Shared Database
 
@@ -89,7 +114,8 @@ cargo build --release -p sheet-port-mcp
 
 For Claude Desktop use `examples/claude-desktop-config.json`; it points at the release
 binary, so build it first. stdout belongs to the MCP transport; diagnostics go to
-stderr.
+stderr. The sidecar reads bridges from the OS keychain itself, so the desktop app does
+not need to be running.
 
 ## MCP Client Auto-Configuration
 
@@ -134,7 +160,7 @@ touch a config file that is present but not valid JSON (or, for Codex, not valid
 VS Code Copilot is intentionally left `detectable = false`: its workspace form
 (`.vscode/mcp.json`) needs a concrete project root the desktop app does not have, and it
 uses a different `servers` key. Enabling it requires a project-root-aware path and a new
-config shape - see the `TODO(mcp-clients)` in `mcp_clients.rs`. Cline's path covers the
+config shape (noted in `mcp_clients.rs`). Cline's path covers the
 stable VS Code build only (not Insiders / VSCodium / other forks).
 
 ## How to Add a New MCP Tool
@@ -144,10 +170,11 @@ stable VS Code build only (not Insiders / VSCodium / other forks).
    enforces the contract bounds (follow the existing limits: list sizes 1-100, page
    limits 1-500, query strings capped at 200 chars). Reuse the constants from
    `sheet_port_core::constants`.
-2. Implement the tool in `crates/sheet-port-mcp/src/tools.rs`. Check permissions first
-   through `sheet_port_core::permissions` (`assert_can_read` / `assert_can_write`).
-   Writes must go through `sheet_port_core::changes` (preview + commit), never directly
-   through a connector.
+2. Implement the tool in `crates/sheet-port-mcp/src/tools.rs`. Make `sourceId` optional
+   and resolve it through the core's account routing. Check permissions first through
+   `sheet_port_core::permissions` (`assert_can_read` / `assert_can_write`). Writes must
+   go through `sheet_port_core::changes` (stage, then commit unless `dryRun`), never
+   directly through a connector, and return `{ change, committed, outcome? }`.
 3. Route data access through the `ConnectorRegistry` passed into the closure (never a
    concrete connector).
 4. Record an audit event through `sheet_port_core::audit::record` with actor
@@ -169,8 +196,8 @@ stable VS Code build only (not Insiders / VSCodium / other forks).
    (`connectors/mod.rs`). The registry routes by the `sources.kind` column, so a
    source row with your kind is all the wiring the router needs.
 4. Keep credentials inside the OS keychain (service `sheet-port`, see `vault.rs`).
-   Connectors must never receive tokens through MCP tool inputs.
-5. Add provider mapping notes to `docs/connectors.md`.
+   Connectors must never receive tokens or secrets through MCP tool inputs.
+5. Add mapping notes to `docs/connectors.md`.
 
 ## Releases and Auto-Update
 
@@ -269,7 +296,7 @@ missing-binary error, and kill-on-exit still apply).
 
 ## Current Limitations
 
-- No SQLite schema migration mechanism yet (only the idempotent initial schema plus a
-  `schema_version` meta key).
-- The keyring integration is a stub: `token_status` reads entries but no flow writes
-  them.
+- Schema migrations are hand-written steps in `db.rs` keyed by the `schema_version` meta
+  value.
+- Real-Google testing needs a deployed bridge; there is no recorded-fixture mode for the
+  Google connector.

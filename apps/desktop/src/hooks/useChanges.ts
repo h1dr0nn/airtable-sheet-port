@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
-import type { ChangeStatus, PendingChange } from "@sheet-port/shared";
+import type { ChangeStatus } from "@sheet-port/shared";
 import { getErrorMessage } from "../lib/errors.js";
 import { useTranslation } from "../i18n/useTranslation.js";
 import { ipc } from "../lib/ipc.js";
@@ -13,20 +13,18 @@ export function useChanges(status: ChangeStatus | null) {
   });
 }
 
-function useDecideChange(
-  decide: (changeId: string) => Promise<PendingChange>,
-  successKey: "toast.changeApproved" | "toast.changeRejected"
-) {
+/** Discards a staged (dry-run) change that is still pending. */
+export function useDiscardChange() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: decide,
+    mutationFn: (changeId: string) => ipc.rejectChange(changeId),
     onError: (error: unknown) => {
-      toast.error(t("toast.changeDecisionFailed"), { description: getErrorMessage(error) });
+      toast.error(t("toast.changeDiscardError"), { description: getErrorMessage(error) });
     },
     onSuccess: () => {
-      toast.success(t(successKey));
+      toast.success(t("toast.changeDiscarded"));
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.changesRoot });
@@ -34,12 +32,4 @@ function useDecideChange(
       void queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents });
     }
   });
-}
-
-export function useApproveChange() {
-  return useDecideChange((changeId) => ipc.approveChange(changeId), "toast.changeApproved");
-}
-
-export function useRejectChange() {
-  return useDecideChange((changeId) => ipc.rejectChange(changeId), "toast.changeRejected");
 }

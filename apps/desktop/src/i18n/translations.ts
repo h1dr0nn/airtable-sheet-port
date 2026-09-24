@@ -34,7 +34,7 @@ export const en = {
   "screen.tables.description": "Browse records through the same read path agents use",
   "screen.changes.title": "Changes",
   "screen.changes.description":
-    "Every agent write lands here as a preview before it can commit",
+    "History of agent writes. Staged dry runs wait here until the agent commits or you discard them",
   "screen.settings.title": "Settings",
   "screen.settings.description":
     "Appearance, connections, permissions, and application details",
@@ -98,7 +98,7 @@ export const en = {
   "palette.themeLight": "Theme: Light",
   "palette.themeDark": "Theme: Dark",
   "palette.themeSystem": "Theme: System",
-  "palette.connectGoogleSheets": "Connect Google Sheets",
+  "palette.addGoogleBridge": "Add Google Bridge",
 
   // Activity dropdown
   "activity.title": "Activity",
@@ -114,21 +114,20 @@ export const en = {
   "dashboard.mcpServer": "MCP Server",
   "dashboard.mcpOfflineHint":
     "Register Sheet Port with your MCP client from Settings, then restart the client.",
-  "dashboard.pendingApprovals": "Pending Approvals",
-  "dashboard.nothingWaiting": "Nothing waiting on you",
-  "dashboard.oneChangeAwaiting": "Change awaiting review",
-  "dashboard.changesAwaiting": "Changes awaiting review",
-  "dashboard.reviewChanges": "Review Changes",
+  "dashboard.pendingApprovals": "Pending Changes",
+  "dashboard.nothingWaiting": "No staged changes",
+  "dashboard.oneChangeAwaiting": "Staged change not committed yet",
+  "dashboard.changesAwaiting": "Staged changes not committed yet",
+  "dashboard.reviewChanges": "View Changes",
   "dashboard.database": "Database",
   "dashboard.copyDatabasePath": "Copy database path",
   "dashboard.sharedSqlite": "Shared SQLite",
   "dashboard.version": "Version",
   "dashboard.tokenVault": "Token Vault",
   "dashboard.googleSheets": "Google Sheets",
-  "dashboard.provider": "Provider",
   "dashboard.inKeychain": "In Keychain",
   "dashboard.notStored": "Not Stored",
-  "dashboard.tokensNeverLeave": "Tokens never leave the OS keychain.",
+  "dashboard.tokensNeverLeave": "Bridge secrets and tokens never leave the OS keychain.",
   "dashboard.noSourcesTitle": "No Data Sources Connected",
   "dashboard.noSourcesDescription":
     "Connect a data source such as Google Sheets to give agents something to read.",
@@ -137,31 +136,19 @@ export const en = {
   "dashboard.recentActivityEmpty": "Agent activity shows up here as it happens.",
   "dashboard.recentChanges": "Recent Changes",
   "dashboard.viewAll": "View All",
-  "dashboard.recentChangesEmpty": "Agent write previews land here for review.",
+  "dashboard.recentChangesEmpty": "Agent writes show up here as they happen.",
 
   // Data Sources
   "sources.googleSheets": "Google Sheets",
   "sources.disconnect": "Disconnect",
-  "sources.disconnectTooltip": "Remove this account and its stored token",
+  "sources.disconnectTooltip": "Remove this account's bridge and its stored secret",
   "sources.linkedTo": "Linked to {email}",
   "sources.disconnectTitle": "Disconnect Google Account?",
   "sources.disconnectDescription":
-    "Agents lose access to this account's spreadsheets and the stored token is removed from the OS keychain. You can reconnect at any time.",
+    "Agents lose access to this account's spreadsheets, and its bridge URL and secret are removed from the OS keychain. You can add the bridge again at any time.",
   "sources.addGoogleAccount": "Add Google Account",
-  "sources.connecting": "Connecting...",
   "sources.addGoogleAccountHint":
-    "Link another Google account so agents can reach more spreadsheets",
-  "sources.finishSignIn": "Finish signing in with Google in your browser",
-  "sources.saveSecretFirst": "Save the OAuth client secret in Settings first",
-  "sources.setClientIdFirst": "Set the OAuth client ID in Settings first",
-  "sources.configureGoogle": "Configure Google in Settings",
-  "sources.additionalProvider": "Additional Provider",
-  "sources.additionalProviderHint":
-    "A second table provider lands here once its connector ships",
-  "sources.comingSoon": "Coming Soon",
-  "sources.connect": "Connect",
-  "sources.connectTooltip": "Available once the connector ships",
-  "sources.notAvailableYet": "Not available yet",
+    "Add an Apps Script bridge in Settings to link another Google account",
   "sources.statusConnected": "Connected",
   "sources.statusPlaceholder": "Placeholder",
   "sources.statusError": "Error",
@@ -219,28 +206,22 @@ export const en = {
   "changes.filterPending": "Pending",
   "changes.filterApproved": "Approved",
   "changes.filterCommitted": "Committed",
-  "changes.filterRejected": "Rejected",
+  "changes.filterRejected": "Discarded",
   "changes.filterAria": "Filter changes by status",
   "changes.emptyAll": "No Changes Yet",
   "changes.emptyFiltered": "No {filter} Changes",
-  "changes.emptyDescription": "When an agent previews a write it appears here for review",
-  "changes.needsConfirmation": "Needs Confirmation",
-  "changes.needsConfirmationTooltip": "Policy requires user confirmation before commit",
-  "changes.awaitingDecision": "Awaiting your decision",
-  "changes.reject": "Reject",
-  "changes.rejecting": "Rejecting...",
-  "changes.approve": "Approve",
-  "changes.approving": "Approving...",
+  "changes.emptyDescription": "Agent writes are recorded here with a diff of what changed",
+  "changes.stagedDryRun": "Staged dry run · not committed yet",
+  "changes.discard": "Discard",
+  "changes.discarding": "Discarding...",
   "changes.statusPending": "Pending",
   "changes.statusApproved": "Approved",
   "changes.statusCommitted": "Committed",
-  "changes.statusRejected": "Rejected",
+  "changes.statusRejected": "Discarded",
   "changes.committedBy": "Committed {time} by {who}",
   "changes.committed": "Committed {time}",
-  "changes.rejected": "Rejected {time}",
+  "changes.rejected": "Discarded {time}",
   "changes.approvedWaiting": "Approved {time} · waiting for the agent to commit",
-  "changes.autoCommit": "Auto-commit · no confirmation required by policy",
-  "changes.rejectToCancel": "Auto-commit by policy · reject to cancel",
   "changes.recordLabel": "Record {id}",
   "changes.formatCellsHeading": "Cell formatting",
   "changes.formatLayoutHeading": "Sheet layout",
@@ -274,33 +255,45 @@ export const en = {
   "settings.appearance.languageDescription": "Choose the language for the interface.",
   "settings.appearance.languageEnglish": "English",
   "settings.appearance.languageVietnamese": "Vietnamese",
+  "settings.bridges.title": "Google Bridges",
+  "settings.bridges.description":
+    "Each bridge is a small Apps Script web app deployed on one Google account. It hands out short-lived access tokens, so no Cloud Console project or OAuth client is needed.",
+  "settings.bridges.empty": "No bridges yet. Add one below to connect a Google account.",
+  "settings.bridges.deployment": "Deployment",
+  "settings.bridges.missingCredential":
+    "No bridge is stored for this account. Remove it, then add its bridge again.",
+  "settings.bridges.test": "Test",
+  "settings.bridges.testing": "Testing...",
+  "settings.bridges.remove": "Remove",
+  "settings.bridges.removeTitle": "Remove Bridge?",
+  "settings.bridges.removeDescription":
+    "Agents lose access to {email}'s spreadsheets, and the bridge URL and secret are removed from the OS keychain. The Apps Script deployment itself is not changed.",
+  "settings.bridges.addTitle": "Add a Bridge",
+  "settings.bridges.url": "Web App URL",
+  "settings.bridges.secret": "Secret",
+  "settings.bridges.secretPlaceholder": "Value logged by setup()",
+  "settings.bridges.secretHint":
+    "Stored in the OS keychain together with the URL; it is only ever sent to your bridge.",
+  "settings.bridges.add": "Add Bridge",
+  "settings.bridges.adding": "Adding...",
+  "settings.bridges.guideToggle": "How to create a bridge",
+  "settings.bridges.step1":
+    "Open script.google.com with the Google account agents should use and create a new project.",
+  "settings.bridges.step2":
+    "In Project Settings, tick \"Show appsscript.json manifest file in editor\".",
+  "settings.bridges.step3":
+    "Replace the contents of Code.gs and appsscript.json with the two files below.",
+  "settings.bridges.step4":
+    "Select the setup function and click Run, allow the permissions, then copy the SECRET value from the execution log.",
+  "settings.bridges.step5":
+    "Click Deploy > New deployment, choose Web app with Execute as: Me and Who has access: Anyone, then copy the web app URL ending in /exec.",
+  "settings.bridges.step6": "Paste the URL and the secret above and click Add Bridge.",
+  "settings.bridges.copyCode": "Copy Code.gs",
+  "settings.bridges.copyManifest": "Copy appsscript.json",
 
   // Settings - Google Sheets
-  "settings.google.title": "Google Sheets",
-  "settings.google.importJson": "Import JSON",
-  "settings.google.importing": "Importing...",
-  "settings.google.clientId": "OAuth Client ID",
-  "settings.google.clientIdHint": "Desktop-app client ID from Google Cloud Console.",
-  "settings.google.clientSecret": "OAuth Client Secret",
-  "settings.google.clientSecretHint":
-    "Google requires the Desktop-app client secret when exchanging the sign-in code; it never leaves the keychain.",
-  "settings.google.storedInKeychain": "•••••••• Stored in OS keychain",
-  "settings.google.replace": "Replace",
-  "settings.google.clear": "Clear",
-  "settings.google.clearSecretTitle": "Clear Client Secret?",
-  "settings.google.clearSecretDescription":
-    "The client secret is removed from the OS keychain. Google sign-in will fail until a new secret is saved.",
-  "settings.google.accountsLinked":
-    "{count} account(s) linked. Manage them in Data Sources.",
-  "settings.google.connectFromSources": "Connect an account from the Data Sources screen",
 
   // Settings - Google JSON import modal
-  "settings.import.invalidTitle": "Invalid Credentials File",
-  "settings.import.invalidDescription":
-    "The selected file could not be used. Fix the following and try again.",
-  "settings.import.successTitle": "Credentials Imported",
-  "settings.import.successDescription": "Client ID and secret saved to the OS keychain",
-  "settings.import.failed": "Import failed",
 
   // Settings - MCP Server
   "settings.mcpServer.title": "MCP Server",
@@ -356,7 +349,7 @@ export const en = {
   "settings.permissions.title": "Permissions",
   "settings.permissions.connectFirst": "Connect a data source first",
   "settings.permissions.hint":
-    "Pick an access preset per source. Auto Approve and Bypass turn on global auto-approve, which applies to every connected source.",
+    "Pick an access preset per source. Allowed agent writes apply directly and are recorded in Changes.",
   "settings.permissions.presetAria": "Permission preset for {name}",
   "settings.permissions.custom": "Custom",
   "settings.permissions.customHint":
@@ -365,22 +358,19 @@ export const en = {
   "settings.permissions.updatedPrefix": "Updated",
   "settings.permissions.bypassTitle": "Bypass Permission?",
   "settings.permissions.bypassDescription":
-    "Agents get full access including deletes, with no approval gate, and global auto-approve is turned on. Only choose this if you fully trust every connected agent.",
+    "Agents get full access to this source, including deletes. Only choose this if you fully trust every connected agent.",
   "settings.permissions.enableBypass": "Enable Bypass",
 
   // Permission presets (lib/permissionPresets.ts)
   "preset.readOnly.label": "Read Only",
   "preset.readOnly.description":
     "Agents can read records but cannot write, update, or delete.",
-  "preset.ask.label": "Ask Permissions",
-  "preset.ask.description":
-    "Agents can write, but appends, updates, and deletes wait for your approval.",
-  "preset.autoApprove.label": "Auto Approve",
-  "preset.autoApprove.description":
-    "Agents write without asking. Deletes stay blocked. Enables global auto-approve.",
+  "preset.readWrite.label": "Read & Write",
+  "preset.readWrite.description":
+    "Agents can read, append, and update records. Deletes stay blocked.",
   "preset.bypass.label": "Bypass Permission",
   "preset.bypass.description":
-    "Full access including deletes, with no approval gate. Enables global auto-approve.",
+    "Full access, including deletes.",
 
   // Settings - About
   "settings.about.title": "About",
@@ -416,11 +406,11 @@ export const en = {
   // Settings - Reset
   "settings.reset.title": "Reset",
   "settings.reset.description":
-    "Restore preferences to their defaults. Your Google credentials, permission rules, and data are not affected.",
+    "Restore preferences to their defaults. Your Google bridges, permission rules, and data are not affected.",
   "settings.reset.button": "Reset to Default",
   "settings.reset.confirmTitle": "Reset to Default?",
   "settings.reset.confirmDescription":
-    "Theme, font, and auto-approve return to their defaults. This does NOT remove your Google credentials, permission rules, or data.",
+    "Theme, font, and language return to their defaults. This does NOT remove your Google bridges, permission rules, or data.",
 
   // Close behavior dialog
   "closeDialog.title": "Run in Background?",
@@ -444,9 +434,6 @@ export const en = {
     "This table is empty. Agent appends will show up here after commit",
 
   // Toasts - settings
-  "toast.autoApproveError": "Auto-approve not updated",
-  "toast.autoApproveEnabled": "Auto-approve enabled",
-  "toast.autoApproveDisabled": "Auto-approve disabled",
   "toast.updatedRestartClients":
     "Updated to v{version}. Restart your MCP clients (Claude Desktop, Claude Code, ...) to load the new tools.",
   "toast.fontSizeError": "Font size not updated",
@@ -459,19 +446,15 @@ export const en = {
   "toast.launchAtLoginError": "Launch at login not updated",
   "toast.launchAtLoginEnabled": "Launch at login enabled",
   "toast.launchAtLoginDisabled": "Launch at login disabled",
+  "toast.bridgeAdded": "Google bridge added",
+  "toast.bridgeAddError": "Bridge not added",
+  "toast.bridgeSignedInAs": "Signed in as {email}",
+  "toast.bridgeTestOk": "Bridge is working",
+  "toast.bridgeTestError": "Bridge test failed",
+  "toast.bridgeRemoved": "Google bridge removed",
+  "toast.bridgeRemoveError": "Bridge not removed",
 
   // Toasts - Google
-  "toast.clientIdError": "Client ID not saved",
-  "toast.clientIdSaved": "Google client ID saved",
-  "toast.clientSecretError": "Client secret not saved",
-  "toast.clientSecretCleared": "Google client secret cleared",
-  "toast.clientSecretSaved": "Google client secret saved",
-  "toast.clientSecretSavedDesc": "Stored in the OS keychain",
-  "toast.googleConnectError": "Google Sheets connection failed",
-  "toast.googleConnected": "Google Sheets connected",
-  "toast.googleConnectedDesc": "Signed in as {email}",
-  "toast.googleDisconnectError": "Google Sheets disconnect failed",
-  "toast.googleDisconnected": "Google Sheets disconnected",
 
   // Toasts - MCP
   "toast.transportError": "Transport not updated",
@@ -489,11 +472,10 @@ export const en = {
   "toast.serverStopped": "MCP server stopped",
   "toast.clientsConfigError": "Clients not configured",
   "toast.clientsConfigured": "Detected MCP clients configured",
+  "toast.changeDiscarded": "Change discarded",
+  "toast.changeDiscardError": "Change not discarded",
 
   // Toasts - Changes
-  "toast.changeDecisionFailed": "Change decision failed",
-  "toast.changeApproved": "Change approved",
-  "toast.changeRejected": "Change rejected",
 
   // Toasts - Workbench
   "toast.folderCreated": "Folder created",
@@ -544,7 +526,7 @@ const vi: Dictionary = {
     "Duyệt bản ghi qua cùng luồng đọc mà agent sử dụng",
   "screen.changes.title": "Thay đổi",
   "screen.changes.description":
-    "Mọi thao tác ghi của agent đến đây dưới dạng bản xem trước trước khi được commit",
+    "Lịch sử thao tác ghi của agent. Bản chạy thử được lưu tại đây cho đến khi agent commit hoặc bạn hủy bỏ",
   "screen.settings.title": "Cài đặt",
   "screen.settings.description":
     "Giao diện, kết nối, quyền và thông tin ứng dụng",
@@ -608,7 +590,7 @@ const vi: Dictionary = {
   "palette.themeLight": "Giao diện: Sáng",
   "palette.themeDark": "Giao diện: Tối",
   "palette.themeSystem": "Giao diện: Hệ thống",
-  "palette.connectGoogleSheets": "Kết nối Google Sheets",
+  "palette.addGoogleBridge": "Thêm cầu nối Google",
 
   // Activity dropdown
   "activity.title": "Hoạt động",
@@ -624,21 +606,20 @@ const vi: Dictionary = {
   "dashboard.mcpServer": "Máy chủ MCP",
   "dashboard.mcpOfflineHint":
     "Đăng ký Sheet Port với client MCP của bạn từ Cài đặt, sau đó khởi động lại client.",
-  "dashboard.pendingApprovals": "Chờ phê duyệt",
-  "dashboard.nothingWaiting": "Không có gì chờ bạn",
-  "dashboard.oneChangeAwaiting": "Thay đổi đang chờ xem xét",
-  "dashboard.changesAwaiting": "Thay đổi đang chờ xem xét",
-  "dashboard.reviewChanges": "Xem xét thay đổi",
+  "dashboard.pendingApprovals": "Thay đổi đang chờ",
+  "dashboard.nothingWaiting": "Không có bản chạy thử nào",
+  "dashboard.oneChangeAwaiting": "Bản chạy thử chưa được commit",
+  "dashboard.changesAwaiting": "Bản chạy thử chưa được commit",
+  "dashboard.reviewChanges": "Xem thay đổi",
   "dashboard.database": "Cơ sở dữ liệu",
   "dashboard.copyDatabasePath": "Sao chép đường dẫn cơ sở dữ liệu",
   "dashboard.sharedSqlite": "SQLite dùng chung",
   "dashboard.version": "Phiên bản",
   "dashboard.tokenVault": "Kho token",
   "dashboard.googleSheets": "Google Sheets",
-  "dashboard.provider": "Nhà cung cấp",
   "dashboard.inKeychain": "Trong keychain",
   "dashboard.notStored": "Chưa lưu",
-  "dashboard.tokensNeverLeave": "Token không bao giờ rời khỏi keychain của hệ điều hành.",
+  "dashboard.tokensNeverLeave": "Secret của cầu nối và token không bao giờ rời khỏi keychain của hệ điều hành.",
   "dashboard.noSourcesTitle": "Chưa kết nối nguồn dữ liệu",
   "dashboard.noSourcesDescription":
     "Kết nối một nguồn dữ liệu như Google Sheets để agent có thể đọc.",
@@ -647,31 +628,19 @@ const vi: Dictionary = {
   "dashboard.recentActivityEmpty": "Hoạt động của agent hiển thị tại đây khi xảy ra.",
   "dashboard.recentChanges": "Thay đổi gần đây",
   "dashboard.viewAll": "Xem tất cả",
-  "dashboard.recentChangesEmpty": "Bản xem trước thao tác ghi của agent xuất hiện tại đây để xem xét.",
+  "dashboard.recentChangesEmpty": "Thao tác ghi của agent xuất hiện tại đây ngay khi diễn ra.",
 
   // Data Sources
   "sources.googleSheets": "Google Sheets",
   "sources.disconnect": "Ngắt kết nối",
-  "sources.disconnectTooltip": "Xóa tài khoản này và token đã lưu",
+  "sources.disconnectTooltip": "Xóa cầu nối của tài khoản này và secret đã lưu",
   "sources.linkedTo": "Liên kết với {email}",
   "sources.disconnectTitle": "Ngắt kết nối tài khoản Google?",
   "sources.disconnectDescription":
-    "Agent mất quyền truy cập vào bảng tính của tài khoản này và token đã lưu sẽ bị xóa khỏi keychain của hệ điều hành. Bạn có thể kết nối lại bất cứ lúc nào.",
+    "Agent mất quyền truy cập vào bảng tính của tài khoản này, và URL cùng secret của cầu nối sẽ bị xóa khỏi keychain của hệ điều hành. Bạn có thể thêm lại cầu nối bất cứ lúc nào.",
   "sources.addGoogleAccount": "Thêm tài khoản Google",
-  "sources.connecting": "Đang kết nối...",
   "sources.addGoogleAccountHint":
-    "Liên kết thêm tài khoản Google để agent truy cập được nhiều bảng tính hơn",
-  "sources.finishSignIn": "Hoàn tất đăng nhập Google trong trình duyệt của bạn",
-  "sources.saveSecretFirst": "Lưu client secret OAuth trong Cài đặt trước",
-  "sources.setClientIdFirst": "Đặt client ID OAuth trong Cài đặt trước",
-  "sources.configureGoogle": "Cấu hình Google trong Cài đặt",
-  "sources.additionalProvider": "Nhà cung cấp bổ sung",
-  "sources.additionalProviderHint":
-    "Một nhà cung cấp bảng thứ hai sẽ xuất hiện tại đây khi connector sẵn sàng",
-  "sources.comingSoon": "Sắp ra mắt",
-  "sources.connect": "Kết nối",
-  "sources.connectTooltip": "Có sẵn khi connector ra mắt",
-  "sources.notAvailableYet": "Chưa khả dụng",
+    "Thêm một cầu nối Apps Script trong Cài đặt để liên kết thêm tài khoản Google",
   "sources.statusConnected": "Đã kết nối",
   "sources.statusPlaceholder": "Chỗ giữ chỗ",
   "sources.statusError": "Lỗi",
@@ -728,28 +697,22 @@ const vi: Dictionary = {
   "changes.filterPending": "Đang chờ",
   "changes.filterApproved": "Đã duyệt",
   "changes.filterCommitted": "Đã commit",
-  "changes.filterRejected": "Đã từ chối",
+  "changes.filterRejected": "Đã hủy bỏ",
   "changes.filterAria": "Lọc thay đổi theo trạng thái",
   "changes.emptyAll": "Chưa có thay đổi",
   "changes.emptyFiltered": "Không có thay đổi {filter}",
-  "changes.emptyDescription": "Khi agent xem trước một thao tác ghi, nó sẽ xuất hiện tại đây để xem xét",
-  "changes.needsConfirmation": "Cần xác nhận",
-  "changes.needsConfirmationTooltip": "Chính sách yêu cầu người dùng xác nhận trước khi commit",
-  "changes.awaitingDecision": "Đang chờ bạn quyết định",
-  "changes.reject": "Từ chối",
-  "changes.rejecting": "Đang từ chối...",
-  "changes.approve": "Phê duyệt",
-  "changes.approving": "Đang phê duyệt...",
+  "changes.emptyDescription": "Thao tác ghi của agent được lưu tại đây kèm phần khác biệt đã thay đổi",
+  "changes.stagedDryRun": "Bản chạy thử · chưa được commit",
+  "changes.discard": "Hủy bỏ",
+  "changes.discarding": "Đang hủy bỏ...",
   "changes.statusPending": "Đang chờ",
   "changes.statusApproved": "Đã duyệt",
   "changes.statusCommitted": "Đã commit",
-  "changes.statusRejected": "Đã từ chối",
+  "changes.statusRejected": "Đã hủy bỏ",
   "changes.committedBy": "Đã commit {time} bởi {who}",
   "changes.committed": "Đã commit {time}",
-  "changes.rejected": "Đã từ chối {time}",
+  "changes.rejected": "Đã hủy bỏ {time}",
   "changes.approvedWaiting": "Đã duyệt {time} · đang chờ agent commit",
-  "changes.autoCommit": "Tự động commit · chính sách không yêu cầu xác nhận",
-  "changes.rejectToCancel": "Tự động commit theo chính sách · từ chối để huỷ",
   "changes.recordLabel": "Bản ghi {id}",
   "changes.formatCellsHeading": "Định dạng ô",
   "changes.formatLayoutHeading": "Bố cục sheet",
@@ -783,32 +746,45 @@ const vi: Dictionary = {
   "settings.appearance.languageDescription": "Chọn ngôn ngữ cho giao diện.",
   "settings.appearance.languageEnglish": "Tiếng Anh",
   "settings.appearance.languageVietnamese": "Tiếng Việt",
+  "settings.bridges.title": "Cầu nối Google",
+  "settings.bridges.description":
+    "Mỗi cầu nối là một web app Apps Script nhỏ được triển khai trên một tài khoản Google. Nó cấp token truy cập ngắn hạn, nên không cần dự án Cloud Console hay OAuth client.",
+  "settings.bridges.empty":
+    "Chưa có cầu nối nào. Thêm một cầu nối bên dưới để kết nối tài khoản Google.",
+  "settings.bridges.deployment": "Deployment",
+  "settings.bridges.missingCredential":
+    "Tài khoản này chưa lưu cầu nối nào. Hãy xóa nó rồi thêm lại cầu nối.",
+  "settings.bridges.test": "Kiểm tra",
+  "settings.bridges.testing": "Đang kiểm tra...",
+  "settings.bridges.remove": "Xóa",
+  "settings.bridges.removeTitle": "Xóa cầu nối?",
+  "settings.bridges.removeDescription":
+    "Agent mất quyền truy cập vào bảng tính của {email}, và URL cùng secret của cầu nối sẽ bị xóa khỏi keychain của hệ điều hành. Bản triển khai Apps Script không bị thay đổi.",
+  "settings.bridges.addTitle": "Thêm cầu nối",
+  "settings.bridges.url": "URL web app",
+  "settings.bridges.secret": "Secret",
+  "settings.bridges.secretPlaceholder": "Giá trị được setup() ghi vào log",
+  "settings.bridges.secretHint":
+    "Được lưu trong keychain của hệ điều hành cùng với URL; nó chỉ được gửi tới cầu nối của bạn.",
+  "settings.bridges.add": "Thêm cầu nối",
+  "settings.bridges.adding": "Đang thêm...",
+  "settings.bridges.guideToggle": "Cách tạo cầu nối",
+  "settings.bridges.step1":
+    "Mở script.google.com bằng tài khoản Google mà agent sẽ dùng và tạo một dự án mới.",
+  "settings.bridges.step2":
+    "Trong Project Settings, đánh dấu \"Show appsscript.json manifest file in editor\".",
+  "settings.bridges.step3": "Thay nội dung của Code.gs và appsscript.json bằng hai tệp bên dưới.",
+  "settings.bridges.step4":
+    "Chọn hàm setup và bấm Run, cấp các quyền được yêu cầu, rồi sao chép giá trị SECRET từ execution log.",
+  "settings.bridges.step5":
+    "Bấm Deploy > New deployment, chọn Web app với Execute as: Me và Who has access: Anyone, rồi sao chép URL web app kết thúc bằng /exec.",
+  "settings.bridges.step6": "Dán URL và secret vào phía trên rồi bấm Thêm cầu nối.",
+  "settings.bridges.copyCode": "Sao chép Code.gs",
+  "settings.bridges.copyManifest": "Sao chép appsscript.json",
 
   // Settings - Google Sheets
-  "settings.google.title": "Google Sheets",
-  "settings.google.importJson": "Nhập JSON",
-  "settings.google.importing": "Đang nhập...",
-  "settings.google.clientId": "OAuth Client ID",
-  "settings.google.clientIdHint": "Client ID ứng dụng máy tính từ Google Cloud Console.",
-  "settings.google.clientSecret": "OAuth Client Secret",
-  "settings.google.clientSecretHint":
-    "Google yêu cầu client secret ứng dụng máy tính khi trao đổi mã đăng nhập; nó không bao giờ rời khỏi keychain.",
-  "settings.google.storedInKeychain": "•••••••• Đã lưu trong keychain của hệ điều hành",
-  "settings.google.replace": "Thay thế",
-  "settings.google.clear": "Xóa",
-  "settings.google.clearSecretTitle": "Xóa Client Secret?",
-  "settings.google.clearSecretDescription":
-    "Client secret sẽ bị xóa khỏi keychain của hệ điều hành. Đăng nhập Google sẽ thất bại cho đến khi lưu secret mới.",
-  "settings.google.accountsLinked": "Đã liên kết {count} tài khoản. Quản lý chúng trong Nguồn dữ liệu.",
-  "settings.google.connectFromSources": "Kết nối tài khoản từ màn hình Nguồn dữ liệu",
 
   // Settings - Google JSON import modal
-  "settings.import.invalidTitle": "Tệp thông tin xác thực không hợp lệ",
-  "settings.import.invalidDescription":
-    "Không thể sử dụng tệp đã chọn. Khắc phục các vấn đề sau rồi thử lại.",
-  "settings.import.successTitle": "Đã nhập thông tin xác thực",
-  "settings.import.successDescription": "Đã lưu Client ID và secret vào keychain của hệ điều hành",
-  "settings.import.failed": "Nhập thất bại",
 
   // Settings - MCP Server
   "settings.mcpServer.title": "Máy chủ MCP",
@@ -864,7 +840,7 @@ const vi: Dictionary = {
   "settings.permissions.title": "Quyền",
   "settings.permissions.connectFirst": "Kết nối một nguồn dữ liệu trước",
   "settings.permissions.hint":
-    "Chọn một preset quyền truy cập cho mỗi nguồn. Auto Approve và Bypass bật auto-approve toàn cục, áp dụng cho mọi nguồn đã kết nối.",
+    "Chọn một preset quyền truy cập cho mỗi nguồn. Thao tác ghi được phép của agent áp dụng ngay và được lưu trong Thay đổi.",
   "settings.permissions.presetAria": "Preset quyền cho {name}",
   "settings.permissions.custom": "Tùy chỉnh",
   "settings.permissions.customHint":
@@ -873,22 +849,19 @@ const vi: Dictionary = {
   "settings.permissions.updatedPrefix": "Cập nhật",
   "settings.permissions.bypassTitle": "Bỏ qua quyền?",
   "settings.permissions.bypassDescription":
-    "Agent có toàn quyền truy cập bao gồm cả xóa, không có cổng phê duyệt, và auto-approve toàn cục được bật. Chỉ chọn nếu bạn hoàn toàn tin tưởng mọi agent đã kết nối.",
+    "Agent có toàn quyền truy cập nguồn này, bao gồm cả xóa. Chỉ chọn nếu bạn hoàn toàn tin tưởng mọi agent đã kết nối.",
   "settings.permissions.enableBypass": "Bật Bypass",
 
   // Permission presets
   "preset.readOnly.label": "Chỉ đọc",
   "preset.readOnly.description":
     "Agent có thể đọc bản ghi nhưng không thể ghi, cập nhật hoặc xóa.",
-  "preset.ask.label": "Hỏi quyền",
-  "preset.ask.description":
-    "Agent có thể ghi, nhưng các thao tác thêm, cập nhật và xóa chờ bạn phê duyệt.",
-  "preset.autoApprove.label": "Tự động duyệt",
-  "preset.autoApprove.description":
-    "Agent ghi mà không cần hỏi. Xóa vẫn bị chặn. Bật auto-approve toàn cục.",
+  "preset.readWrite.label": "Đọc & ghi",
+  "preset.readWrite.description":
+    "Agent có thể đọc, thêm và cập nhật bản ghi. Thao tác xóa vẫn bị chặn.",
   "preset.bypass.label": "Bỏ qua quyền",
   "preset.bypass.description":
-    "Toàn quyền truy cập bao gồm cả xóa, không có cổng phê duyệt. Bật auto-approve toàn cục.",
+    "Toàn quyền truy cập, bao gồm cả xóa.",
 
   // Settings - About
   "settings.about.title": "Giới thiệu",
@@ -924,11 +897,11 @@ const vi: Dictionary = {
   // Settings - Reset
   "settings.reset.title": "Đặt lại",
   "settings.reset.description":
-    "Khôi phục tùy chọn về mặc định. Thông tin xác thực Google, quy tắc quyền và dữ liệu của bạn không bị ảnh hưởng.",
+    "Khôi phục tùy chọn về mặc định. Cầu nối Google, quy tắc quyền và dữ liệu của bạn không bị ảnh hưởng.",
   "settings.reset.button": "Đặt lại mặc định",
   "settings.reset.confirmTitle": "Đặt lại mặc định?",
   "settings.reset.confirmDescription":
-    "Giao diện, phông chữ và auto-approve trở về mặc định. Thao tác này KHÔNG xóa thông tin xác thực Google, quy tắc quyền hoặc dữ liệu của bạn.",
+    "Giao diện, phông chữ và ngôn ngữ trở về mặc định. Thao tác này KHÔNG xóa cầu nối Google, quy tắc quyền hoặc dữ liệu của bạn.",
 
   // Close behavior dialog
   "closeDialog.title": "Chạy nền?",
@@ -952,9 +925,6 @@ const vi: Dictionary = {
     "Bảng này trống. Các bản ghi agent thêm sẽ hiển thị tại đây sau khi commit",
 
   // Toasts - settings
-  "toast.autoApproveError": "Không cập nhật được auto-approve",
-  "toast.autoApproveEnabled": "Đã bật auto-approve",
-  "toast.autoApproveDisabled": "Đã tắt auto-approve",
   "toast.updatedRestartClients":
     "Đã cập nhật lên v{version}. Khởi động lại MCP client (Claude Desktop, Claude Code, ...) để nạp tool mới.",
   "toast.fontSizeError": "Không cập nhật được cỡ chữ",
@@ -967,19 +937,15 @@ const vi: Dictionary = {
   "toast.launchAtLoginError": "Không cập nhật được khởi động khi đăng nhập",
   "toast.launchAtLoginEnabled": "Đã bật khởi động khi đăng nhập",
   "toast.launchAtLoginDisabled": "Đã tắt khởi động khi đăng nhập",
+  "toast.bridgeAdded": "Đã thêm cầu nối Google",
+  "toast.bridgeAddError": "Chưa thêm được cầu nối",
+  "toast.bridgeSignedInAs": "Đăng nhập với {email}",
+  "toast.bridgeTestOk": "Cầu nối hoạt động bình thường",
+  "toast.bridgeTestError": "Kiểm tra cầu nối thất bại",
+  "toast.bridgeRemoved": "Đã xóa cầu nối Google",
+  "toast.bridgeRemoveError": "Chưa xóa được cầu nối",
 
   // Toasts - Google
-  "toast.clientIdError": "Không lưu được Client ID",
-  "toast.clientIdSaved": "Đã lưu Google client ID",
-  "toast.clientSecretError": "Không lưu được client secret",
-  "toast.clientSecretCleared": "Đã xóa Google client secret",
-  "toast.clientSecretSaved": "Đã lưu Google client secret",
-  "toast.clientSecretSavedDesc": "Đã lưu trong keychain của hệ điều hành",
-  "toast.googleConnectError": "Kết nối Google Sheets thất bại",
-  "toast.googleConnected": "Đã kết nối Google Sheets",
-  "toast.googleConnectedDesc": "Đã đăng nhập với {email}",
-  "toast.googleDisconnectError": "Ngắt kết nối Google Sheets thất bại",
-  "toast.googleDisconnected": "Đã ngắt kết nối Google Sheets",
 
   // Toasts - MCP
   "toast.transportError": "Không cập nhật được giao thức truyền",
@@ -997,11 +963,10 @@ const vi: Dictionary = {
   "toast.serverStopped": "Đã dừng máy chủ MCP",
   "toast.clientsConfigError": "Không cấu hình được các client",
   "toast.clientsConfigured": "Đã cấu hình các client MCP đã phát hiện",
+  "toast.changeDiscarded": "Đã hủy bỏ thay đổi",
+  "toast.changeDiscardError": "Chưa hủy bỏ được thay đổi",
 
   // Toasts - Changes
-  "toast.changeDecisionFailed": "Quyết định thay đổi thất bại",
-  "toast.changeApproved": "Đã phê duyệt thay đổi",
-  "toast.changeRejected": "Đã từ chối thay đổi",
 
   // Toasts - Workbench
   "toast.folderCreated": "Đã tạo thư mục",

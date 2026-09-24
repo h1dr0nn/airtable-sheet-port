@@ -44,3 +44,14 @@ export function formatValue(value: unknown): string {
   }
   return JSON.stringify(value);
 }
+
+const SHORT_ID_HEAD = 8;
+const SHORT_ID_TAIL = 6;
+
+/** Shortens a long opaque id to "head…tail"; short ids are returned as-is. */
+export function shortenId(id: string): string {
+  if (id.length <= SHORT_ID_HEAD + SHORT_ID_TAIL + 1) {
+    return id;
+  }
+  return `${id.slice(0, SHORT_ID_HEAD)}…${id.slice(-SHORT_ID_TAIL)}`;
+}

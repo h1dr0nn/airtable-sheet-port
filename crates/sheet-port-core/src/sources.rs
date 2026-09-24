@@ -27,17 +27,19 @@ pub fn list(conn: &Connection) -> Result<Vec<DataSource>, CoreError> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| db_error("Could not list sources", error))?;
 
-    rows.into_iter()
-        .map(|(id, kind, name, status)| {
-            let kind = parse_kind(&id, &kind)?;
-            Ok(DataSource {
+    // Rows of a kind this build no longer ships (e.g. the removed provider
+    // stub) are skipped rather than failing every listing.
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, kind, name, status)| {
+            SourceKind::from_db(&kind).map(|kind| DataSource {
                 id,
                 kind,
                 name,
                 status: Some(status),
             })
         })
-        .collect()
+        .collect())
 }
 
 pub fn get_kind(conn: &Connection, source_id: &str) -> Result<Option<SourceKind>, CoreError> {

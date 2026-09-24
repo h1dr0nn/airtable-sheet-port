@@ -7,7 +7,6 @@ import type {
   TableRef,
   TableSchema
 } from "@sheet-port/shared";
-import { demoIpc } from "./demoData.js";
 
 // Types below are copied verbatim from docs/ipc.md. Do not edit them here
 // without updating the contract document first.
@@ -33,7 +32,6 @@ export type PermissionRuleRow = {
   read: boolean;
   write: boolean;
   deleteRecords: boolean;
-  requireConfirmationFor: string[]; // ConfirmationAction[]
   updatedAt: string;
 };
 
@@ -44,23 +42,20 @@ export type SavePermissionRule = {
   read: boolean;
   write: boolean;
   deleteRecords: boolean;
-  requireConfirmationFor: string[];
 };
 
 export type TokenStatus = {
-  googleSheets: boolean; // OS keychain entry exists (service "sheet-port", user "google_sheets")
-  provider: boolean;     // ... user "provider"
+  googleSheets: boolean; // at least one Google account is connected (a keyed
+                         // 'google-sheets:{accountKey}' source row exists)
 };
 
-export type GoogleConfig = {
-  clientId: string | null;       // OAuth desktop client id from Settings, null until saved
-  hasClientSecret: boolean;      // secret presence only; the value never crosses IPC
-};
-
-/** One connected Google account, as returned by google_list_accounts. */
+/** One connected Google account (one Apps Script bridge). The secret and
+ * tokens never cross IPC. */
 export type GoogleAccount = {
-  sourceId: string; // "google-sheets:{accountKey}" source row id
-  email: string;
+  sourceId: string;     // "google-sheets:{accountKey}" source row id
+  email: string;        // the Google account the bridge executes as
+  deploymentId: string; // Apps Script deployment id; "" when the credential is missing
+  bridgeUrl: string;    // canonical web app URL; "" when the credential is missing
 };
 
 export type McpTransport = "stdio" | "http";
@@ -107,10 +102,6 @@ function toMcpClient(raw: RawDetectedClient): McpClient {
   return { id: raw.id, name: raw.displayName, state, configPath: raw.configPath ?? null };
 }
 
-export type GoogleConnectResult = {
-  email: string;
-};
-
 export type FontScale = "small" | "normal" | "large";
 export type FontFamily = "classic" | "modern" | "system";
 export type Language = "en" | "vi";
@@ -122,7 +113,6 @@ export type CloseBehavior =
   | "quit"; // exit the app
 
 export type AppSettings = {
-  autoApproveWrites: boolean; // meta key 'auto_approve_writes' === '1', off by default
   fontScale: FontScale;       // meta key 'ui_font_scale', 'normal' by default
   fontFamily: FontFamily;     // meta key 'ui_font_family', 'modern' by default
   language: Language;         // meta key 'ui_language', 'en' by default
@@ -196,25 +186,21 @@ export interface IpcApi {
   savePermissionRule(rule: SavePermissionRule): Promise<PermissionRuleRow>;
   deletePermissionRule(id: number): Promise<void>;
   listChanges(status: string | null): Promise<PendingChange[]>;
-  approveChange(changeId: string): Promise<PendingChange>;
+  /** Discards a staged (dry-run) change that is still pending. */
   rejectChange(changeId: string): Promise<PendingChange>;
   listAuditEvents(limit: number | null, offset: number | null): Promise<AuditEvent[]>;
   /** Wipes the audit log, then records a single `audit_cleared` trace event. */
   clearAuditLog(): Promise<void>;
   tokenStatus(): Promise<TokenStatus>;
-  getGoogleConfig(): Promise<GoogleConfig>;
-  /** Every connected Google account (sourceId + email), ordered by source id. */
+  /** Every connected Google account (one per bridge), ordered by source id. */
   googleListAccounts(): Promise<GoogleAccount[]>;
-  setGoogleClientId(clientId: string): Promise<void>;
-  /** Stores the OAuth client secret in the OS keychain; empty string clears it. */
-  setGoogleClientSecret(clientSecret: string): Promise<void>;
-  /** Long-running: resolves after the user finishes the browser consent flow. */
-  googleConnect(): Promise<GoogleConnectResult>;
-  /** Removes one connected account by its source id. Idempotent. */
-  googleDisconnect(sourceId: string): Promise<void>;
+  /** Adds (or replaces) an Apps Script bridge; calls it once to learn the email. */
+  googleAddBridge(url: string, secret: string): Promise<GoogleAccount>;
+  /** Removes one bridge by its source id. Idempotent. */
+  googleRemoveBridge(sourceId: string): Promise<void>;
+  /** Forces a fresh token fetch from one bridge. */
+  googleTestBridge(sourceId: string): Promise<GoogleAccount>;
   getSettings(): Promise<AppSettings>;
-  /** Enabling bypasses the human confirmation gate; disabling restores it. */
-  setAutoApprove(enabled: boolean): Promise<void>;
   /** Persists the UI font-size scale preference. */
   setFontScale(scale: FontScale): Promise<void>;
   /** Persists the UI font-family preference. */
@@ -306,21 +292,16 @@ const tauriIpc: IpcApi = {
   savePermissionRule: (rule) => invoke<PermissionRuleRow>("save_permission_rule", { rule }),
   deletePermissionRule: (id) => invoke<void>("delete_permission_rule", { id }),
   listChanges: (status) => invoke<PendingChange[]>("list_changes", { status }),
-  approveChange: (changeId) => invoke<PendingChange>("approve_change", { changeId }),
   rejectChange: (changeId) => invoke<PendingChange>("reject_change", { changeId }),
   listAuditEvents: (limit, offset) =>
     invoke<AuditEvent[]>("list_audit_events", { limit, offset }),
   clearAuditLog: () => invoke<void>("clear_audit_log"),
   tokenStatus: () => invoke<TokenStatus>("token_status"),
-  getGoogleConfig: () => invoke<GoogleConfig>("get_google_config"),
   googleListAccounts: () => invoke<GoogleAccount[]>("google_list_accounts"),
-  setGoogleClientId: (clientId) => invoke<void>("set_google_client_id", { clientId }),
-  setGoogleClientSecret: (clientSecret) =>
-    invoke<void>("set_google_client_secret", { clientSecret }),
-  googleConnect: () => invoke<GoogleConnectResult>("google_connect"),
-  googleDisconnect: (sourceId) => invoke<void>("google_disconnect", { sourceId }),
+  googleAddBridge: (url, secret) => invoke<GoogleAccount>("google_add_bridge", { url, secret }),
+  googleRemoveBridge: (sourceId) => invoke<void>("google_remove_bridge", { sourceId }),
+  googleTestBridge: (sourceId) => invoke<GoogleAccount>("google_test_bridge", { sourceId }),
   getSettings: () => invoke<AppSettings>("get_settings"),
-  setAutoApprove: (enabled) => invoke<void>("set_auto_approve", { enabled }),
   setFontScale: (scale) => invoke<void>("set_font_scale", { scale }),
   setFontFamily: (family) => invoke<void>("set_font_family", { family }),
   setLanguage: (language) => invoke<void>("set_language", { language }),
@@ -365,5 +346,23 @@ const tauriIpc: IpcApi = {
     invoke<{ rowIndex: number }>("append_workbench_row", { itemId, gid, values })
 };
 
-// Plain-browser dev preview falls back to clickable in-memory fixtures.
-export const ipc: IpcApi = isTauri ? tauriIpc : demoIpc;
+/**
+ * In-memory demo backend for the plain-browser `vite dev` preview, loaded on
+ * first call. Every IpcApi method returns a promise, so each one can await the
+ * lazily imported module before delegating.
+ */
+function createLazyDemoIpc(): IpcApi {
+  let demo: Promise<IpcApi> | null = null;
+  const load = () => (demo ??= import("./demoData.js").then((module) => module.demoIpc));
+  return new Proxy({} as IpcApi, {
+    get: (_target, key) => (...args: unknown[]) =>
+      load().then((api) => {
+        const method = api[key as keyof IpcApi] as (...params: unknown[]) => Promise<unknown>;
+        return method(...args);
+      })
+  });
+}
+
+// The demo exists only in Vite dev mode: `import.meta.env.DEV` is statically
+// false in production builds, so the demo modules are dropped from the bundle.
+export const ipc: IpcApi = isTauri || !import.meta.env.DEV ? tauriIpc : createLazyDemoIpc();

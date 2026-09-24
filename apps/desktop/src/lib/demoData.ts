@@ -13,8 +13,6 @@ import type {
   FontFamily,
   FontScale,
   GoogleAccount,
-  GoogleConfig,
-  GoogleConnectResult,
   IpcApi,
   Language,
   McpClient,
@@ -30,13 +28,13 @@ import type {
 import { createWorkbenchDemo } from "./workbenchDemo.js";
 
 // In-memory stand-in for the Rust backend so `vite dev` in a plain browser is
-// fully clickable. Mirrors the schema v2 empty state: a fresh database has no
-// sources, rules, changes, or audit rows. Clicking Connect on the Google
-// Sheets card links a fake account after a short delay so every screen stays
-// explorable without OAuth.
+// fully clickable. Only loaded in Vite dev mode (see lib/ipc.ts). Mirrors the
+// schema v2 empty state: a fresh database has no sources, rules, changes, or
+// audit rows. Adding any well-formed bridge URL plus a secret links a fake
+// account after a short delay so every screen stays explorable offline.
 
 const DEMO_LATENCY_MS = 150;
-const GOOGLE_CONNECT_DELAY_MS = 1_500;
+const BRIDGE_CALL_DELAY_MS = 800;
 const DEFAULT_READ_LIMIT = 100;
 const MAX_READ_LIMIT = 500;
 const DEFAULT_AUDIT_LIMIT = 100;
@@ -76,8 +74,11 @@ const DEMO_MCP_CLIENTS: readonly DemoClientSeed[] = [
 // Mirrors sheet-port-core: google::GOOGLE_SOURCE_ID and the source name format.
 const GOOGLE_SOURCE_ID = "google-sheets";
 const DEMO_GOOGLE_EMAIL = "demo.user@gmail.com";
-// Pre-filled so the Connect button is immediately clickable in the preview.
-const DEMO_GOOGLE_CLIENT_ID = "000000000000-demo.apps.googleusercontent.com";
+
+// Mirrors core::google bridge URL validation: a web app /exec URL, optionally
+// the Workspace form with an /a/macros/{domain} segment.
+const BRIDGE_URL_PATTERN =
+  /^https:\/\/script\.google\.com\/(?:a\/macros\/[^/]+|macros)\/s\/([A-Za-z0-9_-]+)\/exec\/?$/;
 
 // Default UI font preferences; mirror core::db defaults (normal + modern).
 const DEFAULT_FONT_SCALE: FontScale = "normal";
@@ -130,7 +131,6 @@ function buildSeededChange(): PendingChange {
     type: "update",
     createdAt: nowIso(),
     status: "pending",
-    requiresConfirmation: true,
     diff: [
       {
         recordId: before?.id ?? "row_3",
@@ -141,25 +141,25 @@ function buildSeededChange(): PendingChange {
   };
 }
 
-type DemoOptions = {
-  /** Override the pre-seeded client id; pass null to model a fresh install. */
-  googleClientId?: string | null;
-};
+/** Parses a bridge web app URL into its deployment id, like core::google. */
+function parseDeploymentId(url: string): string {
+  const match = BRIDGE_URL_PATTERN.exec(url.trim());
+  if (!match?.[1]) {
+    throw new Error(
+      "The bridge URL must look like https://script.google.com/macros/s/{deploymentId}/exec"
+    );
+  }
+  return match[1];
+}
 
 /** Builds an isolated demo backend; exported for tests. */
-export function createDemoIpc(options: DemoOptions = {}): IpcApi {
-  let googleClientId =
-    options.googleClientId === undefined ? DEMO_GOOGLE_CLIENT_ID : options.googleClientId;
-  // Mirrors the OS keychain: only presence is observable, never the value.
-  let hasGoogleClientSecret = false;
-  // Connected accounts, keyed by source id. Starts empty like a fresh backend;
-  // each googleConnect adds one, googleDisconnect removes one by source id.
+export function createDemoIpc(): IpcApi {
+  // Connected accounts, one per bridge. Starts empty like a fresh backend;
+  // googleAddBridge adds one, googleRemoveBridge removes one by source id.
   let googleAccounts: GoogleAccount[] = [];
-  // Rotates the fake email so a second connect models a distinct account.
-  let demoConnectCount = 0;
+  // Rotates the fake email so a second bridge models a distinct account.
+  let demoBridgeCount = 0;
 
-  // App-managed preference mirror; on by default, restored to on on reset.
-  let autoApproveWrites = true;
   // UI font preferences; mirror the backend defaults, cleared on reset.
   let fontScale: FontScale = DEFAULT_FONT_SCALE;
   let fontFamily: FontFamily = DEFAULT_FONT_FAMILY;
@@ -213,7 +213,7 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
   // Changes screens stay explorable regardless of which account was added.
   const primarySourceId = () => googleAccounts[0]?.sourceId ?? null;
 
-  const decideChange = (changeId: string, status: "approved" | "rejected"): PendingChange => {
+  const discardChange = (changeId: string): PendingChange => {
     const existing = changes.find((change) => change.id === changeId);
     if (!existing) {
       throw new Error(`Unknown change ${changeId}`);
@@ -221,11 +221,16 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     if (existing.status !== "pending") {
       throw new Error(`Change ${changeId} is already ${existing.status}`);
     }
-    const decided: PendingChange = { ...existing, status, decidedAt: nowIso(), decidedBy: "user" };
+    const decided: PendingChange = {
+      ...existing,
+      status: "rejected",
+      decidedAt: nowIso(),
+      decidedBy: "user"
+    };
     changes = changes.map((change) => (change.id === changeId ? decided : change));
     pushAudit({
       actor: "user",
-      action: status === "approved" ? "change_approved" : "change_rejected",
+      action: "change_rejected",
       sourceId: decided.sourceId,
       tableId: decided.tableId,
       metadata: { changeId }
@@ -303,7 +308,6 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
         read: rule.read,
         write: rule.write,
         deleteRecords: rule.deleteRecords,
-        requireConfirmationFor: [...rule.requireConfirmationFor],
         updatedAt: nowIso()
       };
       permissionRules = existing
@@ -338,13 +342,9 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       const filtered = status === null ? changes : changes.filter((change) => change.status === status);
       return [...filtered].sort(newestChangeFirst).slice(0, CHANGES_LIST_LIMIT);
     },
-    async approveChange(changeId: string): Promise<PendingChange> {
-      await delay();
-      return decideChange(changeId, "approved");
-    },
     async rejectChange(changeId: string): Promise<PendingChange> {
       await delay();
-      return decideChange(changeId, "rejected");
+      return discardChange(changeId);
     },
     async listAuditEvents(limit, offset): Promise<AuditEvent[]> {
       await delay();
@@ -363,51 +363,44 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     },
     async tokenStatus(): Promise<TokenStatus> {
       await delay();
-      return { googleSheets: isGoogleConnected(), provider: false };
-    },
-    async getGoogleConfig(): Promise<GoogleConfig> {
-      await delay();
-      return {
-        clientId: googleClientId,
-        hasClientSecret: hasGoogleClientSecret
-      };
+      return { googleSheets: isGoogleConnected() };
     },
     async googleListAccounts(): Promise<GoogleAccount[]> {
       await delay();
       return googleAccounts.map((account) => ({ ...account }));
     },
-    async setGoogleClientId(clientId: string): Promise<void> {
-      await delay();
-      const trimmed = clientId.trim();
-      if (trimmed === "") {
-        throw new Error("Google client ID must not be empty");
+    async googleAddBridge(url: string, secret: string): Promise<GoogleAccount> {
+      // Validation errors reject before any timer, like the real backend.
+      const deploymentId = parseDeploymentId(url);
+      if (secret.trim() === "") {
+        throw new Error("The bridge secret must not be empty");
       }
-      googleClientId = trimmed;
-    },
-    async setGoogleClientSecret(clientSecret: string): Promise<void> {
-      await delay();
-      // Mirrors core::google::set_client_secret: empty string clears the entry.
-      hasGoogleClientSecret = clientSecret !== "";
-    },
-    async googleConnect(): Promise<GoogleConnectResult> {
-      if (googleClientId === null) {
-        throw new Error("Google client ID is not configured. Set it in the desktop app settings");
-      }
-      // Stands in for the real browser consent round-trip.
-      await wait(GOOGLE_CONNECT_DELAY_MS);
+      // Stands in for the round-trip to the Apps Script web app.
+      await wait(BRIDGE_CALL_DELAY_MS);
+      const bridgeUrl = `https://script.google.com/macros/s/${deploymentId}/exec`;
+      // The same deployment signs in as the same account, so re-adding it
+      // replaces the stored bridge instead of adding a second account.
+      const existing = googleAccounts.find((account) => account.deploymentId === deploymentId);
       const wasConnected = isGoogleConnected();
-      // First account owns the demo tables under the bare source id (mirrors the
-      // legacy "default" account); later accounts get a distinct email + id.
-      const email = wasConnected
-        ? `demo.user+${demoConnectCount + 1}@gmail.com`
-        : DEMO_GOOGLE_EMAIL;
-      demoConnectCount += 1;
-      const sourceId = wasConnected ? sourceIdForEmail(email) : GOOGLE_SOURCE_ID;
-      // Re-linking the same account is idempotent, like the real backend.
-      if (!googleAccounts.some((account) => account.sourceId === sourceId)) {
-        googleAccounts = [...googleAccounts, { sourceId, email }];
+      let account: GoogleAccount;
+      if (existing) {
+        account = { ...existing, bridgeUrl };
+        googleAccounts = googleAccounts.map((item) =>
+          item.sourceId === existing.sourceId ? account : item
+        );
+      } else {
+        // The first account owns the demo tables under the bare source id so
+        // the Tables and Changes screens stay explorable; later accounts get a
+        // distinct email + id.
+        const email = wasConnected
+          ? `demo.user+${demoBridgeCount + 1}@gmail.com`
+          : DEMO_GOOGLE_EMAIL;
+        demoBridgeCount += 1;
+        const sourceId = wasConnected ? sourceIdForEmail(email) : GOOGLE_SOURCE_ID;
+        account = { sourceId, email, deploymentId, bridgeUrl };
+        googleAccounts = [...googleAccounts, account];
         sources = [
-          ...sources.filter((source) => source.id !== sourceId),
+          ...sources,
           {
             id: sourceId,
             kind: "google_sheets",
@@ -418,9 +411,9 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
       }
       pushAudit({
         actor: "user",
-        action: "google_connected",
-        sourceId,
-        metadata: { email }
+        action: "google_bridge_added",
+        sourceId: account.sourceId,
+        metadata: { email: account.email, deploymentId }
       });
       if (!wasConnected && !changes.some((change) => change.sourceId === GOOGLE_SOURCE_ID)) {
         const seeded = buildSeededChange();
@@ -433,28 +426,33 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
           metadata: { changeId: seeded.id, records: 1 }
         });
       }
-      return { email };
+      return { ...account };
     },
-    async googleDisconnect(sourceId: string): Promise<void> {
+    async googleRemoveBridge(sourceId: string): Promise<void> {
       await delay();
-      // Idempotent, like core::google::disconnect: removing an absent account is
-      // a no-op rather than an error.
+      // Idempotent, like core::google::remove_bridge: removing an absent
+      // account is a no-op rather than an error.
       googleAccounts = googleAccounts.filter((account) => account.sourceId !== sourceId);
       sources = sources.filter((source) => source.id !== sourceId);
-      pushAudit({ actor: "user", action: "google_disconnected", sourceId });
+      pushAudit({ actor: "user", action: "google_bridge_removed", sourceId });
+    },
+    async googleTestBridge(sourceId: string): Promise<GoogleAccount> {
+      const account = googleAccounts.find((item) => item.sourceId === sourceId);
+      if (!account) {
+        throw new Error(`No bridge is stored for ${sourceId}`);
+      }
+      await wait(BRIDGE_CALL_DELAY_MS);
+      pushAudit({
+        actor: "user",
+        action: "google_bridge_tested",
+        sourceId,
+        metadata: { ok: true, email: account.email }
+      });
+      return { ...account };
     },
     async getSettings(): Promise<AppSettings> {
       await delay();
-      return { autoApproveWrites, fontScale, fontFamily, language, closeBehavior };
-    },
-    async setAutoApprove(enabled: boolean): Promise<void> {
-      await delay();
-      autoApproveWrites = enabled;
-      pushAudit({
-        actor: "user",
-        action: "settings_updated",
-        metadata: { key: "auto_approve_writes", enabled }
-      });
+      return { fontScale, fontFamily, language, closeBehavior };
     },
     async setFontScale(scale: FontScale): Promise<void> {
       await delay();
@@ -517,9 +515,7 @@ export function createDemoIpc(options: DemoOptions = {}): IpcApi {
     },
     async resetSettings(): Promise<void> {
       await delay();
-      // Prefs-only: mirrors reset_settings clearing the app-managed meta keys,
-      // which returns auto-approve to its on default.
-      autoApproveWrites = true;
+      // Prefs-only: mirrors reset_settings clearing the app-managed meta keys.
       fontScale = DEFAULT_FONT_SCALE;
       fontFamily = DEFAULT_FONT_FAMILY;
       language = DEFAULT_LANGUAGE;

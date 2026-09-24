@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatAbsoluteTime, formatRelativeTime, formatValue } from "../format";
+import { formatAbsoluteTime, formatRelativeTime, formatValue, shortenId } from "../format";
 
 const NOW = new Date("2026-07-06T12:00:00.000Z");
 
@@ -73,5 +73,15 @@ describe("formatValue", () => {
   it("JSON-encodes objects and arrays", () => {
     expect(formatValue({ a: 1 })).toBe('{"a":1}');
     expect(formatValue([1, 2])).toBe("[1,2]");
+  });
+});
+
+describe("shortenId", () => {
+  it("keeps short ids intact", () => {
+    expect(shortenId("AKfycb123")).toBe("AKfycb123");
+  });
+
+  it("shortens long ids to head and tail", () => {
+    expect(shortenId("AKfycbx1234567890abcdefghijklmnopqrstuvwxyz")).toBe("AKfycbx1…uvwxyz");
   });
 });

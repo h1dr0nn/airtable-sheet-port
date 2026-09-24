@@ -16,7 +16,6 @@ fn make_rule(table_id: Option<&str>) -> SavePermissionRule {
         read: true,
         write: true,
         delete_records: false,
-        require_confirmation_for: Vec::new(),
     }
 }
 
@@ -145,8 +144,8 @@ fn delete_sheet_is_gated_on_the_delete_permission_like_a_record_delete() {
     let conn = open_temp_db();
     save(&conn, &make_rule(None));
 
-    // Write-only rule: deleting a whole tab is refused, so auto-approve alone
-    // (which never touches delete_records) cannot authorize it.
+    // Write-only rule: deleting a whole tab is refused, since write access
+    // alone (without delete_records) cannot authorize it.
     let denied = evaluate_write(&conn, SOURCE, TABLE, WriteAction::DeleteSheet).expect("evaluate");
     assert!(!denied.allowed);
 
@@ -193,29 +192,40 @@ fn assert_can_write_returns_typed_permission_denied() {
 }
 
 #[test]
-fn confirmation_flags_per_action_including_bulk_update() {
+fn legacy_confirmation_list_does_not_affect_write_evaluation() {
     let conn = open_temp_db();
-    let mut rule = make_rule(None);
-    rule.require_confirmation_for = vec!["update".to_string(), "bulk_update".to_string()];
-    save(&conn, &rule);
+    save(&conn, &make_rule(None));
+    // Rules saved before the approval gate was removed may still list actions
+    // in the legacy column; evaluation ignores them.
+    conn.execute(
+        "UPDATE permission_rules SET require_confirmation = '[\"update\",\"bulk_update\"]'
+         WHERE source_id = ?1",
+        [SOURCE],
+    )
+    .expect("legacy confirmation list");
 
-    let update = evaluate_write(&conn, SOURCE, TABLE, WriteAction::Update).expect("evaluate");
-    assert!(update.requires_confirmation);
-    let bulk = evaluate_write(&conn, SOURCE, TABLE, WriteAction::BulkUpdate).expect("evaluate");
-    assert!(bulk.requires_confirmation);
-    let append = evaluate_write(&conn, SOURCE, TABLE, WriteAction::Append).expect("evaluate");
-    assert!(!append.requires_confirmation);
-    assert!(
-        assert_can_write(&conn, SOURCE, TABLE, WriteAction::BulkUpdate).expect("allowed"),
-        "assert_can_write must surface the confirmation flag"
-    );
+    for action in [
+        WriteAction::Update,
+        WriteAction::BulkUpdate,
+        WriteAction::Append,
+    ] {
+        let evaluation = evaluate_write(&conn, SOURCE, TABLE, action).expect("evaluate");
+        assert_eq!(
+            evaluation,
+            WriteEvaluation {
+                allowed: true,
+                reason: None
+            }
+        );
+    }
+    assert_can_write(&conn, SOURCE, TABLE, WriteAction::BulkUpdate).expect("allowed");
 }
 
 #[test]
 fn rule_changes_apply_between_calls_without_caching() {
     let conn = open_temp_db();
     save(&conn, &make_rule(None));
-    assert!(!assert_can_write(&conn, SOURCE, TABLE, WriteAction::Update).expect("allowed"));
+    assert_can_write(&conn, SOURCE, TABLE, WriteAction::Update).expect("allowed");
 
     // The desktop app revokes write access; the next call sees the new rule.
     let mut revoked = make_rule(None);
@@ -279,17 +289,19 @@ fn save_rule_upserts_source_wide_null_table_rule() {
 }
 
 #[test]
-fn save_rule_rejects_unknown_confirmation_action() {
+fn save_rule_stores_an_empty_legacy_confirmation_list() {
     let conn = open_temp_db();
-    let mut rule = make_rule(Some("orders"));
-    rule.require_confirmation_for = vec!["drop_table".to_string()];
+    let inserted = save(&conn, &make_rule(Some("orders")));
+    save(&conn, &make_rule(Some("orders")));
 
-    let error = save_rule(&conn, &rule).expect_err("must fail");
-    assert!(matches!(error, CoreError::InvalidInput(_)));
-    assert!(
-        error.to_string().contains("drop_table"),
-        "unexpected error: {error}"
-    );
+    let stored: String = conn
+        .query_row(
+            "SELECT require_confirmation FROM permission_rules WHERE id = ?1",
+            [inserted.id],
+            |row| row.get(0),
+        )
+        .expect("stored list");
+    assert_eq!(stored, "[]", "insert and update both write an empty list");
 }
 
 #[test]
@@ -326,6 +338,5 @@ fn list_rules_includes_demo_fixture_customers_rule() {
             && rule.read
             && rule.write
             && !rule.delete_records
-            && rule.require_confirmation_for == ["append", "update", "delete", "bulk_update"]
     }));
 }

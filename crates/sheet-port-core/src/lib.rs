@@ -15,6 +15,7 @@ pub mod error;
 pub mod google;
 pub mod heartbeat;
 pub mod mcp_clients;
+#[cfg(any(test, feature = "mock"))]
 pub mod mock_data;
 pub mod permissions;
 pub mod sources;

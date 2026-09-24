@@ -1,6 +1,5 @@
 //! ConnectorRegistry and MockConnector behavior against the demo-workspace
-//! fixture (fresh databases are empty since schema v2), plus the
-//! provider-stub TODO messages agents see verbatim. GoogleSheetsConnector
+//! fixture (fresh databases are empty since schema v2). GoogleSheetsConnector
 //! network behavior is covered by pure-function tests in google_sheets.rs.
 
 use serde_json::json;
@@ -168,24 +167,16 @@ fn registry_errors_for_unknown_source() {
 
 #[test]
 fn registry_errors_when_kind_has_no_connector() {
-    let conn = open_temp_db();
-    // A provider source exists in the DB but no provider connector is part of
-    // the defaults.
-    crate::sources::upsert(
-        &conn,
-        "provider-crm",
-        SourceKind::Provider,
-        "CRM",
-        crate::sources::SOURCE_STATUS_CONNECTED,
-    )
-    .expect("insert provider source");
+    // A mock source exists in the DB but the registry only serves Google
+    // Sheets, as in a build without the `mock` feature.
+    let conn = demo_db();
+    let mut registry = ConnectorRegistry::new();
+    registry.register(Box::new(GoogleSheetsConnector::new()));
 
-    let error = registry()
-        .list_tables(&conn, "provider-crm")
-        .expect_err("must fail");
+    let error = registry.list_tables(&conn, SOURCE).expect_err("must fail");
     assert_eq!(
         error.to_string(),
-        "No connector registered for source kind provider (source provider-crm)"
+        format!("No connector registered for source kind mock (source {SOURCE})")
     );
 }
 
@@ -193,14 +184,15 @@ fn registry_errors_when_kind_has_no_connector() {
 fn registry_aggregates_sources_across_connectors() {
     let conn = demo_db();
     let mut registry = registry();
+    // Replaces the default Google Sheets connector with a canned one.
     registry.register(Box::new(FakeConnector {
-        kind: SourceKind::Provider,
-        ids: vec!["provider:crm"],
+        kind: SourceKind::GoogleSheets,
+        ids: vec!["google:crm"],
     }));
 
     let sources = registry.list_sources(&conn).expect("sources");
     let ids: Vec<&str> = sources.iter().map(|source| source.id.as_str()).collect();
-    assert_eq!(ids, [SOURCE, "provider:crm"]);
+    assert_eq!(ids, [SOURCE, "google:crm"]);
 }
 
 #[test]
@@ -318,6 +310,107 @@ fn parse_a1_range_rejects_malformed_and_mixed_shapes() {
 }
 
 #[test]
+fn parse_cells_range_accepts_blocks_columns_and_rows() {
+    let block = parse_cells_range("B40:F60").expect("block");
+    assert_eq!(block.start_col, Some(1));
+    assert_eq!(block.end_col, Some(6));
+    assert_eq!(block.start_row, Some(39));
+    assert_eq!(block.end_row, Some(60));
+
+    let columns = parse_cells_range("A:C").expect("columns");
+    assert_eq!((columns.start_col, columns.end_col), (Some(0), Some(3)));
+    assert_eq!((columns.start_row, columns.end_row), (None, None));
+
+    let rows = parse_cells_range("5:9").expect("rows");
+    assert_eq!((rows.start_row, rows.end_row), (Some(4), Some(9)));
+    assert_eq!((rows.start_col, rows.end_col), (None, None));
+}
+
+#[test]
+fn parse_cells_range_rejects_sheet_names_and_malformed_ranges() {
+    let qualified = parse_cells_range("Sheet1!A1:B2");
+    assert!(
+        matches!(&qualified, Err(CoreError::InvalidInput(message)) if message.contains("tableId")),
+        "a sheet-qualified range is refused: {qualified:?}"
+    );
+    assert!(parse_cells_range("'My Tab'!A:A").is_err());
+    for bad in ["", "A1:B", "1A", "A0", "B40-F60", "A1:B2:C3", "ZZZ1"] {
+        assert!(parse_cells_range(bad).is_err(), "{bad} should be rejected");
+    }
+}
+
+#[test]
+fn window_a1_keeps_blocks_and_columns_and_bounds_row_windows() {
+    let a1 = |range: &str| window_a1(&parse_cells_range(range).expect("range"));
+    assert_eq!(a1("B40:F60"), "B40:F60");
+    assert_eq!(a1("A:C"), "A:C");
+    assert_eq!(a1("5:9"), "A5:ZZ9");
+    assert_eq!(a1("c3"), "C3:C3");
+}
+
+#[test]
+fn grid_window_numbers_rows_from_the_window_and_keys_by_letter() {
+    let range = parse_cells_range("B40:D42").expect("range");
+    let rows = vec![
+        vec!["a".to_string(), "b".to_string()],
+        Vec::new(),
+        vec![
+            "x".to_string(),
+            "y".to_string(),
+            "z".to_string(),
+            "past".to_string(),
+        ],
+        vec!["beyond the window".to_string()],
+    ];
+    let window = grid_window(&rows, &range, None, None);
+    assert_eq!(window.columns, vec!["B", "C", "D"]);
+    assert_eq!(
+        window.total_rows, 3,
+        "rows past the window height are dropped"
+    );
+    let numbers: Vec<i64> = window.rows.iter().map(|row| row.row).collect();
+    assert_eq!(numbers, vec![40, 41, 42]);
+    assert_eq!(window.rows[0].cells["B"], "a");
+    assert_eq!(window.rows[0].cells["D"], "");
+    assert_eq!(window.rows[2].cells["D"], "z");
+    assert!(!window.rows[2].cells.contains_key("E"));
+
+    let paged = grid_window(&rows, &range, Some(1), Some(1));
+    assert_eq!(paged.rows.len(), 1);
+    assert_eq!(paged.rows[0].row, 41);
+    assert_eq!(paged.total_rows, 3);
+}
+
+#[test]
+fn mock_read_grid_range_slices_the_raw_mirror() {
+    let conn = demo_db();
+    let registry = registry();
+    // Row 1 is the field-name header; B = Email, C = Plan.
+    let range = parse_cells_range("B2:C3").expect("range");
+    let window = registry
+        .read_grid_range(&conn, SOURCE, TABLE, &range, None, None)
+        .expect("window");
+    assert_eq!(window.columns, vec!["B", "C"]);
+    assert_eq!(window.rows.len(), 2);
+    assert_eq!(window.rows[0].row, 2);
+    assert_eq!(window.rows[1].row, 3);
+
+    let header = registry
+        .read_grid_range(
+            &conn,
+            SOURCE,
+            TABLE,
+            &parse_cells_range("1:1").expect("row"),
+            None,
+            None,
+        )
+        .expect("header");
+    assert_eq!(header.columns, vec!["A", "B", "C", "D", "E"]);
+    assert_eq!(header.rows[0].cells["A"], "Name");
+    assert_eq!(header.rows[0].cells["E"], "Active");
+}
+
+#[test]
 fn mock_find_records_matches_case_insensitive_substrings() {
     let conn = demo_db();
     let find = |query: &str| {
@@ -362,38 +455,19 @@ fn mock_find_records_caps_results_at_100() {
 }
 
 #[test]
-fn provider_stub_lists_configured_sources_and_errors_elsewhere() {
-    let conn = open_temp_db();
-    let connector = ProviderConnector::new(vec!["crm".to_string()]);
-
-    let sources = connector.list_sources(&conn).expect("sources");
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].id, "provider:crm");
-    assert_eq!(sources[0].name, "Provider Source crm");
-
-    let error = connector
-        .append_records(&conn, "provider:crm", "t", &[])
-        .expect_err("stub");
-    assert_eq!(
-        error.to_string(),
-        "Provider connector TODO: create records after preview and policy approval"
-    );
-}
-
-#[test]
 fn registering_the_same_kind_replaces_the_connector() {
     let conn = open_temp_db();
     let mut registry = ConnectorRegistry::new();
     registry.register(Box::new(FakeConnector {
-        kind: SourceKind::Provider,
-        ids: vec!["provider:a"],
+        kind: SourceKind::GoogleSheets,
+        ids: vec!["google:a"],
     }));
     registry.register(Box::new(FakeConnector {
-        kind: SourceKind::Provider,
-        ids: vec!["provider:b", "provider:c"],
+        kind: SourceKind::GoogleSheets,
+        ids: vec!["google:b", "google:c"],
     }));
 
     let sources = registry.list_sources(&conn).expect("sources");
     let ids: Vec<&str> = sources.iter().map(|source| source.id.as_str()).collect();
-    assert_eq!(ids, ["provider:b", "provider:c"]);
+    assert_eq!(ids, ["google:b", "google:c"]);
 }

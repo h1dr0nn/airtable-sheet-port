@@ -12,7 +12,6 @@ function ruleFromPreset(id: Parameters<typeof getPreset>[0]): PermissionRuleRow 
     read: preset.read,
     write: preset.write,
     deleteRecords: preset.deleteRecords,
-    requireConfirmationFor: [...preset.requireConfirmationFor],
     updatedAt: new Date().toISOString()
   };
 }
@@ -20,31 +19,27 @@ function ruleFromPreset(id: Parameters<typeof getPreset>[0]): PermissionRuleRow 
 describe("permission presets", () => {
   it("round-trips every preset through derivePreset", () => {
     for (const preset of PERMISSION_PRESETS) {
-      const rule = ruleFromPreset(preset.id);
-      expect(derivePreset(rule, preset.autoApprove)).toBe(preset.id);
+      expect(derivePreset(ruleFromPreset(preset.id))).toBe(preset.id);
     }
   });
 
   it("returns null for a missing rule (fully denied)", () => {
-    expect(derivePreset(undefined, false)).toBeNull();
+    expect(derivePreset(undefined)).toBeNull();
   });
 
-  it("returns null when the rule matches but auto-approve does not", () => {
-    // Ask requires autoApprove=false; passing true breaks the match.
-    const rule = ruleFromPreset("ask");
-    expect(derivePreset(rule, true)).toBeNull();
+  it("returns null for a combination no preset covers", () => {
+    const rule = ruleFromPreset("read_only");
+    rule.read = false;
+    expect(derivePreset(rule)).toBeNull();
   });
 
-  it("matches confirmation actions order-independently", () => {
-    const rule = ruleFromPreset("ask");
-    rule.requireConfirmationFor = [...rule.requireConfirmationFor].reverse();
-    expect(derivePreset(rule, false)).toBe("ask");
+  it("distinguishes Read & Write from Bypass by deleteRecords", () => {
+    expect(derivePreset(ruleFromPreset("read_write"))).toBe("read_write");
+    expect(derivePreset(ruleFromPreset("bypass"))).toBe("bypass");
   });
 
-  it("distinguishes Auto Approve from Bypass by deleteRecords", () => {
-    const autoApprove = ruleFromPreset("auto_approve");
-    const bypass = ruleFromPreset("bypass");
-    expect(derivePreset(autoApprove, true)).toBe("auto_approve");
-    expect(derivePreset(bypass, true)).toBe("bypass");
+  it("only the destructive preset asks for confirmation", () => {
+    const confirming = PERMISSION_PRESETS.filter((preset) => preset.requiresConfirmation);
+    expect(confirming.map((preset) => preset.id)).toEqual(["bypass"]);
   });
 });

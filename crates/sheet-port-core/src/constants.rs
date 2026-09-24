@@ -26,7 +26,7 @@ pub const FIND_RECORDS_LIMIT: usize = 100;
 pub const WRITE_BATCH_MAX: usize = 100;
 
 /// Maximum cell-format operations (and column-width entries) accepted per
-/// preview_format_table call, bounding a single formatting change.
+/// format_table call, bounding a single formatting change.
 pub const FORMAT_OPS_MAX: usize = 100;
 
 /// Allowed font-size range (points) for a cell-format operation.
@@ -46,25 +46,6 @@ pub const CHANGE_LIST_LIMIT: i64 = 200;
 /// Audit log paging: default page size and maximum.
 pub const AUDIT_LIMIT_DEFAULT: i64 = 100;
 pub const AUDIT_LIMIT_MAX: i64 = 500;
-
-/// Meta key storing the Google OAuth desktop client id. Written from the
-/// desktop app settings (db::set_meta) and read by the Google connect and
-/// token-refresh flows.
-pub const META_GOOGLE_CLIENT_ID: &str = "google_client_id";
-
-/// Meta key for the auto-approve-writes setting. Absent (the default) or "1"
-/// means on: agent writes commit without a separate desktop approval, since
-/// approval is the agent harness's job, not this broker's. Only an explicit
-/// "0" turns it off, restoring the desktop confirmation gate at commit time
-/// (see docs/security.md).
-pub const META_AUTO_APPROVE_WRITES: &str = "auto_approve_writes";
-
-/// Meta value that turns a boolean opt-in setting on.
-pub const META_FLAG_ON: &str = "1";
-
-/// Meta value that turns a boolean setting explicitly off. Distinct from an
-/// absent key for settings whose default is on (e.g. auto-approve-writes).
-pub const META_FLAG_OFF: &str = "0";
 
 /// Meta key holding the JSON array of MCP client ids the user has configured
 /// from this app. Remembered so every launch re-registers those clients: that

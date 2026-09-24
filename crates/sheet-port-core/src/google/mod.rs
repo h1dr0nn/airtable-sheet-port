@@ -1,56 +1,83 @@
-//! Google Sheets account linking: OAuth 2.0 PKCE for desktop apps, keyring
-//! token storage, and the connect/disconnect lifecycle. Raw tokens NEVER
-//! leave this module; the connector obtains short-lived access tokens via
-//! the crate-private [`access_token`], and other processes only ever see the
-//! boolean from `vault::token_status`. Audit events are recorded by callers.
+//! Google Sheets account linking through Apps Script bridges. Each connected
+//! account is one bridge (a web app deployed by the user) that hands out
+//! short-lived Google access tokens; its URL, secret and cached token live in
+//! the OS keychain. Raw secrets and tokens NEVER leave this module; the
+//! connector obtains access tokens via the crate-private [`access_token`], and
+//! other processes only ever see the boolean from `vault::token_status`. Audit
+//! events are recorded by callers.
 
-mod oauth;
+mod bridge;
 mod tokens;
 
 use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::constants::META_GOOGLE_CLIENT_ID;
+use crate::connectors::parse_spreadsheet_id;
 use crate::db;
-use crate::error::CoreError;
+use crate::error::{db_error, CoreError};
+use crate::permissions;
 use crate::sources;
-use crate::types::SourceKind;
+use crate::types::{SavePermissionRule, SourceKind};
 
-pub(crate) use tokens::TokenSet;
+use tokens::{BridgeCredential, StoredCredential};
 
 /// The source-id prefix every connected Google account shares. A concrete
-/// account's row id is "google-sheets:{accountKey}"; the bare prefix is the
-/// legacy single-account id the migration rewrites.
+/// account's row id is "google-sheets:{accountKey}".
 pub const GOOGLE_SOURCE_ID: &str = "google-sheets";
 
 /// Separator between the source-id prefix and an account key. Matches the
 /// keyring user separator so ids and keychain entries stay parallel.
 const SOURCE_ID_SEPARATOR: char = ':';
 
-/// Account key used when migrating a legacy connection whose email is unknown.
+/// Account key used when an email carries no alphanumerics at all.
 const DEFAULT_ACCOUNT_KEY: &str = "default";
 
-/// A connected Google account as surfaced to the desktop UI. `email` is parsed
-/// from the source name; the raw tokens never appear here.
+/// Meta key prefix caching which account opened a spreadsheet:
+/// "google_route:{spreadsheetId}" -> source id.
+const ROUTE_META_PREFIX: &str = "google_route:";
+
+/// Endpoint probed to check whether an account can open a spreadsheet.
+const SHEETS_API_BASE: &str = "https://sheets.googleapis.com/v4/spreadsheets";
+
+/// A connected Google account as surfaced to the desktop UI. The secret and
+/// tokens never appear here. `deployment_id` and `bridge_url` are empty when
+/// the stored credential is missing or from the removed OAuth flow, so the UI
+/// can offer "re-add".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleAccount {
     /// "google-sheets:{accountKey}" - the source row id.
     pub source_id: String,
+    /// The Google account the bridge executes as.
     pub email: String,
+    /// The Apps Script deployment id.
+    pub deployment_id: String,
+    /// The canonical web app URL of the bridge.
+    pub bridge_url: String,
 }
 
-/// Contract wording for expired/revoked credentials (docs/mcp-tools.md).
+/// Contract wording when Google rejects a bridge-issued token (docs/mcp-tools.md).
 pub(crate) const TOKEN_EXPIRED_MESSAGE: &str =
-    "Google token expired or revoked, reconnect in the desktop app";
+    "Google rejected the bridge token; test the bridge in the Airtable - Sheet Port desktop app";
 
-/// Contract wording when Sheets is used before an account is linked.
+/// Contract wording when Sheets is used before any bridge is added.
 pub(crate) const NOT_CONNECTED_MESSAGE: &str =
-    "Google Sheets is not connected. Connect it in the Airtable - Sheet Port desktop app first";
+    "Google Sheets is not connected. Add an Apps Script bridge in the Airtable - Sheet Port desktop app first";
 
+/// Wording when an account's keychain entry is not a bridge credential (for
+/// example one left behind by the removed OAuth sign-in).
+const STALE_CREDENTIAL_MESSAGE: &str =
+    "This Google account has no Apps Script bridge. Remove it and add a bridge in the Airtable - Sheet Port desktop app";
+
+/// Wording when a bridge now signs in as a different Google account than the
+/// one it was added for.
+const EMAIL_CHANGED_MESSAGE: &str =
+    "The bridge now signs in as a different Google account. Remove it and add it again in the Airtable - Sheet Port desktop app";
+
+/// Request timeout for every Google and bridge call.
 const HTTP_TIMEOUT_SECS: u64 = 30;
 /// Longest raw body slice quoted back in error messages.
 const ERROR_SNIPPET_MAX_CHARS: usize = 200;
@@ -86,14 +113,14 @@ pub(crate) fn source_id_for(account_key: &str) -> String {
     format!("{GOOGLE_SOURCE_ID}{SOURCE_ID_SEPARATOR}{account_key}")
 }
 
-/// The source row id a given email resolves to, mirroring what [`connect`]
+/// The source row id a given email resolves to, mirroring what [`add_bridge`]
 /// writes. Public so command wrappers can audit the exact account scope.
 pub fn source_id_for_email(email: &str) -> String {
     source_id_for(&account_key_from_email(email))
 }
 
 /// Extracts the account key from a "google-sheets:{accountKey}" source id.
-/// Returns None for the bare legacy id (no key) or any non-Google id.
+/// Returns None for the bare prefix (no key) or any non-Google id.
 pub(crate) fn account_key_from_source_id(source_id: &str) -> Option<&str> {
     source_id
         .strip_prefix(GOOGLE_SOURCE_ID)?
@@ -101,94 +128,279 @@ pub(crate) fn account_key_from_source_id(source_id: &str) -> Option<&str> {
         .filter(|key| !key.is_empty())
 }
 
-/// Runs the full interactive OAuth flow for a NEW account: opens the system
-/// browser on the consent page, waits on the loopback redirect, exchanges the
-/// code (PKCE), derives the account key from the signed-in email, stores that
-/// account's tokens, and upserts its "google-sheets:{accountKey}" source row.
-/// Connecting the same email again updates that account in place. Returns the
-/// connected account email.
-///
-/// Blocks the calling thread until the browser flow finishes or times out;
-/// run it off any async runtime (e.g. `tokio::task::spawn_blocking`).
-pub fn connect(conn: &Connection, client_id: &str) -> Result<String, CoreError> {
-    let client_id = client_id.trim();
-    if client_id.is_empty() {
-        return Err(CoreError::InvalidInput(
-            "Google client ID must not be empty".to_string(),
-        ));
-    }
-
-    let client_secret = tokens::load_client_secret()?;
-    let flow = oauth::AuthFlow::start(client_id, client_secret.as_deref())?;
-    open_in_browser(flow.consent_url())?;
-    let (token_set, responder) = flow.wait_for_tokens()?;
-
-    // The browser tab is still waiting on `responder`: only report success
-    // there once the account is fully connected, so the page never lies.
-    let finish = || -> Result<String, CoreError> {
-        let email = oauth::fetch_user_email(&token_set.access_token)?;
-        let account_key = account_key_from_email(&email);
-        tokens::save(&account_key, &token_set)?;
-        // The refresh flow needs the client id later even if the desktop app
-        // never stored it explicitly.
-        db::set_meta(conn, META_GOOGLE_CLIENT_ID, client_id)?;
-        sources::upsert(
-            conn,
-            &source_id_for(&account_key),
-            SourceKind::GoogleSheets,
-            &format!("Google Sheets ({email})"),
-            sources::SOURCE_STATUS_CONNECTED,
-        )?;
-        Ok(email)
-    };
-
-    match finish() {
-        Ok(email) => {
-            responder.succeed();
-            Ok(email)
-        }
-        Err(error) => {
-            responder.fail(&error.to_string());
-            Err(error)
-        }
-    }
+/// Validates an Apps Script web app URL and returns its deployment id. Accepts
+/// `https://script.google.com/macros/s/{id}/exec` and the Workspace form
+/// `https://script.google.com/a/macros/{domain}/s/{id}/exec`.
+pub fn parse_deployment_id(url: &str) -> Result<String, CoreError> {
+    Ok(bridge::parse_bridge_url(url)?.deployment_id)
 }
 
-/// Removes ONE account: its keychain credential and its
-/// "google-sheets:{accountKey}" source row. Idempotent: disconnecting an
-/// already-removed account is not an error. Rejects a source id that is not a
-/// keyed Google account so callers cannot delete arbitrary rows.
-pub fn disconnect(conn: &Connection, source_id: &str) -> Result<(), CoreError> {
-    let account_key = account_key_from_source_id(source_id).ok_or_else(|| {
-        CoreError::InvalidInput(format!(
-            "'{source_id}' is not a Google Sheets account source id"
-        ))
-    })?;
+/// Adds (or replaces) a bridge: validates the URL and secret, fetches a token
+/// to learn the signed-in email, stores the credential under that account's
+/// keychain entry, upserts its "google-sheets:{accountKey}" source row, and
+/// grants a source-wide read/write/delete rule when the source has none yet.
+/// Adding the same email again replaces the stored credential. Blocks on the
+/// network; run it off any async runtime.
+pub fn add_bridge(conn: &Connection, url: &str, secret: &str) -> Result<GoogleAccount, CoreError> {
+    let location = bridge::parse_bridge_url(url)?;
+    let secret = secret.trim();
+    if secret.is_empty() {
+        return Err(CoreError::InvalidInput(
+            "The bridge secret must not be empty".to_string(),
+        ));
+    }
+    let token = bridge::fetch_token(&location.url, secret)?;
+    let credential = BridgeCredential {
+        bridge_url: location.url,
+        secret: secret.to_string(),
+        deployment_id: location.deployment_id,
+        access_token: token.access_token,
+        expires_at: tokens::expiry_from_now(token.expires_in_secs),
+    };
+    let account_key = account_key_from_email(&token.email);
+    tokens::save(&account_key, &credential)?;
+    let source_id = source_id_for(&account_key);
+    upsert_account_source(conn, &source_id, &token.email)?;
+    ensure_default_rule(conn, &source_id)?;
+    Ok(account_from(source_id, token.email, &credential))
+}
+
+/// Removes ONE bridge: its keychain credential, its source row, and any cached
+/// spreadsheet routes pointing at it. Idempotent: removing an already-removed
+/// bridge is not an error. Rejects a source id that is not a keyed Google
+/// account so callers cannot delete arbitrary rows.
+pub fn remove_bridge(conn: &Connection, source_id: &str) -> Result<(), CoreError> {
+    let account_key = require_account_key(source_id)?;
     tokens::delete(account_key)?;
     sources::delete(conn, source_id)?;
+    conn.execute(
+        "DELETE FROM meta WHERE key LIKE ?1 AND value = ?2",
+        params![format!("{ROUTE_META_PREFIX}%"), source_id],
+    )
+    .map_err(|error| db_error("Could not clear cached spreadsheet routes", error))?;
+    // Workbench entries opened through this account can no longer be read.
+    conn.execute(
+        "DELETE FROM workbench_items WHERE source_id = ?1",
+        params![source_id],
+    )
+    .map_err(|error| db_error("Could not remove the account's workbench items", error))?;
     Ok(())
 }
 
-/// Every connected Google account (source id + email), ordered by source id.
-/// No keychain enumeration: accounts are the keyed Google source rows, which
-/// the connect/disconnect flow keeps in lockstep with the keychain entries.
+/// Fetches a fresh token from the account's bridge (ignoring the cache),
+/// stores it, and marks the source connected. Fails when the bridge is
+/// unreachable, rejects the secret, or now signs in as a different account.
+pub fn test_bridge(conn: &Connection, source_id: &str) -> Result<GoogleAccount, CoreError> {
+    let account_key = require_account_key(source_id)?;
+    let credential = match tokens::load(account_key)? {
+        StoredCredential::Bridge(credential) => credential,
+        StoredCredential::Missing => {
+            return Err(CoreError::NotFound(format!(
+                "No bridge is stored for {source_id}; add it again in the Airtable - Sheet Port desktop app"
+            )))
+        }
+        StoredCredential::Unreadable => {
+            return Err(CoreError::PermissionDenied(
+                STALE_CREDENTIAL_MESSAGE.to_string(),
+            ))
+        }
+    };
+    let (credential, email) = refetch(account_key, credential)?;
+    upsert_account_source(conn, source_id, &email)?;
+    Ok(account_from(source_id.to_string(), email, &credential))
+}
+
+/// Every connected Google account, ordered by source id: the keyed Google
+/// source rows joined with their keychain credential. An account whose
+/// credential is missing or unreadable is still listed with an empty
+/// deployment id and bridge URL.
 pub fn list_accounts(conn: &Connection) -> Result<Vec<GoogleAccount>, CoreError> {
+    let mut accounts = Vec::new();
+    for source in sources::list(conn)? {
+        if source.kind != SourceKind::GoogleSheets {
+            continue;
+        }
+        let Some(account_key) = account_key_from_source_id(&source.id) else {
+            continue;
+        };
+        let (deployment_id, bridge_url) = match tokens::load(account_key) {
+            Ok(StoredCredential::Bridge(credential)) => {
+                (credential.deployment_id, credential.bridge_url)
+            }
+            _ => (String::new(), String::new()),
+        };
+        accounts.push(GoogleAccount {
+            email: email_from_source_name(&source.name),
+            source_id: source.id,
+            deployment_id,
+            bridge_url,
+        });
+    }
+    Ok(accounts)
+}
+
+/// True when at least one Google account is connected.
+pub(crate) fn has_any_account(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(!google_source_ids(conn)?.is_empty())
+}
+
+/// Picks the source for a tool call. An explicit id is returned unchanged (any
+/// source kind). Without one, only Google accounts are considered: none is an
+/// error, a single account is used directly, and with several the spreadsheet
+/// behind `table_id` is routed to the first account (in list order) that can
+/// open it, caching the answer in meta. Several accounts and no table id pick
+/// the first account.
+pub fn resolve_source(
+    conn: &Connection,
+    source_id: Option<&str>,
+    table_id: Option<&str>,
+) -> Result<String, CoreError> {
+    if let Some(source_id) = source_id {
+        return Ok(source_id.to_string());
+    }
+    let accounts = google_source_ids(conn)?;
+    let Some(first) = accounts.first() else {
+        return Err(CoreError::PermissionDenied(
+            NOT_CONNECTED_MESSAGE.to_string(),
+        ));
+    };
+    if accounts.len() == 1 {
+        return Ok(first.clone());
+    }
+    let Some(table_id) = table_id else {
+        return Ok(first.clone());
+    };
+
+    let spreadsheet_id = parse_spreadsheet_id(table_id)?;
+    let route_key = format!("{ROUTE_META_PREFIX}{spreadsheet_id}");
+    if let Some(cached) = db::get_meta(conn, &route_key)? {
+        if accounts.contains(&cached) {
+            return Ok(cached);
+        }
+    }
+    let probe_url = format!("{SHEETS_API_BASE}/{spreadsheet_id}?fields=spreadsheetId");
+    for candidate in &accounts {
+        let opened = access_token(conn, candidate)
+            .and_then(|token| get_json(&token, &probe_url))
+            .is_ok();
+        if opened {
+            db::set_meta(conn, &route_key, candidate)?;
+            return Ok(candidate.clone());
+        }
+    }
+    Err(CoreError::NotFound(format!(
+        "No connected bridge can open spreadsheet {spreadsheet_id}"
+    )))
+}
+
+/// A currently-valid access token for the account behind `source_id`, served
+/// from the keychain cache and refetched from the bridge once it is within the
+/// 60s expiry margin. Crate-private on purpose: raw tokens never leave core.
+pub(crate) fn access_token(_conn: &Connection, source_id: &str) -> Result<String, CoreError> {
+    let account_key = account_key_from_source_id(source_id)
+        .ok_or_else(|| CoreError::PermissionDenied(NOT_CONNECTED_MESSAGE.to_string()))?;
+    let credential = match tokens::load(account_key)? {
+        StoredCredential::Bridge(credential) => credential,
+        StoredCredential::Missing => {
+            return Err(CoreError::PermissionDenied(
+                NOT_CONNECTED_MESSAGE.to_string(),
+            ))
+        }
+        StoredCredential::Unreadable => {
+            return Err(CoreError::PermissionDenied(
+                STALE_CREDENTIAL_MESSAGE.to_string(),
+            ))
+        }
+    };
+    if !credential.is_expired() {
+        return Ok(credential.access_token);
+    }
+    let (credential, _) = refetch(account_key, credential)?;
+    Ok(credential.access_token)
+}
+
+/// Asks the bridge for a new token, checks it still belongs to the same
+/// account, and stores it. Returns the updated credential and the email.
+fn refetch(
+    account_key: &str,
+    credential: BridgeCredential,
+) -> Result<(BridgeCredential, String), CoreError> {
+    let token = bridge::fetch_token(&credential.bridge_url, &credential.secret)?;
+    if account_key_from_email(&token.email) != account_key {
+        return Err(CoreError::PermissionDenied(
+            EMAIL_CHANGED_MESSAGE.to_string(),
+        ));
+    }
+    let updated = BridgeCredential {
+        access_token: token.access_token,
+        expires_at: tokens::expiry_from_now(token.expires_in_secs),
+        ..credential
+    };
+    tokens::save(account_key, &updated)?;
+    Ok((updated, token.email))
+}
+
+/// The account key of a keyed Google source id, or InvalidInput.
+fn require_account_key(source_id: &str) -> Result<&str, CoreError> {
+    account_key_from_source_id(source_id).ok_or_else(|| {
+        CoreError::InvalidInput(format!(
+            "'{source_id}' is not a Google Sheets account source id"
+        ))
+    })
+}
+
+/// Ids of the keyed Google source rows, ordered by id. No keychain access.
+fn google_source_ids(conn: &Connection) -> Result<Vec<String>, CoreError> {
     Ok(sources::list(conn)?
         .into_iter()
         .filter(|source| {
             source.kind == SourceKind::GoogleSheets
                 && account_key_from_source_id(&source.id).is_some()
         })
-        .map(|source| GoogleAccount {
-            email: email_from_source_name(&source.name),
-            source_id: source.id,
-        })
+        .map(|source| source.id)
         .collect())
 }
 
-/// True when at least one Google account is connected.
-pub(crate) fn has_any_account(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(!list_accounts(conn)?.is_empty())
+/// Upserts the "Google Sheets ({email})" source row as connected.
+fn upsert_account_source(conn: &Connection, source_id: &str, email: &str) -> Result<(), CoreError> {
+    sources::upsert(
+        conn,
+        source_id,
+        SourceKind::GoogleSheets,
+        &format!("Google Sheets ({email})"),
+        sources::SOURCE_STATUS_CONNECTED,
+    )
+}
+
+/// Grants a source-wide read/write/delete rule (no confirmations) when the
+/// source has no source-wide rule yet; an existing rule is left untouched.
+fn ensure_default_rule(conn: &Connection, source_id: &str) -> Result<(), CoreError> {
+    // With no table id, find_rule only ever returns the source-wide rule.
+    if permissions::find_rule(conn, source_id, None)?.is_some() {
+        return Ok(());
+    }
+    permissions::save_rule(
+        conn,
+        &SavePermissionRule {
+            id: None,
+            source_id: source_id.to_string(),
+            table_id: None,
+            read: true,
+            write: true,
+            delete_records: true,
+        },
+    )?;
+    Ok(())
+}
+
+/// Builds the UI view of an account from its stored credential.
+fn account_from(source_id: String, email: String, credential: &BridgeCredential) -> GoogleAccount {
+    GoogleAccount {
+        source_id,
+        email,
+        deployment_id: credential.deployment_id.clone(),
+        bridge_url: credential.bridge_url.clone(),
+    }
 }
 
 /// "Google Sheets (user@example.com)" -> "user@example.com"; any other shape
@@ -200,106 +412,12 @@ fn email_from_source_name(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-/// A currently-valid access token for the account behind `source_id`,
-/// refreshing through that account's stored refresh token when expired.
-/// Crate-private on purpose: raw tokens never leave core.
-pub(crate) fn access_token(conn: &Connection, source_id: &str) -> Result<String, CoreError> {
-    let account_key = account_key_from_source_id(source_id)
-        .ok_or_else(|| CoreError::PermissionDenied(NOT_CONNECTED_MESSAGE.to_string()))?;
-    let Some(stored) = tokens::load(account_key)? else {
-        return Err(CoreError::PermissionDenied(
-            NOT_CONNECTED_MESSAGE.to_string(),
-        ));
-    };
-    if !stored.is_expired() {
-        return Ok(stored.access_token);
-    }
-    let Some(refresh_token) = stored.refresh_token.clone() else {
-        return Err(CoreError::PermissionDenied(
-            TOKEN_EXPIRED_MESSAGE.to_string(),
-        ));
-    };
-    let client_id = db::get_meta(conn, META_GOOGLE_CLIENT_ID)?.ok_or_else(|| {
-        CoreError::InvalidInput(
-            "Google client ID is not configured. Set it in the desktop app settings".to_string(),
-        )
-    })?;
-    let client_secret = tokens::load_client_secret()?;
-    let refreshed =
-        oauth::refresh_access_token(&client_id, client_secret.as_deref(), &refresh_token)?;
-    let updated = TokenSet {
-        access_token: refreshed.access_token,
-        // Google may omit the refresh token on refresh; keep the old one.
-        refresh_token: refreshed.refresh_token.or(Some(refresh_token)),
-        expires_at: tokens::expiry_from_now(refreshed.expires_in),
-    };
-    tokens::save(account_key, &updated)?;
-    Ok(updated.access_token)
-}
-
-/// One-time startup migration from the pre-multi-account single-account
-/// scheme. If a legacy "google_sheets" keychain entry still exists, moves its
-/// tokens under a keyed entry and rewrites the bare "google-sheets" source row
-/// into "google-sheets:{accountKey}". The account key comes from the legacy
-/// source name's email, falling back to "default". Idempotent and best-effort:
-/// a missing legacy entry is a no-op, and any failure is returned so the caller
-/// can log it without blocking startup.
-pub fn migrate_legacy_account(conn: &Connection) -> Result<(), CoreError> {
-    let Some(legacy_tokens) = tokens::load_legacy()? else {
-        // Nothing to migrate. Clear a stray bare source row if the legacy
-        // token is already gone but the row lingers, so listings stay clean.
-        if let Some(email) = legacy_source_email(conn)? {
-            let account_key = account_key_from_email(&email);
-            rewrite_legacy_source(conn, &account_key, &email)?;
-        }
-        return Ok(());
-    };
-
-    let email = match legacy_source_email(conn)? {
-        Some(email) => email,
-        // No source row: recover the email from the token so the account is
-        // still labelled; fall back to the default key when even that fails.
-        None => oauth::fetch_user_email(&legacy_tokens.access_token)
-            .unwrap_or_else(|_| DEFAULT_ACCOUNT_KEY.to_string()),
-    };
-    let account_key = account_key_from_email(&email);
-
-    tokens::save(&account_key, &legacy_tokens)?;
-    rewrite_legacy_source(conn, &account_key, &email)?;
-    tokens::delete_legacy()?;
-    Ok(())
-}
-
-/// The email on the legacy bare "google-sheets" source row, if that row exists.
-fn legacy_source_email(conn: &Connection) -> Result<Option<String>, CoreError> {
-    Ok(sources::list(conn)?
-        .into_iter()
-        .find(|source| source.id == GOOGLE_SOURCE_ID)
-        .map(|source| email_from_source_name(&source.name)))
-}
-
-/// Replaces the bare "google-sheets" source row with the keyed one, preserving
-/// the email label. Removing the old row first keeps the id set clean.
-fn rewrite_legacy_source(
-    conn: &Connection,
-    account_key: &str,
-    email: &str,
-) -> Result<(), CoreError> {
-    sources::upsert(
-        conn,
-        &source_id_for(account_key),
-        SourceKind::GoogleSheets,
-        &format!("Google Sheets ({email})"),
-        sources::SOURCE_STATUS_CONNECTED,
-    )?;
-    sources::delete(conn, GOOGLE_SOURCE_ID)?;
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Shared HTTP plumbing for Google endpoints (also used by the connector)
 // ---------------------------------------------------------------------------
 
+/// The blocking HTTP client shared by the bridge and the Sheets connector,
+/// with the default redirect policy (needed to follow the bridge's 302).
 pub(crate) fn http_client() -> Result<reqwest::blocking::Client, CoreError> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
@@ -307,6 +425,7 @@ pub(crate) fn http_client() -> Result<reqwest::blocking::Client, CoreError> {
         .map_err(|error| CoreError::Storage(format!("Could not build the HTTP client: {error}")))
 }
 
+/// Authenticated GET returning the parsed JSON body.
 pub(crate) fn get_json(token: &str, url: &str) -> Result<Value, CoreError> {
     let response = http_client()?
         .get(url)
@@ -316,6 +435,7 @@ pub(crate) fn get_json(token: &str, url: &str) -> Result<Value, CoreError> {
     parse_api_response(response)
 }
 
+/// Authenticated JSON POST returning the parsed JSON body.
 pub(crate) fn post_json(token: &str, url: &str, body: &Value) -> Result<Value, CoreError> {
     let response = http_client()?
         .post(url)
@@ -326,10 +446,12 @@ pub(crate) fn post_json(token: &str, url: &str, body: &Value) -> Result<Value, C
     parse_api_response(response)
 }
 
+/// Wraps a transport failure (DNS, TLS, timeout) in contract wording.
 fn transport_error(error: reqwest::Error) -> CoreError {
     CoreError::Storage(format!("Could not reach Google: {error}"))
 }
 
+/// Maps a Google API response to JSON, or to a contract error on failure.
 fn parse_api_response(response: reqwest::blocking::Response) -> Result<Value, CoreError> {
     let status = response.status();
     let body = response.text().unwrap_or_default();
@@ -345,7 +467,7 @@ fn parse_api_response(response: reqwest::blocking::Response) -> Result<Value, Co
 }
 
 /// Maps Google HTTP failures onto contract errors; 401 always reads as the
-/// reconnect instruction agents and the desktop UI display verbatim.
+/// test-the-bridge instruction agents and the desktop UI display verbatim.
 pub(crate) fn api_error(status: u16, body: &str) -> CoreError {
     let snippet = error_snippet(body);
     match status {
@@ -373,41 +495,6 @@ pub(crate) fn error_snippet(body: &str) -> String {
     body.chars().take(ERROR_SNIPPET_MAX_CHARS).collect()
 }
 
-fn open_in_browser(url: &str) -> Result<(), CoreError> {
-    let spawned = if cfg!(target_os = "windows") {
-        // rundll32 avoids cmd.exe quoting pitfalls around '&' in the URL.
-        std::process::Command::new("rundll32")
-            .args(["url.dll,FileProtocolHandler", url])
-            .spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(url).spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(url).spawn()
-    };
-    spawned.map(|_| ()).map_err(|error| {
-        CoreError::Storage(format!(
-            "Could not open the system browser for Google sign-in: {error}"
-        ))
-    })
-}
-
-/// Stores (or clears, when empty) the OAuth client secret Google issues for
-/// desktop clients. Kept in the OS keychain next to the tokens.
-pub fn set_client_secret(secret: &str) -> Result<(), CoreError> {
-    let trimmed = secret.trim();
-    if trimmed.is_empty() {
-        tokens::delete_client_secret()
-    } else {
-        tokens::save_client_secret(trimmed)
-    }
-}
-
-/// Whether a client secret is stored; the secret itself never leaves the
-/// google module.
-pub fn has_client_secret() -> Result<bool, CoreError> {
-    Ok(tokens::load_client_secret()?.is_some())
-}
-
 #[cfg(test)]
 #[path = "google_tests.rs"]
 mod multi_account_tests;
@@ -417,12 +504,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn api_error_maps_401_to_the_reconnect_contract_message() {
+    fn api_error_maps_401_to_the_test_bridge_contract_message() {
         let error = api_error(401, "{\"error\":{\"message\":\"Invalid Credentials\"}}");
         assert!(matches!(error, CoreError::PermissionDenied(_)));
         assert_eq!(
             error.to_string(),
-            "Google token expired or revoked, reconnect in the desktop app"
+            "Google rejected the bridge token; test the bridge in the Airtable - Sheet Port desktop app"
         );
     }
 
@@ -466,10 +553,40 @@ mod tests {
     }
 
     #[test]
-    fn connect_rejects_an_empty_client_id() {
+    fn parse_deployment_id_accepts_both_url_forms_and_rejects_others() {
+        assert_eq!(
+            parse_deployment_id("https://script.google.com/macros/s/AKfy_1-2/exec").expect("ok"),
+            "AKfy_1-2"
+        );
+        assert_eq!(
+            parse_deployment_id("https://script.google.com/a/macros/corp.io/s/AKfy/exec")
+                .expect("workspace"),
+            "AKfy"
+        );
+        for input in [
+            "https://docs.google.com/macros/s/AKfy/exec",
+            "http://script.google.com/macros/s/AKfy/exec",
+            "https://script.google.com/macros/s/AKfy",
+            "https://script.google.com/macros/s/AK$fy/exec",
+        ] {
+            assert!(
+                matches!(parse_deployment_id(input), Err(CoreError::InvalidInput(_))),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn add_bridge_validates_before_any_network_call() {
         let conn = crate::db::test_support::open_temp_db();
-        let error = connect(&conn, "   ").expect_err("must reject");
-        assert!(matches!(error, CoreError::InvalidInput(_)));
-        assert_eq!(error.to_string(), "Google client ID must not be empty");
+        let bad_url = add_bridge(&conn, "https://example.com/x", "secret").expect_err("url");
+        assert!(matches!(bad_url, CoreError::InvalidInput(_)));
+
+        let empty_secret = add_bridge(&conn, "https://script.google.com/macros/s/AKfy/exec", "   ")
+            .expect_err("secret");
+        assert_eq!(
+            empty_secret.to_string(),
+            "The bridge secret must not be empty"
+        );
     }
 }

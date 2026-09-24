@@ -1,14 +1,6 @@
-import {
-  Badge,
-  Button,
-  cn,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  type BadgeVariant
-} from "@sheet-port/ui";
+import { Badge, Button, cn, type BadgeVariant } from "@sheet-port/ui";
 import type { ChangeStatus, ChangeType, PendingChange } from "@sheet-port/shared";
-import { useApproveChange, useRejectChange } from "../../hooks/useChanges.js";
+import { useDiscardChange } from "../../hooks/useChanges.js";
 import { useTranslation } from "../../i18n/useTranslation.js";
 import type { TranslationKey } from "../../i18n/translations.js";
 import { formatRelativeTime } from "../../lib/format.js";
@@ -69,18 +61,15 @@ function ChangeOutcome({ change }: { change: PendingChange }) {
       </p>
     );
   }
-  return <p className={baseClass}>{t("changes.autoCommit")}</p>;
+  return <p className={baseClass}>{t(STATUS_LABEL_KEYS[change.status])}</p>;
 }
 
 export function ChangeCard({ change }: { change: PendingChange }) {
   const { t } = useTranslation();
-  const approve = useApproveChange();
-  const reject = useRejectChange();
-  const isDeciding = approve.isPending || reject.isPending;
-  // Any pending change can be rejected (an escape hatch for a preview the agent
-  // never committed); Approve is only meaningful when the policy requires it.
+  const discard = useDiscardChange();
+  // A pending change is a staged dry run the agent has not committed yet; the
+  // user can discard it. Every other status is history.
   const isPending = change.status === "pending";
-  const needsApproval = isPending && change.requiresConfirmation;
 
   return (
     <article className="overflow-hidden rounded-card border border-edge bg-raised shadow-card">
@@ -92,16 +81,6 @@ export function ChangeCard({ change }: { change: PendingChange }) {
         <span className="font-mono text-[12px] text-ink-muted">
           {change.sourceId}/{change.tableId}
         </span>
-        {change.requiresConfirmation ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0}>
-                <Badge variant="warning">{t("changes.needsConfirmation")}</Badge>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{t("changes.needsConfirmationTooltip")}</TooltipContent>
-          </Tooltip>
-        ) : null}
         <span className="ml-auto flex items-center gap-2.5">
           <RelativeTime iso={change.createdAt} className="font-mono text-[11px] text-ink-muted" />
           <Badge variant={STATUS_VARIANTS[change.status]}>{t(STATUS_LABEL_KEYS[change.status])}</Badge>
@@ -115,29 +94,15 @@ export function ChangeCard({ change }: { change: PendingChange }) {
       <footer className="flex items-center justify-between gap-3 border-t border-edge px-5 py-3">
         {isPending ? (
           <>
-            <p
-              className={cn(
-                "text-[13px] font-medium",
-                needsApproval ? "text-warning" : "text-ink-muted"
-              )}
+            <p className="text-[13px] font-medium text-ink-muted">{t("changes.stagedDryRun")}</p>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={discard.isPending}
+              onClick={() => discard.mutate(change.id)}
             >
-              {needsApproval ? t("changes.awaitingDecision") : t("changes.rejectToCancel")}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={isDeciding}
-                onClick={() => reject.mutate(change.id)}
-              >
-                {reject.isPending ? t("changes.rejecting") : t("changes.reject")}
-              </Button>
-              {needsApproval ? (
-                <Button size="sm" disabled={isDeciding} onClick={() => approve.mutate(change.id)}>
-                  {approve.isPending ? t("changes.approving") : t("changes.approve")}
-                </Button>
-              ) : null}
-            </div>
+              {discard.isPending ? t("changes.discarding") : t("changes.discard")}
+            </Button>
           </>
         ) : (
           <ChangeOutcome change={change} />

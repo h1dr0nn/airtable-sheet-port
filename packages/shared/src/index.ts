@@ -1,4 +1,4 @@
-export type DataSourceKind = "google_sheets" | "provider" | "mock";
+export type DataSourceKind = "google_sheets" | "mock";
 
 export type SourceStatus = "connected" | "placeholder" | "error";
 
@@ -49,13 +49,6 @@ export type ChangeType =
   | "create_spreadsheet"
   | "create_sheet"
   | "delete_sheet";
-export type ConfirmationAction =
-  | "append"
-  | "update"
-  | "delete"
-  | "bulk_update"
-  | "formula_change"
-  | "format";
 
 /** Write action evaluated against permission rules; wider than ChangeType. */
 export type WriteAction =
@@ -116,7 +109,6 @@ export type PermissionRule = {
   read: boolean;
   write: boolean;
   deleteRecords: boolean;
-  requireConfirmationFor: ConfirmationAction[];
 };
 
 export type ChangeStatus = "pending" | "approved" | "committed" | "rejected";
@@ -128,8 +120,6 @@ export type PendingChange = {
   type: ChangeType;
   createdAt: string;
   status: ChangeStatus;
-  /** True when the matching permission rule requires user confirmation before commit. */
-  requiresConfirmation: boolean;
   diff: unknown;
   decidedAt?: string;
   decidedBy?: "user" | "policy";

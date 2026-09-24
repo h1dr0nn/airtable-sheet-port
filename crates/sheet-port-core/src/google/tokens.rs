@@ -1,40 +1,44 @@
-//! Keyring-backed Google token storage, keyed per connected account. Each
-//! account's JSON credential `{accessToken, refreshToken, expiresAt}` lives
-//! under service "sheet-port", user "google_sheets:{accountKey}" (the entry
-//! `vault::entry_exists` reports on). The shared, single-OAuth-app client
-//! secret stays under user "google_client_secret". Raw tokens never leave the
-//! google module.
+//! Keyring-backed Google bridge credential storage, keyed per connected
+//! account. Each account's JSON credential
+//! `{bridgeUrl, secret, deploymentId, accessToken, expiresAt}` lives under
+//! service "sheet-port", user "google_sheets:{accountKey}" (the entry
+//! `vault::entry_exists` reports on). The bridge secret and the cached access
+//! token never leave the google module.
 
 use serde::{Deserialize, Serialize};
 
 use crate::db;
 use crate::error::CoreError;
-use crate::vault::{
-    KEYRING_SERVICE, KEYRING_USER_GOOGLE_CLIENT_SECRET, KEYRING_USER_GOOGLE_SHEETS,
-};
+use crate::vault::{KEYRING_SERVICE, KEYRING_USER_GOOGLE_SHEETS};
 
-/// Refresh this long before the actual expiry so in-flight requests never
+/// Refetch this long before the actual expiry so in-flight requests never
 /// race the deadline.
 const EXPIRY_MARGIN_MS: i64 = 60_000;
 
 /// Separator between the keyring user prefix and an account key.
 pub(crate) const ACCOUNT_KEY_SEPARATOR: char = ':';
 
+/// Everything needed to reach one account's Apps Script bridge, plus the most
+/// recent access token it issued.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TokenSet {
+pub(crate) struct BridgeCredential {
+    /// Canonical web app URL: "https://script.google.com/.../s/{id}/exec".
+    pub bridge_url: String,
+    /// Shared secret the bridge checks before issuing a token.
+    pub secret: String,
+    /// The Apps Script deployment id parsed from `bridge_url`.
+    pub deployment_id: String,
+    /// Cached Google OAuth access token issued by the bridge.
     pub access_token: String,
-    /// Absent when Google did not issue one (e.g. re-consent without
-    /// `prompt=consent`); the previous refresh token is kept in that case.
-    pub refresh_token: Option<String>,
     /// ISO-8601 UTC with milliseconds (db::now_iso shape); ISO strings
     /// compare lexicographically.
     pub expires_at: String,
 }
 
-impl TokenSet {
-    /// True when the access token is past (or within the safety margin of)
-    /// its expiry and must be refreshed before use.
+impl BridgeCredential {
+    /// True when the cached access token is past (or within the safety margin
+    /// of) its expiry and must be refetched from the bridge before use.
     pub(crate) fn is_expired(&self) -> bool {
         self.expires_at <= db::iso_after(EXPIRY_MARGIN_MS)
     }
@@ -45,12 +49,13 @@ pub(crate) fn expiry_from_now(expires_in_secs: i64) -> String {
     db::iso_after(expires_in_secs.saturating_mul(1000))
 }
 
-/// The keyring user name that stores one account's tokens:
+/// The keyring user name that stores one account's credential:
 /// "google_sheets:{accountKey}".
 pub(crate) fn keyring_user_for(account_key: &str) -> String {
     format!("{KEYRING_USER_GOOGLE_SHEETS}{ACCOUNT_KEY_SEPARATOR}{account_key}")
 }
 
+/// Opens the keychain entry for one account.
 fn entry(account_key: &str) -> Result<keyring::Entry, CoreError> {
     keyring::Entry::new(KEYRING_SERVICE, &keyring_user_for(account_key)).map_err(|error| {
         CoreError::Storage(format!(
@@ -59,125 +64,58 @@ fn entry(account_key: &str) -> Result<keyring::Entry, CoreError> {
     })
 }
 
-pub(crate) fn save(account_key: &str, tokens: &TokenSet) -> Result<(), CoreError> {
-    let json = serde_json::to_string(tokens)
-        .map_err(|error| CoreError::Storage(format!("Could not encode Google tokens: {error}")))?;
+/// Stores (or replaces) one account's bridge credential.
+pub(crate) fn save(account_key: &str, credential: &BridgeCredential) -> Result<(), CoreError> {
+    let json = serde_json::to_string(credential).map_err(|error| {
+        CoreError::Storage(format!(
+            "Could not encode the Google bridge credential: {error}"
+        ))
+    })?;
     entry(account_key)?.set_password(&json).map_err(|error| {
         CoreError::Storage(format!(
-            "Could not store Google tokens in the OS keychain: {error}"
+            "Could not store the Google bridge credential in the OS keychain: {error}"
         ))
     })
 }
 
-pub(crate) fn load(account_key: &str) -> Result<Option<TokenSet>, CoreError> {
+/// Outcome of reading one account's keychain entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StoredCredential {
+    /// No entry exists for the account.
+    Missing,
+    /// An entry exists but is not a bridge credential (for example a token set
+    /// left behind by the removed OAuth flow).
+    Unreadable,
+    /// A valid bridge credential.
+    Bridge(BridgeCredential),
+}
+
+/// Reads one account's keychain entry, classifying it without failing on an
+/// entry in an older shape. Only keychain access failures are errors.
+pub(crate) fn load(account_key: &str) -> Result<StoredCredential, CoreError> {
     match entry(account_key)?.get_password() {
-        Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|error| {
-            CoreError::Storage(format!(
-                "Stored Google token entry is not valid JSON: {error}"
-            ))
-        }),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Ok(raw) => Ok(parse_credential(&raw)),
+        Err(keyring::Error::NoEntry) => Ok(StoredCredential::Missing),
         Err(error) => Err(CoreError::Storage(format!(
-            "Could not read Google tokens from the OS keychain: {error}"
+            "Could not read the Google bridge credential from the OS keychain: {error}"
         ))),
     }
 }
 
+/// Classifies a raw keychain value as a bridge credential or an unreadable one.
+fn parse_credential(raw: &str) -> StoredCredential {
+    serde_json::from_str::<BridgeCredential>(raw)
+        .map(StoredCredential::Bridge)
+        .unwrap_or(StoredCredential::Unreadable)
+}
+
 /// Removes one account's stored credential; a missing entry is not an error so
-/// disconnect stays idempotent.
+/// removal stays idempotent.
 pub(crate) fn delete(account_key: &str) -> Result<(), CoreError> {
     match entry(account_key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(CoreError::Storage(format!(
-            "Could not delete Google tokens from the OS keychain: {error}"
-        ))),
-    }
-}
-
-fn secret_entry() -> Result<keyring::Entry, CoreError> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER_GOOGLE_CLIENT_SECRET).map_err(|error| {
-        CoreError::Storage(format!(
-            "Could not open the OS keychain entry for the Google client secret: {error}"
-        ))
-    })
-}
-
-/// Google requires the (non-confidential) desktop client secret on token
-/// exchange; it still lives in the keychain rather than the database. It is
-/// shared across all accounts because there is a single OAuth app.
-pub(crate) fn save_client_secret(secret: &str) -> Result<(), CoreError> {
-    secret_entry()?.set_password(secret).map_err(|error| {
-        CoreError::Storage(format!(
-            "Could not store the Google client secret in the OS keychain: {error}"
-        ))
-    })
-}
-
-pub(crate) fn load_client_secret() -> Result<Option<String>, CoreError> {
-    match secret_entry()?.get_password() {
-        Ok(secret) => Ok(Some(secret)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(CoreError::Storage(format!(
-            "Could not read the Google client secret from the OS keychain: {error}"
-        ))),
-    }
-}
-
-pub(crate) fn delete_client_secret() -> Result<(), CoreError> {
-    match secret_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(CoreError::Storage(format!(
-            "Could not delete the Google client secret from the OS keychain: {error}"
-        ))),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Legacy single-account entry (pre multi-account). Used only by the one-time
-// startup migration in the parent module. The old scheme stored a single
-// credential under user "google_sheets" (no account key suffix).
-// ---------------------------------------------------------------------------
-
-fn legacy_entry() -> Result<keyring::Entry, CoreError> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER_GOOGLE_SHEETS).map_err(|error| {
-        CoreError::Storage(format!(
-            "Could not open the legacy Google Sheets keychain entry: {error}"
-        ))
-    })
-}
-
-/// Reads the legacy single-account token, if one exists.
-pub(crate) fn load_legacy() -> Result<Option<TokenSet>, CoreError> {
-    match legacy_entry()?.get_password() {
-        Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|error| {
-            CoreError::Storage(format!(
-                "Legacy Google token entry is not valid JSON: {error}"
-            ))
-        }),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(CoreError::Storage(format!(
-            "Could not read the legacy Google tokens from the OS keychain: {error}"
-        ))),
-    }
-}
-
-/// Writes the legacy single-account credential. Test-only: production code
-/// never creates the legacy entry, but migration tests need to arrange one.
-#[cfg(test)]
-pub(crate) fn save_legacy_for_test(tokens: &TokenSet) {
-    let json = serde_json::to_string(tokens).expect("encode legacy tokens");
-    legacy_entry()
-        .expect("legacy entry")
-        .set_password(&json)
-        .expect("write legacy tokens");
-}
-
-/// Removes the legacy credential once migrated; idempotent.
-pub(crate) fn delete_legacy() -> Result<(), CoreError> {
-    match legacy_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(CoreError::Storage(format!(
-            "Could not delete the legacy Google tokens from the OS keychain: {error}"
+            "Could not delete the Google bridge credential from the OS keychain: {error}"
         ))),
     }
 }
@@ -187,37 +125,37 @@ mod tests {
     use super::*;
     use crate::db::iso_before;
 
-    fn token_set(expires_at: &str) -> TokenSet {
-        TokenSet {
-            access_token: "access-123".to_string(),
-            refresh_token: Some("refresh-456".to_string()),
+    /// A credential with fixed values and the given expiry.
+    fn credential(expires_at: &str) -> BridgeCredential {
+        BridgeCredential {
+            bridge_url: "https://script.google.com/macros/s/AKfy_123/exec".to_string(),
+            secret: "s3cret".to_string(),
+            deployment_id: "AKfy_123".to_string(),
+            access_token: "ya29.token".to_string(),
             expires_at: expires_at.to_string(),
         }
     }
 
     #[test]
-    fn token_set_round_trips_through_camel_case_json() {
-        let tokens = token_set("2026-01-01T00:00:00.000Z");
-        let json = serde_json::to_string(&tokens).expect("serialize");
+    fn credential_round_trips_through_camel_case_json() {
+        let value = credential("2026-01-01T00:00:00.000Z");
+        let json = serde_json::to_string(&value).expect("serialize");
 
-        assert!(json.contains("\"accessToken\":\"access-123\""));
-        assert!(json.contains("\"refreshToken\":\"refresh-456\""));
+        assert!(json.contains("\"bridgeUrl\":\"https://script.google.com/macros/s/AKfy_123/exec\""));
+        assert!(json.contains("\"secret\":\"s3cret\""));
+        assert!(json.contains("\"deploymentId\":\"AKfy_123\""));
+        assert!(json.contains("\"accessToken\":\"ya29.token\""));
         assert!(json.contains("\"expiresAt\":\"2026-01-01T00:00:00.000Z\""));
 
-        let parsed: TokenSet = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed, tokens);
+        assert_eq!(parse_credential(&json), StoredCredential::Bridge(value));
     }
 
     #[test]
-    fn token_set_round_trips_without_refresh_token() {
-        let tokens = TokenSet {
-            refresh_token: None,
-            ..token_set("2026-01-01T00:00:00.000Z")
-        };
-        let json = serde_json::to_string(&tokens).expect("serialize");
-        let parsed: TokenSet = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed.refresh_token, None);
-        assert_eq!(parsed, tokens);
+    fn an_old_oauth_token_set_reads_as_unreadable() {
+        let legacy =
+            r#"{"accessToken":"a","refreshToken":"r","expiresAt":"2026-01-01T00:00:00.000Z"}"#;
+        assert_eq!(parse_credential(legacy), StoredCredential::Unreadable);
+        assert_eq!(parse_credential("not json"), StoredCredential::Unreadable);
     }
 
     #[test]
@@ -226,31 +164,14 @@ mod tests {
             keyring_user_for("alice_example_com"),
             "google_sheets:alice_example_com"
         );
-        assert_eq!(keyring_user_for("default"), "google_sheets:default");
     }
 
     #[test]
     fn expiry_check_applies_the_safety_margin() {
-        // Far in the future: fresh.
-        let fresh = TokenSet {
-            expires_at: expiry_from_now(3600),
-            ..token_set("")
-        };
-        assert!(!fresh.is_expired());
-
-        // Already past: expired.
-        let past = TokenSet {
-            expires_at: iso_before(1_000),
-            ..token_set("")
-        };
-        assert!(past.is_expired());
-
-        // Inside the 60s margin: treated as expired so refresh happens early.
-        let almost = TokenSet {
-            expires_at: expiry_from_now(30),
-            ..token_set("")
-        };
-        assert!(almost.is_expired());
+        assert!(!credential(&expiry_from_now(3600)).is_expired());
+        assert!(credential(&iso_before(1_000)).is_expired());
+        // Inside the 60s margin: treated as expired so the refetch happens early.
+        assert!(credential(&expiry_from_now(30)).is_expired());
     }
 
     #[test]

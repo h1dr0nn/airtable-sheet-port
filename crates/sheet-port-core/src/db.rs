@@ -233,7 +233,7 @@ fn is_seeded(conn: &Connection) -> Result<bool, CoreError> {
 }
 
 /// Reads a settings value from the shared `meta` table (e.g.
-/// [`crate::constants::META_GOOGLE_CLIENT_ID`]).
+/// [`crate::constants::META_MCP_PORT`]).
 pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, CoreError> {
     conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
         row.get(0)
@@ -499,8 +499,7 @@ mod tests {
     use super::test_support::temp_db_path;
     use super::*;
     use crate::constants::{
-        MCP_PORT_DEFAULT, MCP_PORT_MIN, META_CLOSE_BEHAVIOR, META_GOOGLE_CLIENT_ID,
-        META_MCP_TRANSPORT, META_UI_LANGUAGE,
+        MCP_PORT_DEFAULT, MCP_PORT_MIN, META_CLOSE_BEHAVIOR, META_MCP_TRANSPORT, META_UI_LANGUAGE,
     };
 
     fn count(conn: &Connection, table: &str) -> i64 {
@@ -717,19 +716,20 @@ VALUES
 
     #[test]
     fn meta_helpers_read_and_upsert_values() {
+        const KEY: &str = "test_meta_key";
         let conn = test_support::open_temp_db();
-        assert_eq!(get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"), None);
+        assert_eq!(get_meta(&conn, KEY).expect("get"), None);
 
-        set_meta(&conn, META_GOOGLE_CLIENT_ID, "client-1").expect("insert");
+        set_meta(&conn, KEY, "value-1").expect("insert");
         assert_eq!(
-            get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"),
-            Some("client-1".to_string())
+            get_meta(&conn, KEY).expect("get"),
+            Some("value-1".to_string())
         );
 
-        set_meta(&conn, META_GOOGLE_CLIENT_ID, "client-2").expect("upsert");
+        set_meta(&conn, KEY, "value-2").expect("upsert");
         assert_eq!(
-            get_meta(&conn, META_GOOGLE_CLIENT_ID).expect("get"),
-            Some("client-2".to_string())
+            get_meta(&conn, KEY).expect("get"),
+            Some("value-2".to_string())
         );
     }
 

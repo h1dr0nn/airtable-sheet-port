@@ -21,13 +21,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 uuid = { version = "1", features = ["v4"] }
 # Platform credential stores; tokens never leave the OS keychain.
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
-# Google OAuth + Sheets/Drive REST calls (sheet-port-core google module).
+# Apps Script bridge + Sheets/Drive REST calls (sheet-port-core google module).
 # rustls-tls so no process depends on a system OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
-# PKCE code challenge (RFC 7636): SHA-256 digest, base64url without padding.
-sha2 = "0.10"
-base64 = "0.22"
 # Format-preserving TOML editing for Codex's ~/.codex/config.toml: merge/remove
 # only our [mcp_servers.airtable-sheet-port] table while keeping the user's
 # other tables, top-level keys, comments, and formatting byte-for-byte.

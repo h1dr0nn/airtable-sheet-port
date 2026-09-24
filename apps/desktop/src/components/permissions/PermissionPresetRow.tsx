@@ -8,7 +8,6 @@ import {
 } from "@sheet-port/ui";
 import type { DataSource } from "@sheet-port/shared";
 import { useSavePermissionRule } from "../../hooks/usePermissions.js";
-import { useSetAutoApprove } from "../../hooks/useSettings.js";
 import { useTranslation } from "../../i18n/useTranslation.js";
 import type { PermissionRuleRow, SavePermissionRule } from "../../lib/ipc.js";
 import {
@@ -33,8 +32,7 @@ function toSaveShape(
     tableId: null,
     read: preset.read,
     write: preset.write,
-    deleteRecords: preset.deleteRecords,
-    requireConfirmationFor: [...preset.requireConfirmationFor]
+    deleteRecords: preset.deleteRecords
   };
 }
 
@@ -42,31 +40,23 @@ type PermissionPresetRowProps = {
   source: DataSource;
   /** The source-wide rule (tableId === null), if one exists yet. */
   rule: PermissionRuleRow | undefined;
-  /** Global auto-approve flag, used to derive the active preset. */
-  autoApproveWrites: boolean;
 };
 
 /**
  * One row per connected source. The source-wide rule is chosen from a small set
  * of named presets instead of individual switches; applying a preset saves the
- * rule AND sets global auto-approve to the preset's value. Destructive presets
- * (Bypass) confirm first.
+ * rule. Destructive presets (Bypass) confirm first.
  */
-export function PermissionPresetRow({ source, rule, autoApproveWrites }: PermissionPresetRowProps) {
+export function PermissionPresetRow({ source, rule }: PermissionPresetRowProps) {
   const save = useSavePermissionRule();
-  const setAutoApprove = useSetAutoApprove();
   const { t } = useTranslation();
   const [pendingBypass, setPendingBypass] = useState<PermissionPresetId | null>(null);
 
-  const activePreset = derivePreset(rule, autoApproveWrites);
-  const isBusy = save.isPending || setAutoApprove.isPending;
+  const activePreset = derivePreset(rule);
+  const isBusy = save.isPending;
 
   const applyPreset = (preset: PermissionPreset) => {
     save.mutate(toSaveShape(source, rule, preset));
-    // Auto-approve is global; keep it in sync with the chosen preset.
-    if (preset.autoApprove !== autoApproveWrites) {
-      setAutoApprove.mutate(preset.autoApprove);
-    }
   };
 
   const handleChange = (value: string) => {

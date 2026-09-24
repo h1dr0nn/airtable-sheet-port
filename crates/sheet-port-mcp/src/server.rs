@@ -1,6 +1,7 @@
-//! rmcp glue: registers exactly the 11 contract tools (docs/mcp-tools.md) and
-//! the server identity. All behavior lives in `tools`; this layer only maps
-//! results onto the MCP wire shape.
+//! rmcp glue: registers the contract tools (docs/mcp-tools.md) and the server
+//! identity. All behavior lives in `tools`; this layer only maps results onto
+//! the MCP wire shape. Tool descriptions stay short; the shared rules (tableId
+//! forms, source routing, write semantics) live once in [`SERVER_INSTRUCTIONS`].
 
 use std::sync::Arc;
 
@@ -11,8 +12,8 @@ use sheet_port_core::CoreError;
 
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
-    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, PreviewUpdateArgs,
-    ReadTableArgs, SourceTableArgs, UpdateCellsArgs,
+    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, ReadCellsArgs,
+    ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
 };
 use crate::state::BrokerState;
 use crate::tools;
@@ -21,11 +22,20 @@ use crate::tools;
 const SERVER_NAME: &str = "sheet-port";
 const SERVER_VERSION: &str = "0.3.0";
 
-/// Guidance returned in `initialize` so agents reliably choose these tools and
-/// pass a pasted spreadsheet link straight through as the tableId. Kept
-/// accurate to the connector behavior (URL / id / id:gid / id:SheetName
-/// resolution, preview -> commit writes, tokens held by the desktop app).
-const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port exposes safe tools to read and edit the user's connected Google Sheets (and future providers). When the user mentions a Google Sheets link or a spreadsheet, use these tools instead of guessing: call list_sources to find the connected account, then read_table or find_records. read_formulas reads the same rows but keeps each cell's raw formula (its =... text) instead of the computed value, so check it before overwriting cells that may be computed and would otherwise be clobbered. The record tools assume row 1 is the header; when a sheet is document-style instead (a merged banner on row 1, headers further down, totals rows, multiple blocks) read_table may see only one column - switch to read_cells (the full grid by A1 coordinates with real row numbers) and preview_update_cells (stage writes to individual cells like E48, USER_ENTERED so numbers and =formulas work). Any cell is reachable that way; never tell the user a cell cannot be edited. read_table and the other table tools accept a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName as the tableId - so you can pass a pasted spreadsheet link directly, and the exact tab is selected from the gid or sheet name (no selector reads the first tab). All writes are staged: preview_update_records, append_records, or preview_format_table return a changeId, then commit_change applies it (some changes need the user to approve in the desktop app first). To fill an empty or brand-new tab, call append_records directly: the field names of the records become the header row and the data is written beneath it, so an empty sheet is never a reason to refuse a write. When you already know the layout, pass the formatting fields to append_records so the data and its house-style styling apply in a single commit instead of a separate preview_format_table. commit_change also takes a changeIds array to commit several staged changes in one call, which saves round-trips when you have staged more than one. Two tools handle appearance: get_table_style reads a tab's existing look (header and first-row cell styles, frozen rows, column widths), and preview_format_table stages formatting - per-range bold, italic, fontSize, fontColor and backgroundColor as #rrggbb, horizontalAlignment, numberFormat (with an optional numberFormatType such as DATE or CURRENCY), wrap and border (none/all/outer/bottom), plus freezeRows, freezeColumns, and columnWidths. House style whenever you lay out a fresh sheet or write new data: freeze the header row, make the header bold with a light neutral fill (for example #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat and right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained - one or two muted accent colors, no full gridlines, no loud fills. When the sheet ALREADY has data or formatting, call get_table_style first and match its existing header and data styling instead of imposing a new look. Never fabricate spreadsheet contents; read them with these tools. Never ask for or handle OAuth tokens - the desktop app holds them.";
+/// Guidance returned in `initialize`: the rules every tool shares, so each tool
+/// description can stay to one or two sentences. Kept accurate to the
+/// connector behavior (tableId resolution, bridge routing, direct writes).
+const SERVER_INSTRUCTIONS: &str = "Airtable - Sheet Port reads and edits the user's Google Sheets. When the user mentions a spreadsheet or pastes a Sheets link, use these tools instead of guessing, and never fabricate spreadsheet contents.
+
+tableId: pass a Google Sheets URL, a bare spreadsheet id, spreadsheetId:gid, or spreadsheetId:SheetName. A pasted link can be passed as is; the tab comes from its gid or the sheet name, and without a selector the first tab is used. list_sheets shows a spreadsheet's tabs.
+
+sourceId: optional on every tool. Omit it and the call is routed to the connected bridge that can open the spreadsheet (list_sources shows the bridges). Pass it only to force a specific source. Access is configured in the desktop app; never ask the user for passwords or tokens.
+
+Reading: the record tools (read_table, find_records, read_formulas, describe_table) treat row 1 as the header. When a sheet is document-style (banner rows, headers further down, totals, several blocks) use read_cells, which returns raw cells by A1 coordinate with real row numbers, and update_cells to write any single cell. Never tell the user a cell cannot be edited. Use read_formulas before overwriting cells that may hold formulas.
+
+Writing: update_records, append_records, update_cells, format_table, create_spreadsheet, create_sheet, and delete_sheet apply immediately and return the change with its diff plus the commit outcome. Review the diff against what you meant to write and fix anything wrong with a follow-up call. Pass dryRun: true to only stage a change; it then returns a changeId that commit_change applies later (changeIds commits several in one call). An empty tab is never a reason to refuse: append_records writes the field names as the header row. delete_sheet also needs confirm: true.
+
+Style: call get_table_style first when a sheet already has data or formatting, and match it. For a fresh sheet, freeze the header row, make it bold with a light neutral fill (such as #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat, right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained: one or two muted accents, no full gridlines, no loud fills. Pass format fields to append_records to write and style new data in one call.";
 
 pub struct SheetPortServer {
     state: Arc<BrokerState>,
@@ -66,7 +76,7 @@ where
 impl SheetPortServer {
     #[tool(
         name = "list_sources",
-        description = "List the user's connected data sources (Google Sheets accounts and other providers). Call this first to get the sourceId for the connected Google account before reading or editing a spreadsheet.",
+        description = "List the connected sources (one per Google Apps Script bridge).",
         annotations(read_only_hint = true)
     )]
     async fn list_sources(&self) -> CallToolResult {
@@ -76,7 +86,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "list_tables",
-        description = "List the spreadsheets (tables) in a source. For a Google Sheets account each spreadsheet is one entry; the tableId is the spreadsheet id. To target a specific tab, pass a Google Sheets URL, spreadsheetId:gid, or spreadsheetId:SheetName as the tableId to the read tools instead.",
+        description = "List the spreadsheets (tables) in a source; each tableId is a spreadsheet id.",
         annotations(read_only_hint = true)
     )]
     async fn list_tables(&self, Parameters(args): Parameters<ListTablesArgs>) -> CallToolResult {
@@ -85,8 +95,18 @@ impl SheetPortServer {
     }
 
     #[tool(
+        name = "list_sheets",
+        description = "List the tabs of a spreadsheet as {gid, title}. Use a gid as spreadsheetId:gid to target that tab.",
+        annotations(read_only_hint = true)
+    )]
+    async fn list_sheets(&self, Parameters(args): Parameters<SourceTableArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::list_sheets(&state, &args)).await
+    }
+
+    #[tool(
         name = "describe_table",
-        description = "Describe a table's field schema (column names and inferred types). For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab; without a selector the first tab is used.",
+        description = "Describe a tab's fields (row 1 as the header) with inferred types.",
         annotations(read_only_hint = true)
     )]
     async fn describe_table(
@@ -99,7 +119,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "read_table",
-        description = "Read bounded records (rows) from a table. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab; without a selector the first tab is used. Paste a spreadsheet link directly to read the exact sheet the user shared.",
+        description = "Read records from a tab, treating row 1 as the header. limit/offset page over data rows.",
         annotations(read_only_hint = true)
     )]
     async fn read_table(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
@@ -108,8 +128,18 @@ impl SheetPortServer {
     }
 
     #[tool(
+        name = "read_formulas",
+        description = "Like read_table, but formula cells return their =... text instead of the computed value. Check it before overwriting cells that may be computed.",
+        annotations(read_only_hint = true)
+    )]
+    async fn read_formulas(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::read_formulas(&state, &args)).await
+    }
+
+    #[tool(
         name = "find_records",
-        description = "Find records by case-insensitive text search across all field values. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab; without a selector the first tab is used.",
+        description = "Case-insensitive text search across every field of a tab's records.",
         annotations(read_only_hint = true)
     )]
     async fn find_records(&self, Parameters(args): Parameters<FindRecordsArgs>) -> CallToolResult {
@@ -119,39 +149,17 @@ impl SheetPortServer {
 
     #[tool(
         name = "read_cells",
-        description = "Raw coordinate-level read: every cell of the tab from row 1, keyed by A1 column letter, with the real sheet row number on each row and NO header interpretation. Use this whenever the sheet is document-style (merged banner rows, headers not on row 1, multiple blocks) and read_table shows fewer columns than the sheet actually has - read_cells always sees the full grid. Same tableId forms as read_table; limit/offset page over sheet rows.",
+        description = "Read raw cells keyed by A1 column letter, each row with its real sheet row number and no header interpretation. Pass range (e.g. B40:F60, A:C, 5:9) to fetch only that window; limit/offset page within it. Use for document-style sheets read_table cannot see.",
         annotations(read_only_hint = true)
     )]
-    async fn read_cells(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
+    async fn read_cells(&self, Parameters(args): Parameters<ReadCellsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
         respond_blocking(move || tools::read_cells(&state, &args)).await
     }
 
     #[tool(
-        name = "preview_update_cells",
-        description = "Stage writes to individual cells by A1 reference (e.g. set E48 to '350h') and return the pending change; pass the changeId to commit_change to apply. Values are typed as a user would (USER_ENTERED): numbers become numbers, a leading = becomes a formula, anything else is text. This is the escape hatch when the record tools cannot address a cell - document-style sheets, banner headers, totals rows - so never conclude a cell is unreachable before trying it. Same tableId forms as read_table."
-    )]
-    async fn preview_update_cells(
-        &self,
-        Parameters(args): Parameters<UpdateCellsArgs>,
-    ) -> CallToolResult {
-        let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::preview_update_cells(&state, args)).await
-    }
-
-    #[tool(
-        name = "read_formulas",
-        description = "Read records like read_table but with each cell's raw formula preserved (a formula cell returns its `=...` text instead of the computed value). Call this before overwriting cells you suspect are computed, so you can see and keep the formula logic instead of clobbering it. Same tableId forms and paging as read_table.",
-        annotations(read_only_hint = true)
-    )]
-    async fn read_formulas(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
-        let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::read_formulas(&state, &args)).await
-    }
-
-    #[tool(
         name = "get_table_style",
-        description = "Read a tab's existing cell formatting so you can match it: the effective style (bold, colors, alignment, number format, wrap) of the header row and the first data row, plus frozen row/column counts and column pixel widths. Call this before preview_format_table when the sheet already has data or a look you should keep consistent. For Google Sheets the tableId may be a URL, a spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName.",
+        description = "Read a tab's existing look: header and first-row cell styles, frozen rows/columns, and column widths. Call before format_table on a sheet that already has styling.",
         annotations(read_only_hint = true)
     )]
     async fn get_table_style(
@@ -163,20 +171,20 @@ impl SheetPortServer {
     }
 
     #[tool(
-        name = "preview_update_records",
-        description = "Stage an update to existing records and return its diff (before/after). This does NOT write anything: it returns a changeId you then pass to commit_change. Some changes require the user to approve them in the desktop app before commit_change will apply them. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab."
+        name = "update_records",
+        description = "Patch existing records by recordId (from read_table). Returns the before/after diff."
     )]
-    async fn preview_update_records(
+    async fn update_records(
         &self,
-        Parameters(args): Parameters<PreviewUpdateArgs>,
+        Parameters(args): Parameters<UpdateRecordsArgs>,
     ) -> CallToolResult {
         let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::preview_update_records(&state, args)).await
+        respond_blocking(move || tools::update_records(&state, args)).await
     }
 
     #[tool(
         name = "append_records",
-        description = "Stage new rows to append to a table and return the pending change. Works on an empty tab too: if the sheet has no header yet, the field names of the records you pass become the header row (row 1) and the records are written below it, so you can populate a blank sheet in one call - never refuse to write just because a sheet is empty. You may also pass formatting fields (the same formats, freezeRows, freezeColumns, and columnWidths as preview_format_table); when present they are applied in the SAME commit right after the rows land, so you can write and style a fresh table in one preview+commit instead of two - prefer this over a separate preview_format_table when you already know the layout. This does NOT write anything: it returns a changeId you then pass to commit_change. Some changes require the user to approve them in the desktop app before commit_change will apply them. For Google Sheets the tableId may be a Google Sheets URL, a bare spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName to pick a specific tab."
+        description = "Append records as rows; on an empty tab the field names become the header row. Optional format fields (as in format_table) are applied in the same write."
     )]
     async fn append_records(
         &self,
@@ -187,56 +195,57 @@ impl SheetPortServer {
     }
 
     #[tool(
-        name = "preview_format_table",
-        description = "Stage cell formatting for a tab and return the pending change. This does NOT write anything: it returns a changeId you then pass to commit_change (some changes require the user to approve them in the desktop app first). Provide any of: `formats` (a list of operations, each with a `range` like A1:D1 plus optional bold, italic, fontSize, fontColor and backgroundColor as #rrggbb, horizontalAlignment LEFT/CENTER/RIGHT, numberFormat pattern with optional numberFormatType, wrap, and border none/all/outer/bottom), `freezeRows`, `freezeColumns`, and `columnWidths` (per-column pixel sizes). Only the properties you set are changed. Call get_table_style first to match an existing sheet's look. For Google Sheets the tableId may be a URL, a spreadsheet id, or spreadsheetId:gid / spreadsheetId:SheetName."
+        name = "update_cells",
+        description = "Write individual cells by A1 reference (e.g. E48), typed as a user would: numbers stay numbers and a leading = makes a formula. Reaches any cell, including document-style sheets."
     )]
-    async fn preview_format_table(
-        &self,
-        Parameters(args): Parameters<FormatTableArgs>,
-    ) -> CallToolResult {
+    async fn update_cells(&self, Parameters(args): Parameters<UpdateCellsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::preview_format_table(&state, args)).await
+        respond_blocking(move || tools::update_cells(&state, args)).await
     }
 
     #[tool(
-        name = "preview_create_spreadsheet",
-        description = "Stage the creation of a brand-new spreadsheet titled `title` on the connected account and return the pending change. This does NOT create anything until commit_change; on commit the outcome's `created` carries the new spreadsheetId and url so you can write into it next. Needs source-wide write permission."
+        name = "format_table",
+        description = "Format a tab: per-range bold, italic, fontSize, fontColor/backgroundColor (#rrggbb), horizontalAlignment, numberFormat, wrap, border, plus freezeRows, freezeColumns and columnWidths. Only the properties you set change."
     )]
-    async fn preview_create_spreadsheet(
+    async fn format_table(&self, Parameters(args): Parameters<FormatTableArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::format_table(&state, args)).await
+    }
+
+    #[tool(
+        name = "create_spreadsheet",
+        description = "Create a new spreadsheet titled title. The outcome's created field carries its spreadsheetId and url."
+    )]
+    async fn create_spreadsheet(
         &self,
         Parameters(args): Parameters<CreateSpreadsheetArgs>,
     ) -> CallToolResult {
         let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::preview_create_spreadsheet(&state, args)).await
+        respond_blocking(move || tools::create_spreadsheet(&state, args)).await
     }
 
     #[tool(
-        name = "preview_create_sheet",
-        description = "Stage adding a new sheet tab titled `title` to an existing spreadsheet (tableId = the spreadsheet URL or id) and return the pending change. Nothing is created until commit_change; on commit the outcome's `created` carries the new tab's gid. Needs write permission on the spreadsheet."
+        name = "create_sheet",
+        description = "Add a tab titled title to the spreadsheet in tableId. The outcome's created field carries the new gid."
     )]
-    async fn preview_create_sheet(
-        &self,
-        Parameters(args): Parameters<CreateSheetArgs>,
-    ) -> CallToolResult {
+    async fn create_sheet(&self, Parameters(args): Parameters<CreateSheetArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::preview_create_sheet(&state, args)).await
+        respond_blocking(move || tools::create_sheet(&state, args)).await
     }
 
     #[tool(
-        name = "preview_delete_sheet",
-        description = "Stage deleting a sheet tab (tableId = URL, spreadsheetId:gid, or spreadsheetId:SheetName) and return the pending change. Nothing is deleted until commit_change. This is destructive and needs the delete permission (the Bypass access preset); auto-approve alone never authorizes deleting a sheet, so if the source is not set to Bypass this is refused."
+        name = "delete_sheet",
+        description = "Delete the tab named by tableId. Destructive: needs confirm: true and the source's delete permission.",
+        annotations(destructive_hint = true)
     )]
-    async fn preview_delete_sheet(
-        &self,
-        Parameters(args): Parameters<DeleteSheetArgs>,
-    ) -> CallToolResult {
+    async fn delete_sheet(&self, Parameters(args): Parameters<DeleteSheetArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
-        respond_blocking(move || tools::preview_delete_sheet(&state, args)).await
+        respond_blocking(move || tools::delete_sheet(&state, args)).await
     }
 
     #[tool(
         name = "commit_change",
-        description = "Apply one or more changes previously staged by preview_update_records, append_records, or preview_format_table. Pass changeId to commit a single change (returns one outcome), or changeIds (an array) to commit several in one call (returns { committed: [...] }, one outcome per change in order) - use the batch form to save round-trips when you have staged multiple changes. This is the only tool that writes to a spreadsheet. If a change requires confirmation and the user has not approved it in the desktop app, the commit is refused with an error telling you to ask the user to approve."
+        description = "Apply changes staged with dryRun: changeId returns one outcome, changeIds returns {committed: [...]} in order."
     )]
     async fn commit_change(
         &self,
@@ -248,7 +257,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "get_audit_log",
-        description = "Return recent audit events (reads, previews, commits, and user approvals), newest first, so you can review what has been done in this workspace.",
+        description = "Recent audit events (reads, writes, commits), newest first.",
         annotations(read_only_hint = true)
     )]
     async fn get_audit_log(&self, Parameters(args): Parameters<GetAuditLogArgs>) -> CallToolResult {
