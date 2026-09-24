@@ -58,6 +58,15 @@ bridges** in the desktop app. Full steps, updating, rotation and revocation:
 You can add several bridges. Each account becomes the source `google-sheets:{accountKey}`,
 and tools route to the right account automatically when `sourceId` is omitted.
 
+Without the desktop app, the sidecar binary manages bridges headlessly (the secret is
+read from `SHEET_PORT_BRIDGE_SECRET`, or from stdin, never from the command line):
+
+```bash
+sheet-port-mcp bridge add https://script.google.com/macros/s/<deploymentId>/exec
+sheet-port-mcp bridge list
+sheet-port-mcp bridge remove google-sheets:<accountKey>
+```
+
 ### 2. Connect an MCP client
 
 - **From the app:** the **MCP Clients** card in Settings detects Claude Desktop, Claude
@@ -74,7 +83,13 @@ cargo test --workspace                          # core + sidecar unit tests
 cargo build -p sheet-port-mcp --features mock   # debug sidecar with the mock connector
 pnpm test                                       # frontend vitest + MCP e2e smoke
 pnpm test:e2e                                   # e2e smoke only (scripts/e2e-smoke.mjs)
+pnpm test:live                                  # real bridge + Google (see below)
 ```
+
+`pnpm test:live` (`scripts/live-smoke.mjs`) runs the release sidecar against a real
+bridge: it creates a temporary tab in the spreadsheet you name, writes, formats, reads
+and deletes it again. It needs `SHEET_PORT_LIVE_BRIDGE_URL`,
+`SHEET_PORT_LIVE_BRIDGE_SECRET` and `SHEET_PORT_LIVE_SPREADSHEET`.
 
 The mock connector is compiled only with the cargo feature `mock`; release builds do not
 contain it. The e2e smoke drives the sidecar over stdio against a temporary database

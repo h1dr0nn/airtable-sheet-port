@@ -84,6 +84,13 @@ bridges** in `tauri:dev`, and point an MCP client at your debug or release sidec
 bridge entry lands in your real OS keychain (service `sheet-port`); remove it from the
 app when done. Add a second bridge on another account to exercise account routing.
 
+For a scripted end-to-end check, `pnpm test:live` builds the release sidecar and runs
+`scripts/live-smoke.mjs`. It adds the bridge with `sheet-port-mcp bridge add`, which
+writes the same keychain entry the app would, and uses a throwaway database. It then
+drives every write tool through MCP against a temporary tab it creates and deletes in
+`SHEET_PORT_LIVE_SPREADSHEET`. Set `SHEET_PORT_LIVE_BRIDGE_URL` and
+`SHEET_PORT_LIVE_BRIDGE_SECRET` as well.
+
 ## Shared Database
 
 Both processes open the same SQLite file (WAL mode). Locations:
