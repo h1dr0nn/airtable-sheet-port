@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType
+} from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import {
   AlertTriangleIcon,
   CheckIcon,
@@ -65,17 +72,20 @@ export function appToast({
   duration,
   id
 }: AppToastOptions): string {
-  const toastId = id != null ? String(id) : nextToastId();
-  useToastStore.getState().add({
-    id: toastId,
-    title,
-    description,
-    variant,
-    copyable: action ? false : copyable ?? variant === "error",
-    action,
-    duration: duration ?? (variant === "loading" ? Infinity : DEFAULT_DURATION)
-  });
-  return toastId;
+  // Without a caller-supplied id, an identical visible toast is refreshed in
+  // place rather than stacked again (see ToastState.add).
+  return useToastStore.getState().add(
+    {
+      id: id != null ? String(id) : nextToastId(),
+      title,
+      description,
+      variant,
+      copyable: action ? false : (copyable ?? variant === "error"),
+      action,
+      duration: duration ?? (variant === "loading" ? Infinity : DEFAULT_DURATION)
+    },
+    { dedupe: id == null }
+  );
 }
 
 appToast.dismiss = (id?: string | number) =>
@@ -184,15 +194,31 @@ function ToastCard({
   const { icon: Icon, color, spin } = VARIANTS[toast.variant];
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (cardRef.current) reportHeight(toast.id, cardRef.current.offsetHeight);
-  });
+  // Measure before paint (layout effect) so a new card never renders one frame
+  // with height 0 and then jumps, and keep measuring with a ResizeObserver:
+  // content can resize without a React render (the copyable description
+  // un-clamps on CSS hover), which left the expanded stack overlapping.
+  // offsetHeight ignores transforms, so the collapsed scale doesn't skew it.
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    const measure = () => reportHeight(toast.id, card.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [toast.id, reportHeight]);
 
   const startRef = useRef(0);
   const remainingRef = useRef(toast.duration);
+  // Keyed on the toast object, not just its duration: replacing a toast in
+  // place (same id, or a deduped repeat) stores a new object and must restart
+  // the countdown even when the duration is unchanged. React runs the timer
+  // cleanup below before this reset, so the reset always wins.
   useEffect(() => {
     remainingRef.current = toast.duration;
-  }, [toast.duration]);
+  }, [toast]);
   useEffect(() => {
     if (toast.duration === Infinity || paused) return;
     startRef.current = performance.now();
@@ -201,7 +227,7 @@ function ToastCard({
       window.clearTimeout(timer);
       remainingRef.current -= performance.now() - startRef.current;
     };
-  }, [paused, toast.id, toast.duration, remove]);
+  }, [paused, toast, remove]);
 
   return (
     <motion.div
@@ -219,9 +245,7 @@ function ToastCard({
         className="flex flex-col gap-2"
       >
         <div className="flex items-center gap-2.5">
-          <Icon
-            className={`h-[18px] w-[18px] shrink-0 ${color} ${spin ? "animate-spin" : ""}`}
-          />
+          <Icon className={`h-[18px] w-[18px] shrink-0 ${color} ${spin ? "animate-spin" : ""}`} />
           <div className="min-w-0 flex-1 text-[14px] font-semibold leading-tight text-ink">
             {toast.title}
           </div>
@@ -264,7 +288,13 @@ export function ToastViewport() {
 
   useEffect(() => {
     if (toasts.length === 0) setExpanded(false);
-  }, [toasts.length]);
+    // Drop heights of dismissed toasts so the map can't grow without bound.
+    setHeights((prev) => {
+      const live = Object.keys(prev).filter((id) => toasts.some((t) => t.id === id));
+      if (live.length === Object.keys(prev).length) return prev;
+      return Object.fromEntries(live.map((id) => [id, prev[id] as number]));
+    });
+  }, [toasts]);
 
   const ordered = [...toasts].reverse();
   const total = ordered.length;
@@ -272,70 +302,78 @@ export function ToastViewport() {
     ordered.reduce((sum, t) => sum + (heights[t.id] ?? 0), 0) +
     EXPANDED_GAP * Math.max(0, total - 1);
   const front = ordered[0];
-  const frontHeight = front ? heights[front.id] ?? 0 : 0;
+  const frontHeight = front ? (heights[front.id] ?? 0) : 0;
   const clearAllZone = total > 1 ? 44 : 0;
   const catcherHeight = expanded
     ? stackHeight + clearAllZone
     : frontHeight + MAX_STACK * COLLAPSED_PEEK;
 
+  // reducedMotion="user": under prefers-reduced-motion framer skips every
+  // transform animation (stack y/scale shifts, the clear-all lift) and keeps
+  // only the opacity fades. The CSS reduced-motion guard in styles.css cannot
+  // reach these, since framer drives them from JS/WAAPI.
   return createPortal(
-    <div
-      style={{ zIndex: "var(--z-toast)" }}
-      className="pointer-events-none fixed bottom-0 right-0 p-4"
-      onMouseEnter={() => total > 0 && setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
-    >
-      <div className="relative h-0 w-[356px]">
-        {total > 0 && (
-          <div
-            aria-hidden
-            className="pointer-events-auto absolute bottom-0 right-0 z-0 w-[356px]"
-            style={{ height: catcherHeight }}
-          />
-        )}
-        <AnimatePresence>
-          {expanded && total > 1 && (
-            <motion.button
-              key="__clear_all"
-              type="button"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1, y: -(stackHeight + 10) }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              onClick={() => remove()}
-              className="toast-clear-btn pointer-events-auto absolute bottom-0 right-0 z-[200] rounded-md border border-edge bg-raised px-2.5 py-1 text-[11px] font-medium text-ink-muted shadow-card"
-            >
-              Clear all
-            </motion.button>
+    <MotionConfig reducedMotion="user">
+      <div
+        style={{ zIndex: "var(--z-toast)" }}
+        className="pointer-events-none fixed bottom-0 right-0 p-4"
+        onMouseEnter={() => total > 0 && setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+      >
+        <div className="relative h-0 w-[356px]">
+          {total > 0 && (
+            <div
+              aria-hidden
+              className="pointer-events-auto absolute bottom-0 right-0 z-0 w-[356px]"
+              style={{ height: catcherHeight }}
+            />
           )}
-        </AnimatePresence>
+          <AnimatePresence>
+            {expanded && total > 1 && (
+              <motion.button
+                key="__clear_all"
+                type="button"
+                // Start at the target y: with only `opacity` in `initial`, the
+                // button began at y=0 and flew up across the whole stack.
+                initial={{ opacity: 0, y: -(stackHeight + 10) }}
+                animate={{ opacity: 1, y: -(stackHeight + 10) }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => remove()}
+                className="toast-clear-btn pointer-events-auto absolute bottom-0 right-0 z-[200] rounded-md border border-edge bg-raised px-2.5 py-1 text-[11px] font-medium text-ink-muted shadow-card"
+              >
+                Clear all
+              </motion.button>
+            )}
+          </AnimatePresence>
 
-        <AnimatePresence initial={false}>
-          {ordered.map((toast, index) => {
-            const belowHeight = ordered
-              .slice(0, index)
-              .reduce((sum, t) => sum + (heights[t.id] ?? 0), 0);
-            const y = expanded
-              ? -(belowHeight + EXPANDED_GAP * index)
-              : -(Math.min(index, MAX_STACK) * COLLAPSED_PEEK);
-            const scale = expanded ? 1 : 1 - Math.min(index, MAX_STACK) * COLLAPSED_SCALE_STEP;
-            return (
-              <ToastCard
-                key={toast.id}
-                toast={toast}
-                paused={expanded}
-                y={y}
-                scale={scale}
-                hidden={!expanded && index > MAX_STACK}
-                contentVisible={expanded || index === 0}
-                zIndex={total - index}
-                reportHeight={reportHeight}
-              />
-            );
-          })}
-        </AnimatePresence>
+          <AnimatePresence initial={false}>
+            {ordered.map((toast, index) => {
+              const belowHeight = ordered
+                .slice(0, index)
+                .reduce((sum, t) => sum + (heights[t.id] ?? 0), 0);
+              const y = expanded
+                ? -(belowHeight + EXPANDED_GAP * index)
+                : -(Math.min(index, MAX_STACK) * COLLAPSED_PEEK);
+              const scale = expanded ? 1 : 1 - Math.min(index, MAX_STACK) * COLLAPSED_SCALE_STEP;
+              return (
+                <ToastCard
+                  key={toast.id}
+                  toast={toast}
+                  paused={expanded}
+                  y={y}
+                  scale={scale}
+                  hidden={!expanded && index > MAX_STACK}
+                  contentVisible={expanded || index === 0}
+                  zIndex={total - index}
+                  reportHeight={reportHeight}
+                />
+              );
+            })}
+          </AnimatePresence>
+        </div>
       </div>
-    </div>,
+    </MotionConfig>,
     document.body
   );
 }

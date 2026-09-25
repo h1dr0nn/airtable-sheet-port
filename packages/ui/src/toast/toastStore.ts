@@ -22,8 +22,17 @@ export interface ToastItem {
 
 interface ToastState {
   toasts: ToastItem[];
-  /** Add a new toast, or replace one with the same id (loading -> result). */
-  add: (item: ToastItem) => void;
+  /**
+   * Add a toast and return the id it is shown under.
+   * - Same id as a visible toast: replaced IN PLACE (loading -> result), keeping
+   *   its slot and its React key, so the card updates without replaying its
+   *   enter animation.
+   * - `dedupe` and an identical visible toast (variant, title, description):
+   *   that toast is refreshed in place instead of stacking a copy, so repeating
+   *   an action doesn't slide in a pile of identical cards.
+   * - Otherwise appended as the newest toast.
+   */
+  add: (item: ToastItem, options?: { dedupe?: boolean }) => string;
   /** Remove one toast by id, or all when id is omitted. */
   remove: (id?: string) => void;
 }
@@ -31,17 +40,28 @@ interface ToastState {
 /** Cap concurrent toasts so a burst can't fill the screen. */
 export const MAX_TOASTS = 4;
 
-export const useToastStore = create<ToastState>((set) => ({
+function isSameContent(a: ToastItem, b: ToastItem): boolean {
+  return a.variant === b.variant && a.title === b.title && a.description === b.description;
+}
+
+export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
-  add: (item) =>
-    set((s) => {
-      const exists = s.toasts.some((t) => t.id === item.id);
-      if (exists) {
-        return { toasts: s.toasts.map((t) => (t.id === item.id ? item : t)) };
-      }
-      // Newest last so it stacks closest to the bottom-right corner.
-      return { toasts: [...s.toasts, item].slice(-MAX_TOASTS) };
-    }),
+  add: (item, options) => {
+    const { toasts } = get();
+    const target =
+      toasts.find((t) => t.id === item.id) ??
+      (options?.dedupe ? toasts.find((t) => isSameContent(t, item)) : undefined);
+    if (target) {
+      // A fresh object even when nothing changed, so the card sees a new toast
+      // and restarts its auto-dismiss timer.
+      const next = { ...item, id: target.id };
+      set({ toasts: toasts.map((t) => (t.id === target.id ? next : t)) });
+      return target.id;
+    }
+    // Newest last so it stacks closest to the bottom-right corner.
+    set({ toasts: [...toasts, item].slice(-MAX_TOASTS) });
+    return item.id;
+  },
   remove: (id) =>
     set((s) => ({
       toasts: id == null ? [] : s.toasts.filter((t) => t.id !== id)

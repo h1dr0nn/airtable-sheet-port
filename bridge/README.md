@@ -7,6 +7,8 @@ no OAuth client id, and no client secret to manage.
 
 One bridge serves one Google account. Deploy one per account you want to connect.
 
+The desktop app has a **Guide** tab with these steps and both files ready to copy.
+
 ## Files
 
 | File | Purpose |

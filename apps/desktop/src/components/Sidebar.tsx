@@ -8,6 +8,7 @@ import {
 } from "@sheet-port/ui";
 import {
   ArrowUpCircle,
+  BookOpen,
   Database,
   LayoutDashboard,
   Settings as SettingsIcon,
@@ -30,6 +31,7 @@ const SIDEBAR_COLLAPSED_CLASS = "w-14";
 const NAV_ICONS: Record<ScreenId, LucideIcon> = {
   dashboard: LayoutDashboard,
   sources: Database,
+  guide: BookOpen,
   tables: Table2,
   settings: SettingsIcon,
 };

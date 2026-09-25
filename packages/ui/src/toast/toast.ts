@@ -8,7 +8,12 @@ interface ToastOptions {
 
 function show(variant: ToastVariant) {
   return (title: string, opts?: ToastOptions) =>
-    appToast({ title, description: opts?.description, action: opts?.action, variant });
+    appToast({
+      title,
+      description: opts?.description,
+      action: opts?.action,
+      variant
+    });
 }
 
 /** sonner-compatible facade over the app toast system. */

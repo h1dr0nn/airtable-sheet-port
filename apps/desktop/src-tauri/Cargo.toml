@@ -30,3 +30,4 @@ sheet-port-core = { path = "../../../crates/sheet-port-core" }
 # Command payload structs (docs/ipc.md shapes) and audit metadata JSON.
 serde = { workspace = true }
 serde_json = { workspace = true }
+tauri-plugin-opener = "2"

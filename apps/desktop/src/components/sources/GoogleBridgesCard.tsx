@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { ChevronRight } from "lucide-react";
+import { BookOpen, ChevronRight } from "lucide-react";
 import {
   Badge,
   Button,
@@ -15,8 +15,6 @@ import {
   TooltipContent,
   TooltipTrigger
 } from "@sheet-port/ui";
-import bridgeCode from "../../../../../bridge/Code.gs?raw";
-import bridgeManifest from "../../../../../bridge/appsscript.json?raw";
 import {
   useAddGoogleBridge,
   useGoogleAccounts,
@@ -24,27 +22,9 @@ import {
   useTestGoogleBridge
 } from "../../hooks/useGoogleBridges.js";
 import { useTranslation } from "../../i18n/useTranslation.js";
-import type { TranslationKey } from "../../i18n/translations.js";
 import { shortenId } from "../../lib/format.js";
 import type { GoogleAccount } from "../../lib/ipc.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
-import { CopyButton } from "../CopyButton.js";
-
-/** Setup steps shown in the collapsible guide, in order. */
-const GUIDE_STEP_KEYS: readonly TranslationKey[] = [
-  "settings.bridges.step1",
-  "settings.bridges.step2",
-  "settings.bridges.step3",
-  "settings.bridges.step4",
-  "settings.bridges.step5",
-  "settings.bridges.step6"
-];
-
-/** The two Apps Script files the user pastes into the editor. */
-const BRIDGE_FILES: ReadonlyArray<{ name: string; content: string; copyKey: TranslationKey }> = [
-  { name: "Code.gs", content: bridgeCode, copyKey: "settings.bridges.copyCode" },
-  { name: "appsscript.json", content: bridgeManifest, copyKey: "settings.bridges.copyManifest" }
-];
 
 /** One bridge: email, deployment id and URL, plus Test and a confirmed Remove. */
 function BridgeRow({ account }: { account: GoogleAccount }) {
@@ -190,53 +170,30 @@ function AddBridgeForm() {
   );
 }
 
-/** Collapsible "How to create a bridge" steps plus copy buttons for both files. */
-function BridgeGuide() {
+/** One-line pointer to the Guide screen, which walks through the setup. */
+function GuideHint({ onOpenGuide }: { onOpenGuide: () => void }) {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
-
   return (
-    <div>
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <p className="text-[12.5px] leading-5 text-ink-muted">{t("settings.bridges.guideHint")}</p>
       <button
         type="button"
-        aria-expanded={isOpen}
-        aria-controls="google-bridge-guide"
-        onClick={() => setIsOpen((current) => !current)}
+        onClick={onOpenGuide}
         className={cn(
           "flex items-center gap-1.5 rounded text-[13px] font-medium text-accent transition-colors hover:text-accent-hover",
           FOCUS_RING
         )}
       >
-        <ChevronRight
-          size={14}
-          aria-hidden
-          className={cn("transition-transform", isOpen && "rotate-90")}
-        />
-        {t("settings.bridges.guideToggle")}
+        <BookOpen size={14} aria-hidden />
+        {t("settings.bridges.guideLink")}
+        <ChevronRight size={14} aria-hidden />
       </button>
-      {isOpen ? (
-        <div id="google-bridge-guide" className="mt-3 space-y-3">
-          <ol className="list-decimal space-y-1.5 pl-5 text-[12.5px] leading-5 text-ink-muted">
-            {GUIDE_STEP_KEYS.map((key) => (
-              <li key={key}>{t(key)}</li>
-            ))}
-          </ol>
-          <ul className="divide-y divide-edge rounded-md border border-edge bg-surface">
-            {BRIDGE_FILES.map((file) => (
-              <li key={file.name} className="flex items-center justify-between gap-3 px-3 py-1.5">
-                <span className="font-mono text-[12.5px] text-ink">{file.name}</span>
-                <CopyButton value={file.content} label={t(file.copyKey)} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
     </div>
   );
 }
 
 /** Google Sheets access through Apps Script bridges, one per Google account. */
-export function GoogleBridgesCard() {
+export function GoogleBridgesCard({ onOpenGuide }: { onOpenGuide: () => void }) {
   const { data: accounts, isPending } = useGoogleAccounts();
   const { t } = useTranslation();
   const accountList = accounts ?? [];
@@ -271,7 +228,7 @@ export function GoogleBridgesCard() {
             <AddBridgeForm />
           </div>
           <div className="border-t border-edge pt-4">
-            <BridgeGuide />
+            <GuideHint onOpenGuide={onOpenGuide} />
           </div>
         </div>
       </CardContent>

@@ -6,6 +6,7 @@ import { useTranslation } from "../i18n/useTranslation.js";
 import type { TranslationKey } from "../i18n/translations.js";
 import { GoogleBridgesCard } from "../components/sources/GoogleBridgesCard.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
+import type { ScreenId } from "../lib/nav.js";
 
 const STATUS_VARIANTS: Record<SourceStatus, BadgeVariant> = {
   connected: "success",
@@ -66,7 +67,7 @@ function GenericSourceCard({ source }: { source: DataSource }) {
 
 /** Data sources: the Google bridge pool (add, test, remove) plus any other
  * persisted source. Google accounts are managed here and nowhere else. */
-export function DataSources() {
+export function DataSources({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { t } = useTranslation();
   const { data: sources } = useSources();
   // Google accounts are listed by the bridges card; other kinds get a card each.
@@ -79,7 +80,7 @@ export function DataSources() {
         description={t("screen.sources.description")}
       />
       <div className="space-y-4">
-        <GoogleBridgesCard />
+        <GoogleBridgesCard onOpenGuide={() => onNavigate("guide")} />
         {otherSources.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {otherSources.map((source) => (

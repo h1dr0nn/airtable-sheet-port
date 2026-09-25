@@ -70,6 +70,18 @@ export default {
           from: { opacity: "0", scale: "0.98" },
           to: { opacity: "1", scale: "1" }
         },
+        // Exit counterparts. Radix Presence keeps a closing panel mounted until
+        // its animation ends, but only when data-[state=closed] switches to a
+        // DIFFERENT animation-name than the enter one; without these, every
+        // Radix panel vanished in one frame while it faded/scaled in on open.
+        "fade-out": {
+          from: { opacity: "1" },
+          to: { opacity: "0" }
+        },
+        "scale-out": {
+          from: { opacity: "1", scale: "1" },
+          to: { opacity: "0", scale: "0.98" }
+        },
         "dot-pulse": {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.4" }
@@ -77,8 +89,11 @@ export default {
       },
       animation: {
         "fade-in": "fade-in 140ms cubic-bezier(0.4, 0, 0.2, 1)",
-        "fade-up": "fade-up 200ms cubic-bezier(0.4, 0, 0.2, 1)",
         "scale-in": "scale-in 160ms cubic-bezier(0.4, 0, 0.2, 1)",
+        // `forwards` holds the final transparent frame until unmount, so a
+        // closing panel can never flash back to full opacity for one frame.
+        "fade-out": "fade-out var(--dur-fast) var(--ease-standard) forwards",
+        "scale-out": "scale-out var(--dur-fast) var(--ease-standard) forwards",
         "dot-pulse": "dot-pulse 2s ease-in-out infinite"
       }
     }

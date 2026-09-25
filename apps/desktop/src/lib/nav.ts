@@ -1,6 +1,7 @@
 export type ScreenId =
   | "dashboard"
   | "sources"
+  | "guide"
   | "tables"
   | "settings";
 
@@ -17,6 +18,7 @@ export type NavItem = {
 export const NAV: readonly NavItem[] = [
   { id: "dashboard", labelKey: "nav.dashboard", screen: "dashboard" },
   { id: "sources", labelKey: "nav.sources", screen: "sources" },
+  { id: "guide", labelKey: "nav.guide", screen: "guide" },
   { id: "tables", labelKey: "nav.tables", screen: "tables" },
   { id: "settings", labelKey: "nav.settings", screen: "settings" }
 ] as const;

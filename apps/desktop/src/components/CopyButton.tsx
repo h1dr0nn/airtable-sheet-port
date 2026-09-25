@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Button, toast, Tooltip, TooltipContent, TooltipTrigger } from "@sheet-port/ui";
+import { Button, type ButtonProps, toast, Tooltip, TooltipContent, TooltipTrigger } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 import { useTranslation } from "../i18n/useTranslation.js";
 
@@ -11,9 +11,11 @@ type CopyButtonProps = {
   label: string;
   /** Visible idle text; defaults to "Copy". */
   children?: ReactNode;
+  /** Button style; ghost by default, "secondary" for a more prominent copy. */
+  variant?: ButtonProps["variant"];
 };
 
-export function CopyButton({ value, label, children }: CopyButtonProps) {
+export function CopyButton({ value, label, children, variant = "ghost" }: CopyButtonProps) {
   const { t } = useTranslation();
   const [isCopied, setIsCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
@@ -35,7 +37,7 @@ export function CopyButton({ value, label, children }: CopyButtonProps) {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
+          variant={variant}
           size="sm"
           aria-label={label}
           className="min-w-16 px-2"

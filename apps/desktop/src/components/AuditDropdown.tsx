@@ -87,6 +87,16 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
   const { data, isPending, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useAuditEvents(AUDIT_DROPDOWN_PAGE_SIZE);
   const clearAudit = useClearAuditEvents();
+  // Stays true through the close animation so the panel fades out instead of
+  // vanishing in one frame; cleared on the exit's animationend. The exit class
+  // is deliberately not motion-safe: the reduced-motion guard in styles.css
+  // shortens it to ~0ms, and animationend must still fire to unmount.
+  const [isMounted, setIsMounted] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setIsMounted(true);
+    }
+  }, [open]);
   const events = data?.pages.flat() ?? [];
   const isEmpty = events.length === 0;
 
@@ -117,7 +127,7 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
     };
   }, [open, onOpenChange]);
 
-  if (!open) {
+  if (!open && !isMounted) {
     return null;
   }
 
@@ -126,10 +136,23 @@ export function AuditDropdown({ open, onOpenChange }: AuditDropdownProps) {
       ref={panelRef}
       role="dialog"
       aria-label={t("activity.title")}
+      data-state={open ? "open" : "closed"}
+      onAnimationEnd={(event) => {
+        // Ignore animations bubbling up from children (skeletons, chevrons).
+        if (!open && event.target === event.currentTarget) {
+          setIsMounted(false);
+        }
+      }}
       // Rides the dropdown layer (see --z-dropdown) so activity opened from the
       // titlebar is never occluded by an in-flight toast stack.
       style={{ zIndex: "var(--z-dropdown)" }}
-      className="absolute right-2 top-full mt-1 flex max-h-[70vh] w-[380px] flex-col overflow-hidden rounded-lg border border-edge bg-raised shadow-pop motion-safe:animate-scale-in"
+      // Grows from its top-right corner, under the bell it hangs from.
+      className={cn(
+        "absolute right-2 top-full mt-1 flex max-h-[70vh] w-[380px] origin-top-right flex-col",
+        "overflow-hidden rounded-lg border border-edge bg-raised shadow-pop",
+        "motion-safe:animate-scale-in",
+        "data-[state=closed]:pointer-events-none data-[state=closed]:animate-scale-out"
+      )}
     >
       <div className="flex shrink-0 items-center justify-between border-b border-edge px-3 py-2.5">
         <h2 className="text-[13px] font-semibold text-ink">{t("activity.title")}</h2>

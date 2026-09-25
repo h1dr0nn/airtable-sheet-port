@@ -51,9 +51,11 @@ you only need to run it by hand when building outside Tauri.
 Each Google account is connected through its own Apps Script web app. In short: create a
 standalone project at script.google.com, paste `bridge/Code.gs` and
 `bridge/appsscript.json`, run `setup` to get a secret, deploy as a web app (execute as
-Me, access Anyone), then paste the `/exec` URL and the secret into **Settings > Google
-bridges** in the desktop app. Full steps, updating, rotation and revocation:
+Me, access Anyone), then paste the `/exec` URL and the secret on **Data Sources** in the
+desktop app. Full steps, updating, rotation and revocation:
 [`bridge/README.md`](bridge/README.md).
+
+The desktop app's **Guide** tab walks through the same steps with both files ready to copy.
 
 You can add several bridges. Each account becomes the source `google-sheets:{accountKey}`,
 and tools route to the right account automatically when `sourceId` is omitted.

@@ -22,6 +22,7 @@ export const TooltipContent = forwardRef<
       className={cn(
         "max-w-xs rounded-md border border-edge bg-raised px-2 py-1 shadow-pop",
         "font-sans text-[11.5px] leading-4 text-ink motion-safe:animate-fade-in",
+        "data-[state=closed]:animate-fade-out",
         className
       )}
       {...props}

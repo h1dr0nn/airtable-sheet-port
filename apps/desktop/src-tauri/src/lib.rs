@@ -27,6 +27,9 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Opens external links (the Guide's script.google.com link) in the
+        // system browser; capabilities scope it to the allowed URLs.
+        .plugin(tauri_plugin_opener::init())
         // Persist and restore window position/size/maximized across restarts.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // Launch-at-login toggle exposed in Settings (LaunchAgent on macOS).

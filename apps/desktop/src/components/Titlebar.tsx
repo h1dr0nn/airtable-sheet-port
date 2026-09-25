@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, PanelLeft, PanelLeftClose } from "lucide-react";
+import { Bell, Check, Menu, PanelLeft, PanelLeftClose, Search } from "lucide-react";
 import {
   cn,
   DropdownMenu,
@@ -32,9 +32,12 @@ import { AuditDropdown } from "./AuditDropdown.js";
 const CONTROL_CLUSTER_GAP = "mr-2";
 
 // Shared 46px hover zone so menu/search buttons read like the window controls.
+// aria-expanded mirrors the hover look while a button's popup (app menu,
+// activity feed) is open; Radix sets it on the menu trigger, the bell sets it
+// by hand.
 const TITLEBAR_BUTTON_CLASS = cn(
   "flex h-full w-[46px] items-center justify-center text-ink-muted transition-colors",
-  "hover:bg-surface hover:text-ink",
+  "hover:bg-surface hover:text-ink aria-expanded:bg-surface aria-expanded:text-ink",
   FOCUS_RING,
   "focus-visible:ring-offset-0"
 );
@@ -82,14 +85,12 @@ const GLYPH_PROPS = {
   "aria-hidden": true
 } as const;
 
-const MENU_GLYPH_PROPS = {
-  width: 12,
-  height: 12,
-  viewBox: "0 0 12 12",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.25,
-  strokeLinecap: "round",
+// One size and stroke for every titlebar tool icon (menu, sidebar, search,
+// bell), all from lucide, so the left and right clusters match. The window
+// controls keep their thinner 10px GLYPH_PROPS, like native caption buttons.
+const TITLEBAR_ICON_PROPS = {
+  size: 16,
+  strokeWidth: 1.5,
   "aria-hidden": true
 } as const;
 
@@ -151,6 +152,98 @@ function WindowControls({ t }: { t: ReturnType<typeof useTranslation>["t"] }) {
   );
 }
 
+// Last input seen anywhere in the window, shared by every titlebar tooltip.
+// Captured on window so it is known before any focus handler runs.
+const lastInput = { tab: false, x: -1, y: -1 };
+let isInputTrackerInstalled = false;
+
+function installInputTracker(): void {
+  if (isInputTrackerInstalled) {
+    return;
+  }
+  isInputTrackerInstalled = true;
+  const onPointer = (event: PointerEvent) => {
+    lastInput.tab = false;
+    lastInput.x = event.clientX;
+    lastInput.y = event.clientY;
+  };
+  const onPointerMove = (event: PointerEvent) => {
+    lastInput.x = event.clientX;
+    lastInput.y = event.clientY;
+  };
+  window.addEventListener("pointerdown", onPointer, { capture: true, passive: true });
+  window.addEventListener("pointermove", onPointerMove, { capture: true, passive: true });
+  window.addEventListener(
+    "keydown",
+    (event: KeyboardEvent) => {
+      lastInput.tab = event.key === "Tab";
+    },
+    { capture: true }
+  );
+}
+
+/**
+ * Tooltip state for a titlebar button, so its hint shows only on a genuine
+ * hover or keyboard (Tab) focus. Radix Tooltip alone also opened it:
+ *  - while the button's popup (app menu, activity feed) was open;
+ *  - when the menu or command palette returned focus to the button on close
+ *    (Escape, item select, click outside);
+ *  - on the first pointer move after a modal menu closed with the pointer
+ *    still on the button (the modal layer's pointer-events:none makes the
+ *    browser replay the pointer entering it).
+ * `onPopupClose` must be called from the popup's close handler, synchronously,
+ * because the focus return can fire in the same commit.
+ */
+function useTitlebarTooltip(popupOpen = false) {
+  const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const sourceRef = useRef<"focus" | "hover">("hover");
+  const suppressHoverRef = useRef(false);
+
+  useEffect(installInputTracker, []);
+
+  const onPopupClose = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    suppressHoverRef.current =
+      rect !== undefined &&
+      lastInput.x >= rect.left &&
+      lastInput.x <= rect.right &&
+      lastInput.y >= rect.top &&
+      lastInput.y <= rect.bottom;
+    setIsOpen(false);
+  }, []);
+
+  const onOpenChange = (next: boolean) => {
+    if (next) {
+      const blocked =
+        popupOpen || (sourceRef.current === "focus" ? !lastInput.tab : suppressHoverRef.current);
+      if (blocked) {
+        return;
+      }
+    }
+    setIsOpen(next);
+  };
+
+  return {
+    onPopupClose,
+    tooltipProps: { open: isOpen && !popupOpen, onOpenChange },
+    // Spread on the <button>; Radix Slot runs these before its own handlers,
+    // so the source is known when the tooltip asks to open.
+    triggerProps: {
+      ref: triggerRef,
+      onFocus: () => {
+        sourceRef.current = "focus";
+      },
+      onPointerMove: () => {
+        sourceRef.current = "hover";
+      },
+      onPointerLeave: () => {
+        suppressHoverRef.current = false;
+      }
+    }
+  };
+}
+
 type TitlebarProps = {
   onNavigate: (screen: ScreenId) => void;
   /** Opens the app-wide command palette (also bound to Ctrl/Cmd+K). */
@@ -175,6 +268,33 @@ export function Titlebar({
   const { data: status } = useAppStatus();
   const { t } = useTranslation();
   const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuTooltip = useTitlebarTooltip(isMenuOpen);
+  const sidebarTooltip = useTitlebarTooltip();
+  const searchTooltip = useTitlebarTooltip();
+  const activityTooltip = useTitlebarTooltip(isActivityOpen);
+  const { onPopupClose: onMenuClose } = menuTooltip;
+  const { onPopupClose: onActivityClose } = activityTooltip;
+
+  const handleMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        onMenuClose();
+      }
+      setIsMenuOpen(open);
+    },
+    [onMenuClose]
+  );
+  // Stable identity: AuditDropdown re-binds its dismiss listeners on change.
+  const handleActivityOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        onActivityClose();
+      }
+      setIsActivityOpen(open);
+    },
+    [onActivityClose]
+  );
 
   const copyVersion = () => {
     const version = status?.appVersion;
@@ -220,18 +340,17 @@ export function Titlebar({
       className="relative flex h-10 shrink-0 select-none flex-nowrap items-stretch border-b border-edge bg-bg"
     >
       <div className="flex h-full shrink-0 items-stretch whitespace-nowrap">
-        <DropdownMenu>
-          <Tooltip>
+        <DropdownMenu open={isMenuOpen} onOpenChange={handleMenuOpenChange}>
+          <Tooltip {...menuTooltip.tooltipProps}>
             <TooltipTrigger asChild>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
                   aria-label={t("titlebar.applicationMenu")}
+                  {...menuTooltip.triggerProps}
                   className={TITLEBAR_BUTTON_CLASS}
                 >
-                  <svg {...MENU_GLYPH_PROPS}>
-                    <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />
-                  </svg>
+                  <Menu {...TITLEBAR_ICON_PROPS} />
                 </button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
@@ -240,19 +359,22 @@ export function Titlebar({
           <DropdownMenuContent align="start">{renderMenuEntries(menu)}</DropdownMenuContent>
         </DropdownMenu>
 
-        <Tooltip>
+        <Tooltip {...sidebarTooltip.tooltipProps}>
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label={sidebarCollapsed ? t("titlebar.expandSidebar") : t("titlebar.collapseSidebar")}
+              {...sidebarTooltip.triggerProps}
+              aria-label={
+                sidebarCollapsed ? t("titlebar.expandSidebar") : t("titlebar.collapseSidebar")
+              }
               aria-pressed={sidebarCollapsed}
               onClick={onToggleSidebar}
               className={TITLEBAR_BUTTON_CLASS}
             >
               {sidebarCollapsed ? (
-                <PanelLeft size={15} strokeWidth={1.75} aria-hidden />
+                <PanelLeft {...TITLEBAR_ICON_PROPS} />
               ) : (
-                <PanelLeftClose size={15} strokeWidth={1.75} aria-hidden />
+                <PanelLeftClose {...TITLEBAR_ICON_PROPS} />
               )}
             </button>
           </TooltipTrigger>
@@ -261,18 +383,16 @@ export function Titlebar({
           </TooltipContent>
         </Tooltip>
 
-        <Tooltip>
+        <Tooltip {...searchTooltip.tooltipProps}>
           <TooltipTrigger asChild>
             <button
               type="button"
+              {...searchTooltip.triggerProps}
               aria-label={t("titlebar.commandPalette")}
               onClick={onOpenPalette}
               className={TITLEBAR_BUTTON_CLASS}
             >
-              <svg {...MENU_GLYPH_PROPS}>
-                <circle cx="5.25" cy="5.25" r="3.5" />
-                <path d="M8 8l2.5 2.5" />
-              </svg>
+              <Search {...TITLEBAR_ICON_PROPS} />
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">
@@ -293,21 +413,22 @@ export function Titlebar({
        * is treated as "inside" so toggling via the button never double-fires. */}
       <div className="flex h-full shrink-0 items-stretch whitespace-nowrap">
         <div className={cn("relative flex h-full items-stretch", isTauri && CONTROL_CLUSTER_GAP)}>
-          <Tooltip>
+          <Tooltip {...activityTooltip.tooltipProps}>
             <TooltipTrigger asChild>
               <button
                 type="button"
+                {...activityTooltip.triggerProps}
                 aria-label={t("titlebar.activity")}
                 aria-expanded={isActivityOpen}
-                onClick={() => setIsActivityOpen((current) => !current)}
-                className={cn(TITLEBAR_BUTTON_CLASS, isActivityOpen && "bg-surface text-ink")}
+                onClick={() => handleActivityOpenChange(!isActivityOpen)}
+                className={TITLEBAR_BUTTON_CLASS}
               >
-                <Bell size={14} strokeWidth={1.5} aria-hidden />
+                <Bell {...TITLEBAR_ICON_PROPS} />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">{t("titlebar.activity")}</TooltipContent>
           </Tooltip>
-          <AuditDropdown open={isActivityOpen} onOpenChange={setIsActivityOpen} />
+          <AuditDropdown open={isActivityOpen} onOpenChange={handleActivityOpenChange} />
         </div>
         {isTauri ? <WindowControls t={t} /> : null}
       </div>

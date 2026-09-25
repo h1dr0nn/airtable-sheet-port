@@ -30,6 +30,8 @@ export const en = {
   "screen.sources.title": "Data Sources",
   "screen.sources.description":
     "Connect table providers here; agents only ever see what permission rules allow",
+  "screen.guide.title": "Guide",
+  "screen.guide.description": "Set up an Apps Script bridge to connect a Google account",
   "screen.tables.title": "Tables",
   "screen.tables.description": "Browse records through the same read path agents use",
   "screen.settings.title": "Settings",
@@ -39,6 +41,7 @@ export const en = {
   // Navigation labels
   "nav.dashboard": "Dashboard",
   "nav.sources": "Data Sources",
+  "nav.guide": "Guide",
   "nav.tables": "Tables",
   "nav.settings": "Settings",
 
@@ -226,20 +229,59 @@ export const en = {
     "Stored in the OS keychain together with the URL; it is only ever sent to your bridge.",
   "settings.bridges.add": "Add Bridge",
   "settings.bridges.adding": "Adding...",
-  "settings.bridges.guideToggle": "How to create a bridge",
-  "settings.bridges.step1":
-    "Open script.google.com with the Google account agents should use and create a new project.",
-  "settings.bridges.step2":
-    "In Project Settings, tick \"Show appsscript.json manifest file in editor\".",
-  "settings.bridges.step3":
-    "Replace the contents of Code.gs and appsscript.json with the two files below.",
-  "settings.bridges.step4":
-    "Select the setup function and click Run, allow the permissions, then copy the SECRET value from the execution log.",
-  "settings.bridges.step5":
-    "Click Deploy > New deployment, choose Web app with Execute as: Me and Who has access: Anyone, then copy the web app URL ending in /exec.",
-  "settings.bridges.step6": "Paste the URL and the secret above and click Add Bridge.",
-  "settings.bridges.copyCode": "Copy Code.gs",
-  "settings.bridges.copyManifest": "Copy appsscript.json",
+  "settings.bridges.guideHint":
+    "New to bridges? The Guide walks through the setup and has both files ready to copy.",
+  "settings.bridges.guideLink": "How to create a bridge",
+
+  // Guide screen (Apps Script bridge setup)
+  "guide.openSources": "Open Data Sources",
+  "guide.intro.title": "What is a bridge?",
+  "guide.intro.body1":
+    "A bridge is a small Apps Script web app that you deploy on your own Google account. The app sends it a secret, and it answers with a short-lived access token for Google Sheets.",
+  "guide.intro.body2":
+    "There is no Cloud Console project, OAuth client or client secret to manage. One bridge serves one Google account, so deploy one for each account you want to connect.",
+  "guide.steps.title": "Setup Steps",
+  "guide.step1.title": "Create a standalone project",
+  "guide.step1.body":
+    "Open script.google.com with the Google account agents should use and click New project. Use a standalone project, not one bound to a sheet.",
+  "guide.step1.link": "Open script.google.com",
+  "guide.step1.copyLabel": "Copy the script.google.com address",
+  "guide.step2.title": "Show the manifest file",
+  "guide.step2.body":
+    "Open Project Settings and tick \"Show appsscript.json manifest file in editor\".",
+  "guide.step3.title": "Paste the two files",
+  "guide.step3.body":
+    "Back in the editor, replace the contents of Code.gs and appsscript.json with the two files below.",
+  "guide.step4.title": "Run setup and copy the SECRET",
+  "guide.step4.body":
+    "Select the setup function and click Run. Allow the permissions Google asks for, then copy the SECRET = ... value from the execution log.",
+  "guide.step5.title": "Deploy as a Web app",
+  "guide.step5.body":
+    "Click Deploy > New deployment, choose type Web app, set Execute as: Me and Who has access: Anyone, then deploy and copy the web app URL ending in /exec.",
+  "guide.step6.title": "Add the bridge in the app",
+  "guide.step6.body":
+    "On Data Sources, paste the URL and the SECRET and click Add Bridge. The app calls the bridge once and reads the account email.",
+  "guide.files.title": "Bridge Files",
+  "guide.files.description":
+    "Replace everything in the matching file of the Apps Script editor with the content below.",
+  "guide.files.copyLabel": "Copy {name}",
+  "guide.files.lines": "{count} lines",
+  "guide.tips.title": "Tips",
+  "guide.tips.update.title": "Update the code without changing the URL",
+  "guide.tips.update.body":
+    "Use Deploy > Manage deployments, pick the existing deployment, click Edit, choose New version and deploy. The /exec URL stays the same, so nothing changes in the app. Deploy > New deployment creates a new URL that you would have to add again.",
+  "guide.tips.services.title": "Keep the advanced services in the manifest",
+  "guide.tips.services.body":
+    "appsscript.json enables the Sheets and Drive advanced services even though Code.gs never calls them. That turns those APIs on in the hidden Google Cloud project behind the script. Without them the token works, but every Sheets or Drive request fails with 403 \"API has not been used in project ... or it is disabled\".",
+  "guide.tips.rotate.title": "Rotate the secret",
+  "guide.tips.rotate.body":
+    "In Project Settings > Script Properties, delete the SECRET property, run setup again and copy the new value. The old secret stops working immediately. Add the bridge again on Data Sources with the same URL and the new secret; it replaces the old entry for that email.",
+  "guide.tips.revoke.title": "Revoke access",
+  "guide.tips.revoke.body":
+    "To cut the bridge off completely, remove the script's access at myaccount.google.com > Security > Third-party access, where it is listed under the project name. You can also archive the deployment under Manage deployments.",
+  "guide.tips.secret.title": "Keep the secret private",
+  "guide.tips.secret.body":
+    "Anyone who has both the /exec URL and the secret can get a one-hour token that reads and writes your spreadsheets and lists your Drive files. Do not commit it, paste it into chats, or share the URL and secret together. The app keeps both in the OS keychain.",
 
   // Settings - Google Sheets
 
@@ -467,6 +509,8 @@ const vi: Dictionary = {
   "screen.sources.title": "Nguồn dữ liệu",
   "screen.sources.description":
     "Kết nối các nhà cung cấp bảng tại đây; agent chỉ thấy những gì quy tắc quyền cho phép",
+  "screen.guide.title": "Hướng dẫn",
+  "screen.guide.description": "Thiết lập cầu nối Apps Script để kết nối một tài khoản Google",
   "screen.tables.title": "Bảng",
   "screen.tables.description":
     "Duyệt bản ghi qua cùng luồng đọc mà agent sử dụng",
@@ -477,6 +521,7 @@ const vi: Dictionary = {
   // Navigation labels
   "nav.dashboard": "Tổng quan",
   "nav.sources": "Nguồn dữ liệu",
+  "nav.guide": "Hướng dẫn",
   "nav.tables": "Bảng",
   "nav.settings": "Cài đặt",
 
@@ -664,19 +709,59 @@ const vi: Dictionary = {
     "Được lưu trong keychain của hệ điều hành cùng với URL; nó chỉ được gửi tới cầu nối của bạn.",
   "settings.bridges.add": "Thêm cầu nối",
   "settings.bridges.adding": "Đang thêm...",
-  "settings.bridges.guideToggle": "Cách tạo cầu nối",
-  "settings.bridges.step1":
-    "Mở script.google.com bằng tài khoản Google mà agent sẽ dùng và tạo một dự án mới.",
-  "settings.bridges.step2":
-    "Trong Project Settings, đánh dấu \"Show appsscript.json manifest file in editor\".",
-  "settings.bridges.step3": "Thay nội dung của Code.gs và appsscript.json bằng hai tệp bên dưới.",
-  "settings.bridges.step4":
-    "Chọn hàm setup và bấm Run, cấp các quyền được yêu cầu, rồi sao chép giá trị SECRET từ execution log.",
-  "settings.bridges.step5":
-    "Bấm Deploy > New deployment, chọn Web app với Execute as: Me và Who has access: Anyone, rồi sao chép URL web app kết thúc bằng /exec.",
-  "settings.bridges.step6": "Dán URL và secret vào phía trên rồi bấm Thêm cầu nối.",
-  "settings.bridges.copyCode": "Sao chép Code.gs",
-  "settings.bridges.copyManifest": "Sao chép appsscript.json",
+  "settings.bridges.guideHint":
+    "Lần đầu tạo cầu nối? Trang Hướng dẫn có đủ các bước và sẵn hai tệp để sao chép.",
+  "settings.bridges.guideLink": "Cách tạo cầu nối",
+
+  // Guide screen (Apps Script bridge setup)
+  "guide.openSources": "Mở Nguồn dữ liệu",
+  "guide.intro.title": "Cầu nối là gì?",
+  "guide.intro.body1":
+    "Cầu nối là một web app Apps Script nhỏ mà bạn tự triển khai trên tài khoản Google của mình. Ứng dụng gửi cho nó một secret, và nó trả về token truy cập Google Sheets có thời hạn ngắn.",
+  "guide.intro.body2":
+    "Bạn không cần dự án Cloud Console, OAuth client hay client secret. Mỗi cầu nối phục vụ một tài khoản Google, nên hãy tạo một cầu nối cho mỗi tài khoản muốn kết nối.",
+  "guide.steps.title": "Các bước thiết lập",
+  "guide.step1.title": "Tạo một dự án độc lập",
+  "guide.step1.body":
+    "Mở script.google.com bằng tài khoản Google mà agent sẽ dùng rồi bấm New project. Hãy dùng dự án độc lập (standalone), không gắn với bảng tính nào.",
+  "guide.step1.link": "Mở script.google.com",
+  "guide.step1.copyLabel": "Sao chép địa chỉ script.google.com",
+  "guide.step2.title": "Hiện tệp manifest",
+  "guide.step2.body":
+    "Mở Project Settings và đánh dấu \"Show appsscript.json manifest file in editor\".",
+  "guide.step3.title": "Dán hai tệp",
+  "guide.step3.body":
+    "Quay lại trình soạn thảo, thay toàn bộ nội dung Code.gs và appsscript.json bằng hai tệp bên dưới.",
+  "guide.step4.title": "Chạy setup và sao chép SECRET",
+  "guide.step4.body":
+    "Chọn hàm setup rồi bấm Run. Cấp các quyền Google yêu cầu, sau đó sao chép giá trị SECRET = ... trong execution log.",
+  "guide.step5.title": "Deploy dưới dạng Web app",
+  "guide.step5.body":
+    "Bấm Deploy > New deployment, chọn loại Web app, đặt Execute as: Me và Who has access: Anyone, rồi deploy và sao chép URL web app kết thúc bằng /exec.",
+  "guide.step6.title": "Thêm cầu nối vào ứng dụng",
+  "guide.step6.body":
+    "Ở màn hình Nguồn dữ liệu, dán URL và SECRET rồi bấm Thêm cầu nối. Ứng dụng sẽ gọi cầu nối một lần để đọc email của tài khoản.",
+  "guide.files.title": "Tệp cầu nối",
+  "guide.files.description":
+    "Thay toàn bộ nội dung của tệp tương ứng trong trình soạn thảo Apps Script bằng nội dung bên dưới.",
+  "guide.files.copyLabel": "Sao chép {name}",
+  "guide.files.lines": "{count} dòng",
+  "guide.tips.title": "Mẹo",
+  "guide.tips.update.title": "Cập nhật code mà không đổi URL",
+  "guide.tips.update.body":
+    "Vào Deploy > Manage deployments, chọn deployment hiện có, bấm Edit, chọn New version rồi deploy. URL /exec giữ nguyên nên không cần đổi gì trong ứng dụng. Deploy > New deployment sẽ tạo URL mới và bạn phải thêm lại cầu nối.",
+  "guide.tips.services.title": "Giữ các advanced service trong manifest",
+  "guide.tips.services.body":
+    "appsscript.json bật hai advanced service Sheets và Drive dù Code.gs không gọi tới. Việc này bật các API đó trong dự án Google Cloud ẩn phía sau script. Nếu thiếu, token vẫn hợp lệ nhưng mọi yêu cầu Sheets hoặc Drive đều lỗi 403 \"API has not been used in project ... or it is disabled\".",
+  "guide.tips.rotate.title": "Đổi secret",
+  "guide.tips.rotate.body":
+    "Trong Project Settings > Script Properties, xóa thuộc tính SECRET, chạy lại setup và sao chép giá trị mới. Secret cũ hết hiệu lực ngay lập tức. Thêm lại cầu nối ở Nguồn dữ liệu với cùng URL và secret mới; mục cũ của email đó sẽ được thay thế.",
+  "guide.tips.revoke.title": "Thu hồi quyền truy cập",
+  "guide.tips.revoke.body":
+    "Để ngắt hẳn cầu nối, gỡ quyền của script tại myaccount.google.com > Security > Third-party access (hiển thị theo tên dự án). Bạn cũng có thể archive deployment trong Manage deployments.",
+  "guide.tips.secret.title": "Giữ kín secret",
+  "guide.tips.secret.body":
+    "Ai có cả URL /exec và secret đều lấy được token một giờ để đọc, ghi bảng tính và liệt kê tệp Drive của bạn. Đừng commit, dán vào khung chat, hay chia sẻ URL cùng secret. Ứng dụng lưu cả hai trong keychain của hệ điều hành.",
 
   // Settings - Google Sheets
 

@@ -16,6 +16,7 @@ import { isTauri } from "./lib/ipc.js";
 import type { ScreenId } from "./lib/nav.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { DataSources } from "./screens/DataSources.js";
+import { Guide } from "./screens/Guide.js";
 import { Settings } from "./screens/Settings.js";
 import { Tables } from "./screens/Tables.js";
 
@@ -26,6 +27,7 @@ type ScreenProps = {
 const SCREENS: Record<ScreenId, ComponentType<ScreenProps>> = {
   dashboard: Dashboard,
   sources: DataSources,
+  guide: Guide,
   tables: Tables,
   settings: Settings
 };

@@ -33,14 +33,18 @@ SelectTrigger.displayName = "SelectTrigger";
 export const SelectContent = forwardRef<
   ElementRef<typeof SelectPrimitive.Content>,
   ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = "popper", ...props }, ref) => (
+>(({ className, children, position = "popper", style, ...props }, ref) => (
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
       position={position}
+      // Rides the dropdown layer like the other menus. The old `z-50` sat below
+      // the modal layer (--z-modal), so a Select inside a dialog opened its
+      // list BEHIND the dialog.
+      style={{ zIndex: "var(--z-dropdown)", ...style }}
       className={cn(
-        "z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-edge",
-        "bg-raised shadow-pop motion-safe:animate-fade-in",
+        "min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-edge",
+        "bg-raised shadow-pop motion-safe:animate-fade-in data-[state=closed]:animate-fade-out",
         className
       )}
       {...props}

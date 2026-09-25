@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Guide tab** with the bridge setup steps, both Apps Script files shown in full
+  with Copy buttons, and tips. The script.google.com link opens in the system
+  browser through the Tauri opener plugin, limited to that URL.
+- Google bridges are managed directly on **Data Sources**.
+
+### Changed
+- Calmer themes:
+  - Light no longer uses pure white.
+  - Dark is a dimmed graphite with elevation shown by lighter surfaces.
+  - All text still meets WCAG AA.
+- One **Claude** MCP client entry writes both the Claude Desktop and Claude Code
+  configs.
+- Titlebar icons share one size, stroke and hit area.
+
+### Removed
+- The Changes tab. Writes commit directly, and activity is in the audit log.
+
+### Fixed
+- Dialogs and the command palette no longer open offset and then snap to the center.
+- Menus, dialogs, tooltips, selects and the Activity panel animate out instead of
+  vanishing. Menus grow from their trigger. Selects inside dialogs now render
+  above the dialog.
+- Toasts:
+  - The stack no longer jumps when a toast appears.
+  - Expanded cards no longer overlap.
+  - A replaced toast restarts its timer.
+  - Identical toasts refresh instead of stacking.
+  - Reduced motion is fully respected.
+- Menus keep an 8px gap from the window edge.
+- Titlebar tooltips no longer pop up while a menu is open or after it closes.
+
 ## [2.0.0] - 2026-09-24
 
 ### Added

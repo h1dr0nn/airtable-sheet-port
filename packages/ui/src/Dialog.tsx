@@ -23,7 +23,7 @@ export const DialogContent = forwardRef<
       // window controls stay visible and clickable (see --titlebar-h /
       // --z-titlebar). Never uses inset-0, which would dim the titlebar too.
       style={{ zIndex: "var(--z-modal-overlay)", top: "var(--titlebar-h)" }}
-      className="fixed inset-x-0 bottom-0 bg-overlay/50 motion-safe:animate-fade-in"
+      className="fixed inset-x-0 bottom-0 bg-overlay/50 motion-safe:animate-fade-in data-[state=closed]:animate-fade-out"
     />
     <DialogPrimitive.Content
       ref={ref}
@@ -37,8 +37,9 @@ export const DialogContent = forwardRef<
       className={cn(
         "fixed left-1/2 w-full max-w-md -translate-x-1/2 -translate-y-1/2",
         "rounded-card border border-edge bg-raised p-5 shadow-pop",
-        // Gentle scale-up + fade on enter; centered origin keeps it grounded.
-        "focus:outline-none motion-safe:animate-scale-in",
+        // Gentle scale-up + fade on enter, mirrored on close; centered origin
+        // keeps it grounded.
+        "focus:outline-none motion-safe:animate-scale-in data-[state=closed]:animate-scale-out",
         className
       )}
       {...props}

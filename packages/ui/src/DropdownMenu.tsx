@@ -12,8 +12,12 @@ export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 
 const PANEL_CLASS = [
   "min-w-[176px] rounded-lg border border-edge bg-raised p-1",
-  // Scale/fade in so menus feel anchored to their trigger, not popped flat.
-  "font-sans shadow-pop motion-safe:animate-scale-in"
+  // Scale/fade in (and back out on close) from the side facing the trigger:
+  // Radix exposes that corner as a CSS var, so menus grow out of their anchor
+  // instead of from their own center. The var name is shared by Content and
+  // SubContent.
+  "font-sans shadow-pop origin-[--radix-dropdown-menu-content-transform-origin]",
+  "motion-safe:animate-scale-in data-[state=closed]:animate-scale-out"
 ].join(" ");
 
 // Menus ride the dropdown layer (see --z-dropdown) so they escape dialogs and
