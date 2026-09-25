@@ -183,8 +183,17 @@ fn update_records_applies_immediately_and_returns_the_diff() {
     assert_eq!(diff[0]["recordId"], "rec_seed_1");
     assert_eq!(diff[0]["before"]["Seats"], 24);
     assert_eq!(diff[0]["after"]["Seats"], 25);
-    assert_eq!(output["outcome"]["change"]["status"], "committed");
-    assert_eq!(output["outcome"]["records"][0]["fields"]["Seats"], 25);
+    // Lean shape: the committed change appears once, outcome fields flattened.
+    assert_eq!(output["change"]["status"], "committed");
+    assert_eq!(output["records"][0]["fields"]["Seats"], 25);
+    assert!(output.get("outcome").is_none(), "no nested outcome");
+    let keys: Vec<&str> = output
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["change", "committed", "records"]);
 
     let seed1 = read_records(&state)
         .into_iter()
@@ -199,7 +208,11 @@ fn dry_run_stages_without_writing_then_commit_change_applies_once() {
     let output = parse(&update_records(&state, patch_args(1, true)).expect("dry run"));
     assert_eq!(output["committed"], false);
     assert_eq!(output["change"]["status"], "pending");
-    assert!(output.get("outcome").is_none(), "a dry run has no outcome");
+    assert_eq!(
+        output.as_object().expect("object").len(),
+        2,
+        "a dry run is just change + committed"
+    );
     let seed1 = read_records(&state)
         .into_iter()
         .find(|record| record["id"] == "rec_seed_1")
@@ -211,6 +224,7 @@ fn dry_run_stages_without_writing_then_commit_change_applies_once() {
         change_ids: None,
     };
     let committed = parse(&commit_change(&state, &commit_args).expect("commit"));
+    assert_eq!(committed["committed"], true);
     assert_eq!(committed["change"]["status"], "committed");
     assert_eq!(committed["records"][0]["fields"]["Seats"], 25);
 
@@ -299,6 +313,8 @@ fn list_sheets_returns_the_tabs_of_the_spreadsheet() {
         .expect("list_sheets"),
     );
     assert_eq!(output["spreadsheetId"], spreadsheet_id);
+    assert_eq!(output["locale"], "en_US");
+    assert_eq!(output["timeZone"], "Etc/GMT");
     assert_eq!(output["sheets"][0]["gid"], "0");
     assert_eq!(output["sheets"][0]["title"], "Sheet1");
     assert!(output["sheets"][0].get("index").is_none());
@@ -389,6 +405,12 @@ fn update_cells_writes_the_cell_immediately() {
     );
     assert_eq!(output["committed"], true);
     assert_eq!(output["change"]["type"], "update_cells");
+    assert_eq!(output["change"]["status"], "committed");
+    assert!(
+        output.get("records").is_none(),
+        "empty records are omitted from the lean output"
+    );
+    assert!(output.get("outcome").is_none());
     assert_eq!(
         output["change"]["diff"]["cells"][0]["cell"], "B2",
         "the diff lists each targeted cell"
@@ -449,8 +471,11 @@ fn commit_change_commits_a_batch_of_changes_in_one_call() {
     assert!(
         committed
             .iter()
-            .all(|outcome| outcome["change"]["status"] == "committed"),
-        "every change in the batch is committed"
+            .all(|outcome| outcome["change"]["status"] == "committed"
+                && outcome["committed"] == true
+                && outcome["records"].is_array()
+                && outcome.get("outcome").is_none()),
+        "every change in the batch is committed, in the lean shape"
     );
 }
 
@@ -475,8 +500,7 @@ fn format_args(dry_run: bool) -> FormatTableArgs {
                 border: Some("bottom".to_string()),
             }],
             freeze_rows: Some(1),
-            freeze_columns: None,
-            column_widths: Vec::new(),
+            ..Default::default()
         },
         dry_run,
     }
@@ -580,5 +604,48 @@ fn get_table_style_is_unsupported_on_the_mock_connector() {
             .to_string()
             .contains("does not support reading cell formatting"),
         "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn format_table_stages_validations_and_conditional_formats_in_the_diff() {
+    let mut args = format_args(true);
+    args.format.validations = vec![crate::args::ValidationArg {
+        range: "D2:D21".to_string(),
+        kind: "list".to_string(),
+        values: Some(vec!["Todo".to_string(), "Done".to_string()]),
+        strict: None,
+        show_dropdown: None,
+    }];
+    args.format.conditional_formats = vec![crate::args::ConditionalFormatArg {
+        range: "D2:D21".to_string(),
+        when: crate::args::ConditionWhenArg {
+            text_eq: Some("Done".to_string()),
+            ..Default::default()
+        },
+        background_color: Some("#d1fae5".to_string()),
+        font_color: None,
+        bold: None,
+    }];
+    let state = temp_state();
+    let output = parse(&format_table(&state, args).expect("format dry run"));
+    let diff = &output["change"]["diff"];
+    assert_eq!(
+        diff["validations"][0],
+        json!({
+            "range": "D2:D21",
+            "type": "list",
+            "values": ["Todo", "Done"],
+            "strict": true,
+            "showDropdown": true,
+        })
+    );
+    assert_eq!(
+        diff["conditionalFormats"][0],
+        json!({
+            "range": "D2:D21",
+            "when": { "textEq": "Done" },
+            "backgroundColor": "#d1fae5",
+        })
     );
 }

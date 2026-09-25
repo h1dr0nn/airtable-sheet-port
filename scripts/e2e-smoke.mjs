@@ -151,7 +151,8 @@ try {
   const src = toolJson(await callTool("list_sources"));
   assert.ok(!src.isError && JSON.stringify(src.json).includes("mock-source"), "list_sources works");
 
-  // Default write: applied immediately, returning the staged diff and the outcome.
+  // Default write: applied immediately, returning the committed change (with
+  // its diff) once, plus the outcome fields flattened beside it.
   const update = toolJson(await callTool("update_records", {
     sourceId: "mock-source", tableId: "customers",
     patches: [{ recordId: "rec_seed_1", fields: { Seats: 25 } }]
@@ -161,7 +162,9 @@ try {
   assert.ok(!("payload" in update.json.change), "payload hidden from agent");
   assert.equal(update.json.change.diff[0].before.Seats, 24, "diff shows the before value");
   assert.equal(update.json.change.diff[0].after.Seats, 25, "diff shows the after value");
-  assert.equal(update.json.outcome.change.status, "committed");
+  assert.equal(update.json.change.status, "committed");
+  assert.ok(!("outcome" in update.json), "lean output has no nested outcome");
+  assert.equal(update.json.records[0].fields.Seats, 25, "records sit beside the change");
 
   const table = toolJson(await callTool("read_table", {
     sourceId: "mock-source", tableId: "customers", limit: 10
@@ -177,12 +180,39 @@ try {
   assert.ok(!staged.isError, `dry run failed: ${staged.text}`);
   assert.equal(staged.json.committed, false);
   assert.equal(staged.json.change.status, "pending");
-  assert.ok(!("outcome" in staged.json), "a dry run has no outcome");
+  assert.deepEqual(Object.keys(staged.json).sort(), ["change", "committed"], "a dry run is change + committed");
   const changeId = staged.json.change.id;
 
   const committed = toolJson(await callTool("commit_change", { changeId }));
   assert.ok(!committed.isError, `commit failed: ${committed.text}`);
   assert.equal(committed.json.change.status, "committed");
+  assert.equal(committed.json.committed, true, "commit_change returns the lean write shape");
+  assert.ok(!("records" in committed.json), "empty records are omitted");
+
+  // Native dropdowns, checkboxes, and conditional formats stage as part of the plan.
+  const native = toolJson(await callTool("format_table", {
+    sourceId: "mock-source", tableId: "customers", dryRun: true,
+    validations: [
+      { range: "D2:D21", type: "list", values: ["Todo", "Done"] },
+      { range: "E2:E21", type: "checkbox" }
+    ],
+    conditionalFormats: [
+      { range: "D2:D21", when: { textEq: "Done" }, backgroundColor: "#d1fae5" }
+    ]
+  }));
+  assert.ok(!native.isError, `format_table with validations failed: ${native.text}`);
+  assert.equal(native.json.change.diff.validations[0].showDropdown, true, "showDropdown defaults to true");
+  assert.equal(native.json.change.diff.validations[1].type, "checkbox");
+  assert.deepEqual(native.json.change.diff.conditionalFormats[0].when, { textEq: "Done" });
+
+  const twoConditions = toolJson(await callTool("format_table", {
+    sourceId: "mock-source", tableId: "customers", dryRun: true,
+    conditionalFormats: [
+      { range: "D2:D21", when: { textEq: "Done", blank: true }, bold: true }
+    ]
+  }));
+  assert.ok(twoConditions.isError, "a rule with two conditions is rejected");
+  assert.match(twoConditions.text, /exactly one of/);
 
   const again = toolJson(await callTool("commit_change", { changeId }));
   assert.ok(again.isError, "double commit rejected");

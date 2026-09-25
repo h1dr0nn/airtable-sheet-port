@@ -16,7 +16,8 @@ use crate::error::CoreError;
 use crate::sources;
 use crate::types::{
     CellWrite, CreatedResource, DataSource, FormatPlan, GridData, GridRow, JsonMap, ReadOptions,
-    RecordPatch, SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
+    RecordPatch, SheetTab, SourceKind, SpreadsheetInfo, TableRecord, TableRef, TableSchema,
+    TableStyle,
 };
 
 pub trait TableConnector: Send + Sync {
@@ -91,6 +92,22 @@ pub trait TableConnector: Send + Sync {
         Err(CoreError::Unsupported(
             "This source does not support sheet tabs".to_string(),
         ))
+    }
+
+    /// The tabs of one spreadsheet plus its locale and time zone. The default
+    /// lists the tabs and reports no locale; connectors that know the locale
+    /// override it (one metadata read).
+    fn spreadsheet_info(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        spreadsheet_id: &str,
+    ) -> Result<SpreadsheetInfo, CoreError> {
+        Ok(SpreadsheetInfo {
+            tabs: self.list_sheet_tabs(conn, source_id, spreadsheet_id)?,
+            locale: None,
+            time_zone: None,
+        })
     }
 
     /// A page of one sheet tab as a RAW mirror of string cells: columns are the
@@ -373,6 +390,16 @@ impl ConnectorRegistry {
     ) -> Result<Vec<SheetTab>, CoreError> {
         self.for_source(conn, source_id)?
             .list_sheet_tabs(conn, source_id, spreadsheet_id)
+    }
+
+    pub fn spreadsheet_info(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        spreadsheet_id: &str,
+    ) -> Result<SpreadsheetInfo, CoreError> {
+        self.for_source(conn, source_id)?
+            .spreadsheet_info(conn, source_id, spreadsheet_id)
     }
 
     pub fn read_grid(

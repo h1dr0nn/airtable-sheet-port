@@ -13,7 +13,7 @@ use crate::constants::FIND_RECORDS_LIMIT;
 use crate::error::CoreError;
 use crate::types::{
     CellWrite, DataSource, FieldSchema, GridColumn, GridData, GridRow, JsonMap, ReadOptions,
-    RecordPatch, SheetTab, SourceKind, TableRecord, TableRef, TableSchema,
+    RecordPatch, SheetTab, SourceKind, SpreadsheetInfo, TableRecord, TableRef, TableSchema,
 };
 use crate::{mock_data, sources};
 
@@ -143,6 +143,20 @@ impl TableConnector for MockConnector {
             title: MOCK_TAB_TITLE.to_string(),
             index: 0,
         }])
+    }
+
+    /// The synthetic tab plus a fixed dot-decimal locale.
+    fn spreadsheet_info(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        spreadsheet_id: &str,
+    ) -> Result<SpreadsheetInfo, CoreError> {
+        Ok(SpreadsheetInfo {
+            tabs: self.list_sheet_tabs(conn, source_id, spreadsheet_id)?,
+            locale: Some(mock_data::MOCK_LOCALE.to_string()),
+            time_zone: Some(mock_data::MOCK_TIME_ZONE.to_string()),
+        })
     }
 
     /// RAW mirror of the table: columns are the A1 column letters (id AND

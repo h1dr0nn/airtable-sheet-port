@@ -29,6 +29,15 @@ pub const WRITE_BATCH_MAX: usize = 100;
 /// format_table call, bounding a single formatting change.
 pub const FORMAT_OPS_MAX: usize = 100;
 
+/// Maximum data-validation rules (dropdowns, checkboxes) per formatting change.
+pub const VALIDATIONS_MAX: usize = 100;
+
+/// Maximum conditional-format rules per formatting change.
+pub const CONDITIONAL_FORMATS_MAX: usize = 100;
+
+/// Maximum options in one dropdown (`list`) validation.
+pub const VALIDATION_LIST_VALUES_MAX: usize = 100;
+
 /// Allowed font-size range (points) for a cell-format operation.
 pub const FONT_SIZE_MIN: i64 = 1;
 pub const FONT_SIZE_MAX: i64 = 400;

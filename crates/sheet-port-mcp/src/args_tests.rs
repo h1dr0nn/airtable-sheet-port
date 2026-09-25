@@ -294,12 +294,7 @@ fn get_audit_log_applies_default_and_bounds() {
 }
 
 fn empty_spec() -> FormatSpec {
-    FormatSpec {
-        formats: Vec::new(),
-        freeze_rows: None,
-        freeze_columns: None,
-        column_widths: Vec::new(),
-    }
+    FormatSpec::default()
 }
 
 fn cell_format_arg(range: &str) -> CellFormatArg {
@@ -453,4 +448,197 @@ fn format_spec_enforces_numeric_bounds() {
         ..empty_spec()
     };
     assert!(ok_width.to_plan().is_ok());
+}
+
+fn list_arg(range: &str, values: Option<Vec<&str>>) -> ValidationArg {
+    ValidationArg {
+        range: range.to_string(),
+        kind: "list".to_string(),
+        values: values.map(|values| values.into_iter().map(str::to_string).collect()),
+        strict: None,
+        show_dropdown: None,
+    }
+}
+
+fn validation_error(validation: ValidationArg) -> String {
+    FormatSpec {
+        validations: vec![validation],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect_err("invalid validation")
+    .to_string()
+}
+
+#[test]
+fn validations_default_strict_and_dropdown_and_map_types() {
+    let plan = FormatSpec {
+        validations: vec![
+            list_arg("D2:D21", Some(vec!["Todo", "Done"])),
+            ValidationArg {
+                range: "E2:E21".to_string(),
+                kind: "Checkbox".to_string(),
+                values: None,
+                strict: Some(false),
+                show_dropdown: None,
+            },
+        ],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect("valid validations");
+    let list = &plan.validations[0];
+    assert_eq!(list.kind, ValidationKind::List);
+    assert_eq!(list.values, vec!["Todo".to_string(), "Done".to_string()]);
+    assert!(list.strict, "strict defaults to true");
+    assert_eq!(
+        list.show_dropdown,
+        Some(true),
+        "showDropdown defaults to true"
+    );
+    let checkbox = &plan.validations[1];
+    assert_eq!(checkbox.kind, ValidationKind::Checkbox);
+    assert!(!checkbox.strict);
+    assert_eq!(checkbox.show_dropdown, None);
+}
+
+#[test]
+fn validations_reject_invalid_combinations() {
+    assert!(validation_error(list_arg("D2:D21", None)).contains("validations[0].values"));
+    assert!(validation_error(list_arg("D2:D21", Some(Vec::new()))).contains("between 1 and 100"));
+    let too_many: Vec<String> = (0..101).map(|index| format!("v{index}")).collect();
+    let mut many = list_arg("D2:D21", None);
+    many.values = Some(too_many);
+    assert!(validation_error(many).contains("between 1 and 100"));
+    assert!(
+        validation_error(list_arg("D2:D21", Some(vec!["ok", " "]))).contains("values[1]"),
+        "blank options are rejected"
+    );
+    assert!(validation_error(ValidationArg {
+        kind: "slider".to_string(),
+        ..list_arg("D2", Some(vec!["a"]))
+    })
+    .contains("must be one of list, checkbox"));
+    assert!(validation_error(ValidationArg {
+        kind: "checkbox".to_string(),
+        ..list_arg("D2", Some(vec!["a"]))
+    })
+    .contains("values applies only to type list"));
+    assert!(validation_error(ValidationArg {
+        kind: "checkbox".to_string(),
+        show_dropdown: Some(true),
+        ..list_arg("D2", None)
+    })
+    .contains("showDropdown applies only to type list"));
+    assert!(validation_error(list_arg("nope!", Some(vec!["a"]))).contains("not a valid A1 range"));
+
+    let over_cap = FormatSpec {
+        validations: (0..101).map(|_| list_arg("A1", Some(vec!["a"]))).collect(),
+        ..empty_spec()
+    };
+    assert!(over_cap
+        .to_plan()
+        .expect_err("over cap")
+        .to_string()
+        .contains("validations must contain at most 100 items"));
+}
+
+fn rule_arg(when: ConditionWhenArg) -> ConditionalFormatArg {
+    ConditionalFormatArg {
+        range: "D2:D21".to_string(),
+        when,
+        background_color: Some("#D1FAE5".to_string()),
+        font_color: None,
+        bold: None,
+    }
+}
+
+fn rule_error(rule: ConditionalFormatArg) -> String {
+    FormatSpec {
+        conditional_formats: vec![rule],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect_err("invalid rule")
+    .to_string()
+}
+
+#[test]
+fn conditional_formats_accept_one_condition_and_normalize_colors() {
+    let plan = FormatSpec {
+        conditional_formats: vec![rule_arg(ConditionWhenArg {
+            number_between: Some([0.25, 0.75]),
+            ..ConditionWhenArg::default()
+        })],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect("valid rule");
+    let rule = &plan.conditional_formats[0];
+    assert_eq!(rule.when.number_between, Some([0.25, 0.75]));
+    assert_eq!(rule.background_color.as_deref(), Some("#d1fae5"));
+}
+
+#[test]
+fn conditional_formats_reject_invalid_conditions() {
+    assert!(rule_error(rule_arg(ConditionWhenArg::default())).contains("exactly one of"));
+    assert!(rule_error(rule_arg(ConditionWhenArg {
+        text_eq: Some("Done".to_string()),
+        blank: Some(true),
+        ..ConditionWhenArg::default()
+    }))
+    .contains("conditionalFormats[0].when must set exactly one of"));
+    assert!(rule_error(rule_arg(ConditionWhenArg {
+        text_eq: Some(String::new()),
+        ..ConditionWhenArg::default()
+    }))
+    .contains("textEq must be a non-empty string"));
+    assert!(rule_error(rule_arg(ConditionWhenArg {
+        number_between: Some([5.0, 1.0]),
+        ..ConditionWhenArg::default()
+    }))
+    .contains("low <= high"));
+    assert!(rule_error(rule_arg(ConditionWhenArg {
+        blank: Some(false),
+        ..ConditionWhenArg::default()
+    }))
+    .contains("must be true"));
+    assert!(rule_error(rule_arg(ConditionWhenArg {
+        formula: Some("COUNTIF(A:A;1)".to_string()),
+        ..ConditionWhenArg::default()
+    }))
+    .contains("starting with ="));
+    assert!(rule_error(ConditionalFormatArg {
+        background_color: None,
+        ..rule_arg(ConditionWhenArg {
+            not_blank: Some(true),
+            ..ConditionWhenArg::default()
+        })
+    })
+    .contains("at least one of backgroundColor, fontColor, or bold"));
+    assert!(rule_error(ConditionalFormatArg {
+        font_color: Some("red".to_string()),
+        ..rule_arg(ConditionWhenArg {
+            not_blank: Some(true),
+            ..ConditionWhenArg::default()
+        })
+    })
+    .contains("fontColor must be a #rrggbb hex color"));
+
+    let over_cap = FormatSpec {
+        conditional_formats: (0..101)
+            .map(|_| {
+                rule_arg(ConditionWhenArg {
+                    blank: Some(true),
+                    ..ConditionWhenArg::default()
+                })
+            })
+            .collect(),
+        ..empty_spec()
+    };
+    assert!(over_cap
+        .to_plan()
+        .expect_err("over cap")
+        .to_string()
+        .contains("conditionalFormats must contain at most 100 items"));
 }

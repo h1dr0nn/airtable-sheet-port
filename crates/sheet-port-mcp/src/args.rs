@@ -7,13 +7,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use sheet_port_core::connectors::{parse_cell_ref, parse_cells_range, validate_a1_range, A1Range};
 use sheet_port_core::constants::{
-    AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, FIND_QUERY_MAX_LEN,
-    FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX, FREEZE_MAX, READ_LIMIT_DEFAULT, READ_LIMIT_MAX,
-    READ_LIMIT_MIN, WRITE_BATCH_MAX,
+    AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN,
+    CONDITIONAL_FORMATS_MAX, FIND_QUERY_MAX_LEN, FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX,
+    FREEZE_MAX, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN, VALIDATIONS_MAX,
+    VALIDATION_LIST_VALUES_MAX, WRITE_BATCH_MAX,
 };
 use sheet_port_core::types::{
-    BorderStyle, CellFormat, CellWrite, ColumnWidth, FormatPlan, HorizontalAlignment, JsonMap,
-    NumberFormatType,
+    BorderStyle, CellFormat, CellWrite, ColumnWidth, ConditionWhen, ConditionalFormat,
+    DataValidation, FormatPlan, HorizontalAlignment, JsonMap, NumberFormatType, ValidationKind,
 };
 use sheet_port_core::CoreError;
 
@@ -289,6 +290,68 @@ pub struct ColumnWidthArg {
     pub pixels: i64,
 }
 
+/// A native data-validation rule: a dropdown (`list`) or a checkbox.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationArg {
+    /// A1 range within the tab, e.g. "D2:D100" or "E:E".
+    pub range: String,
+    /// "list" (dropdown of `values`) or "checkbox".
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Dropdown options for type "list" (1 to 100 non-empty strings).
+    #[serde(default)]
+    pub values: Option<Vec<String>>,
+    /// Reject input that fails the rule (default true); false only warns.
+    #[serde(default)]
+    pub strict: Option<bool>,
+    /// Show the dropdown chip for type "list" (default true).
+    #[serde(default)]
+    pub show_dropdown: Option<bool>,
+}
+
+/// The condition of a conditional-format rule; set exactly one key.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionWhenArg {
+    #[serde(default)]
+    pub text_eq: Option<String>,
+    #[serde(default)]
+    pub text_contains: Option<String>,
+    #[serde(default)]
+    pub number_gt: Option<f64>,
+    #[serde(default)]
+    pub number_lt: Option<f64>,
+    /// Inclusive [low, high].
+    #[serde(default)]
+    pub number_between: Option<[f64; 2]>,
+    /// Must be true.
+    #[serde(default)]
+    pub blank: Option<bool>,
+    /// Must be true.
+    #[serde(default)]
+    pub not_blank: Option<bool>,
+    /// Custom formula starting with "=", in the spreadsheet's locale syntax.
+    #[serde(default)]
+    pub formula: Option<String>,
+}
+
+/// A conditional-format rule. Rules replace the tab's existing rules whose
+/// ranges intersect theirs.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionalFormatArg {
+    /// A1 range within the tab, e.g. "D2:D100".
+    pub range: String,
+    pub when: ConditionWhenArg,
+    #[serde(default)]
+    pub background_color: Option<String>,
+    #[serde(default)]
+    pub font_color: Option<String>,
+    #[serde(default)]
+    pub bold: Option<bool>,
+}
+
 /// The formatting fields shared by `format_table` and the optional
 /// formatting bundled into `append_records`. Flattened into both arg structs so
 /// the wire shape stays identical in either place.
@@ -303,6 +366,12 @@ pub struct FormatSpec {
     pub freeze_columns: Option<i64>,
     #[serde(default)]
     pub column_widths: Vec<ColumnWidthArg>,
+    /// Native dropdowns and checkboxes.
+    #[serde(default)]
+    pub validations: Vec<ValidationArg>,
+    /// Conditional-format rules (replace intersecting existing rules).
+    #[serde(default)]
+    pub conditional_formats: Vec<ConditionalFormatArg>,
 }
 
 impl FormatSpec {
@@ -313,6 +382,8 @@ impl FormatSpec {
             || self.freeze_rows.is_some()
             || self.freeze_columns.is_some()
             || !self.column_widths.is_empty()
+            || !self.validations.is_empty()
+            || !self.conditional_formats.is_empty()
     }
 
     /// Validates every bound and enum, then returns the typed [`FormatPlan`] the
@@ -326,6 +397,16 @@ impl FormatSpec {
         if self.column_widths.len() > FORMAT_OPS_MAX {
             return Err(invalid(format!(
                 "columnWidths must contain at most {FORMAT_OPS_MAX} items"
+            )));
+        }
+        if self.validations.len() > VALIDATIONS_MAX {
+            return Err(invalid(format!(
+                "validations must contain at most {VALIDATIONS_MAX} items"
+            )));
+        }
+        if self.conditional_formats.len() > CONDITIONAL_FORMATS_MAX {
+            return Err(invalid(format!(
+                "conditionalFormats must contain at most {CONDITIONAL_FORMATS_MAX} items"
             )));
         }
         validate_freeze(self.freeze_rows, "freezeRows")?;
@@ -343,17 +424,31 @@ impl FormatSpec {
             .enumerate()
             .map(|(index, width)| convert_column_width(index, width))
             .collect::<Result<Vec<_>, _>>()?;
+        let validations = self
+            .validations
+            .iter()
+            .enumerate()
+            .map(|(index, validation)| convert_validation(index, validation))
+            .collect::<Result<Vec<_>, _>>()?;
+        let conditional_formats = self
+            .conditional_formats
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| convert_conditional_format(index, rule))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let plan = FormatPlan {
             formats,
             freeze_rows: self.freeze_rows,
             freeze_columns: self.freeze_columns,
             column_widths,
+            validations,
+            conditional_formats,
         };
         if plan.is_empty() {
             return Err(invalid(
                 "a formatting change must set at least one of formats, freezeRows, \
-                 freezeColumns, or columnWidths"
+                 freezeColumns, columnWidths, validations, or conditionalFormats"
                     .to_string(),
             ));
         }
@@ -471,6 +566,147 @@ fn convert_column_width(index: usize, arg: &ColumnWidthArg) -> Result<ColumnWidt
         column: arg.column.clone(),
         pixels: arg.pixels,
     })
+}
+
+fn convert_validation(index: usize, arg: &ValidationArg) -> Result<DataValidation, CoreError> {
+    let field = |name: &str| format!("validations[{index}].{name}");
+    require_non_empty(&arg.range, &field("range"))?;
+    validate_a1_range(&arg.range)?;
+    let kind = ValidationKind::from_wire(&arg.kind.to_ascii_lowercase())
+        .ok_or_else(|| invalid(format!("{} must be one of list, checkbox", field("type"))))?;
+    let values = match kind {
+        ValidationKind::List => {
+            let values = arg.values.clone().unwrap_or_default();
+            if !(1..=VALIDATION_LIST_VALUES_MAX).contains(&values.len()) {
+                return Err(invalid(format!(
+                    "{} must contain between 1 and {VALIDATION_LIST_VALUES_MAX} items for type list",
+                    field("values")
+                )));
+            }
+            if let Some(position) = values.iter().position(|value| value.trim().is_empty()) {
+                return Err(invalid(format!(
+                    "{}[{position}] must be a non-empty string",
+                    field("values")
+                )));
+            }
+            values
+        }
+        ValidationKind::Checkbox => {
+            if arg.values.is_some() {
+                return Err(invalid(format!(
+                    "{} applies only to type list",
+                    field("values")
+                )));
+            }
+            if arg.show_dropdown.is_some() {
+                return Err(invalid(format!(
+                    "{} applies only to type list",
+                    field("showDropdown")
+                )));
+            }
+            Vec::new()
+        }
+    };
+    Ok(DataValidation {
+        range: arg.range.clone(),
+        kind,
+        values,
+        strict: arg.strict.unwrap_or(true),
+        show_dropdown: match kind {
+            ValidationKind::List => Some(arg.show_dropdown.unwrap_or(true)),
+            ValidationKind::Checkbox => None,
+        },
+    })
+}
+
+fn convert_conditional_format(
+    index: usize,
+    arg: &ConditionalFormatArg,
+) -> Result<ConditionalFormat, CoreError> {
+    let field = |name: &str| format!("conditionalFormats[{index}].{name}");
+    require_non_empty(&arg.range, &field("range"))?;
+    validate_a1_range(&arg.range)?;
+    let when = convert_condition(&arg.when, &field("when"))?;
+    let font_color = arg
+        .font_color
+        .as_deref()
+        .map(|color| require_hex_color(color, &field("fontColor")))
+        .transpose()?;
+    let background_color = arg
+        .background_color
+        .as_deref()
+        .map(|color| require_hex_color(color, &field("backgroundColor")))
+        .transpose()?;
+    if font_color.is_none() && background_color.is_none() && arg.bold.is_none() {
+        return Err(invalid(format!(
+            "conditionalFormats[{index}] must set at least one of backgroundColor, fontColor, or bold"
+        )));
+    }
+    Ok(ConditionalFormat {
+        range: arg.range.clone(),
+        when,
+        background_color,
+        font_color,
+        bold: arg.bold,
+    })
+}
+
+const CONDITION_KEYS: &str =
+    "textEq, textContains, numberGt, numberLt, numberBetween, blank, notBlank, formula";
+
+fn convert_condition(arg: &ConditionWhenArg, field: &str) -> Result<ConditionWhen, CoreError> {
+    let when = ConditionWhen {
+        text_eq: arg.text_eq.clone(),
+        text_contains: arg.text_contains.clone(),
+        number_gt: arg.number_gt,
+        number_lt: arg.number_lt,
+        number_between: arg.number_between,
+        blank: arg.blank,
+        not_blank: arg.not_blank,
+        formula: arg.formula.clone(),
+    };
+    if when.set_count() != 1 {
+        return Err(invalid(format!(
+            "{field} must set exactly one of {CONDITION_KEYS}"
+        )));
+    }
+    for (key, text) in [
+        ("textEq", &when.text_eq),
+        ("textContains", &when.text_contains),
+    ] {
+        if text.as_deref() == Some("") {
+            return Err(invalid(format!("{field}.{key} must be a non-empty string")));
+        }
+    }
+    let numbers = [when.number_gt, when.number_lt]
+        .into_iter()
+        .flatten()
+        .chain(when.number_between.into_iter().flatten());
+    for number in numbers {
+        if !number.is_finite() {
+            return Err(invalid(format!("{field} numbers must be finite")));
+        }
+    }
+    if let Some([low, high]) = when.number_between {
+        if low > high {
+            return Err(invalid(format!(
+                "{field}.numberBetween must be [low, high] with low <= high"
+            )));
+        }
+    }
+    if when.blank == Some(false) || when.not_blank == Some(false) {
+        return Err(invalid(format!(
+            "{field}.blank and {field}.notBlank must be true when set"
+        )));
+    }
+    if let Some(formula) = &when.formula {
+        if !formula.starts_with('=') || formula.len() < 2 {
+            return Err(invalid(format!(
+                "{field}.formula must be a formula starting with ="
+            )));
+        }
+    }
+    Ok(when)
 }
 
 /// Accepts a `#rrggbb` color (case-insensitive), echoing back the lowercase

@@ -13,6 +13,10 @@ use crate::types::{
 /// SQLite: LIMIT -1 means "no limit".
 const NO_LIMIT: i64 = -1;
 
+/// Locale and time zone the mock spreadsheets report (a dot-decimal locale).
+pub const MOCK_LOCALE: &str = "en_US";
+pub const MOCK_TIME_ZONE: &str = "Etc/GMT";
+
 pub fn list_tables(conn: &Connection, source_id: &str) -> Result<Vec<TableRef>, CoreError> {
     let mut stmt = conn
         .prepare(
@@ -53,6 +57,7 @@ pub fn get_table(
             table_id: table_id.to_string(),
             name,
             fields,
+            locale: Some(MOCK_LOCALE.to_string()),
         })
     })
     .transpose()

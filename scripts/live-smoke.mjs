@@ -100,8 +100,8 @@ try {
   const tabTitle = `sheet-port-live-${Date.now()}`;
   const created = await tool("create_sheet", { tableId: spreadsheetId, title: tabTitle });
   assert.equal(created.committed, true);
-  tabGid = created.outcome.created.sheetGid;
-  assert.ok(tabGid !== undefined, `create_sheet returned a gid: ${JSON.stringify(created.outcome.created)}`);
+  tabGid = created.created.sheetGid;
+  assert.ok(tabGid !== undefined, `create_sheet returned a gid: ${JSON.stringify(created.created)}`);
   const tab = `${spreadsheetId}:${tabGid}`;
   console.log(`create_sheet ok: ${tabTitle}`);
 
@@ -115,7 +115,7 @@ try {
     freezeRows: 1
   });
   assert.equal(appended.committed, true);
-  assert.equal(appended.outcome.formatError ?? null, null, "bundled format applied");
+  assert.equal(appended.formatError ?? null, null, "bundled format applied");
   console.log("append_records + format ok");
 
   const read = await tool("read_table", { tableId: tab });

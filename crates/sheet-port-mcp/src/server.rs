@@ -20,7 +20,7 @@ use crate::tools;
 
 /// Server identity agents see in `initialize`; matches the TypeScript sidecar.
 const SERVER_NAME: &str = "sheet-port";
-const SERVER_VERSION: &str = "2.0.0";
+const SERVER_VERSION: &str = "2.1.0";
 
 /// Guidance returned in `initialize`: the rules every tool shares, so each tool
 /// description can stay to one or two sentences. Kept accurate to the
@@ -33,7 +33,9 @@ sourceId: optional on every tool. Omit it and the call is routed to the connecte
 
 Reading: the record tools (read_table, find_records, read_formulas, describe_table) treat row 1 as the header. When a sheet is document-style (banner rows, headers further down, totals, several blocks) use read_cells, which returns raw cells by A1 coordinate with real row numbers, and update_cells to write any single cell. Never tell the user a cell cannot be edited. Use read_formulas before overwriting cells that may hold formulas.
 
-Writing: update_records, append_records, update_cells, format_table, create_spreadsheet, create_sheet, and delete_sheet apply immediately and return the change with its diff plus the commit outcome. Review the diff against what you meant to write and fix anything wrong with a follow-up call. Pass dryRun: true to only stage a change; it then returns a changeId that commit_change applies later (changeIds commits several in one call). An empty tab is never a reason to refuse: append_records writes the field names as the header row. delete_sheet also needs confirm: true.
+Writing: update_records, append_records, update_cells, format_table, create_spreadsheet, create_sheet, and delete_sheet apply immediately and return the committed change with its diff, plus records, created, or formatError when relevant. Review the diff against what you meant to write and fix anything wrong with a follow-up call. Pass dryRun: true to only stage a change; it then returns a changeId that commit_change applies later (changeIds commits several in one call). An empty tab is never a reason to refuse: append_records writes the field names as the header row. delete_sheet also needs confirm: true.
+
+Locale: call list_sheets to learn the spreadsheet's locale before writing formulas or decimals. In comma-decimal locales (e.g. vi_VN, de_DE, fr_FR, pt_BR, es_ES, it_IT, ru_RU, id_ID, tr_TR) separate formula arguments with ; (=COUNTIF(D2:D9;\"Done\")) and write decimals with a comma (0,65); percentages like 65% and plain integers are safe everywhere. Values are written exactly as given, never rewritten.
 
 Style: call get_table_style first when a sheet already has data or formatting, and match it. For a fresh sheet, freeze the header row, make it bold with a light neutral fill (such as #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat, right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained: one or two muted accents, no full gridlines, no loud fills. Pass format fields to append_records to write and style new data in one call.";
 
@@ -96,7 +98,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "list_sheets",
-        description = "List the tabs of a spreadsheet as {gid, title}. Use a gid as spreadsheetId:gid to target that tab.",
+        description = "List the tabs of a spreadsheet as {gid, title}, plus its locale and timeZone. Use a gid as spreadsheetId:gid to target that tab.",
         annotations(read_only_hint = true)
     )]
     async fn list_sheets(&self, Parameters(args): Parameters<SourceTableArgs>) -> CallToolResult {
@@ -205,7 +207,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "format_table",
-        description = "Format a tab: per-range bold, italic, fontSize, fontColor/backgroundColor (#rrggbb), horizontalAlignment, numberFormat, wrap, border, plus freezeRows, freezeColumns and columnWidths. Only the properties you set change."
+        description = "Format a tab: per-range bold, italic, fontSize, fontColor/backgroundColor (#rrggbb), horizontalAlignment, numberFormat, wrap, border, plus freezeRows, freezeColumns, columnWidths, validations (native dropdown list or checkbox) and conditionalFormats (which replace existing rules on intersecting ranges). Only the properties you set change."
     )]
     async fn format_table(&self, Parameters(args): Parameters<FormatTableArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -214,7 +216,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "create_spreadsheet",
-        description = "Create a new spreadsheet titled title. The outcome's created field carries its spreadsheetId and url."
+        description = "Create a new spreadsheet titled title. The result's created field carries its spreadsheetId and url."
     )]
     async fn create_spreadsheet(
         &self,
@@ -226,7 +228,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "create_sheet",
-        description = "Add a tab titled title to the spreadsheet in tableId. The outcome's created field carries the new gid."
+        description = "Add a tab titled title to the spreadsheet in tableId. The result's created field carries the new gid."
     )]
     async fn create_sheet(&self, Parameters(args): Parameters<CreateSheetArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -245,7 +247,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "commit_change",
-        description = "Apply changes staged with dryRun: changeId returns one outcome, changeIds returns {committed: [...]} in order."
+        description = "Apply changes staged with dryRun: changeId returns one result like a direct write, changeIds returns {committed: [...]} in order."
     )]
     async fn commit_change(
         &self,

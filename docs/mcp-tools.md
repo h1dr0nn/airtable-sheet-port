@@ -39,7 +39,7 @@ mirrored for the frontend in `packages/shared`):
 ```ts
 type DataSource   = { id: string; kind: "google_sheets" | "mock"; name: string; status?: "connected" | "placeholder" | "error" };
 type TableRef     = { sourceId: string; tableId: string; name: string };
-type TableSchema  = { sourceId: string; tableId: string; name: string; fields: FieldSchema[] };
+type TableSchema  = { sourceId: string; tableId: string; name: string; fields: FieldSchema[]; locale?: string };
 type FieldSchema  = { name: string; type: "string" | "number" | "boolean" | "date" | "email" | "enum" | "unknown"; required?: boolean; readonly?: boolean; enumValues?: string[] };
 type TableRecord  = { id: string; fields: Record<string, unknown> };  // Google Sheets ids are "row_{sheetRow}"
 type PendingChange = {
@@ -54,9 +54,10 @@ type PendingChange = {
   decidedBy?: "user" | "policy";
   committedAt?: string;
 };
-type CommitOutcome = {
-  change: PendingChange;          // status "committed"
-  records: TableRecord[];         // rows written (updates: only records that existed; appends: new rows)
+type WriteResult = {              // every write tool and commit_change (lean shape)
+  change: PendingChange;          // the committed change (status "committed"), or the staged one on dryRun
+  committed: boolean;             // false only for dryRun, which returns just { change, committed }
+  records?: TableRecord[];        // rows written (updates: only records that existed; appends: new rows); omitted when empty
   formatError?: string;           // bundled append+format: rows written, styling failed
   created?: { spreadsheetId?: string; sheetGid?: string; title?: string; url?: string }; // create_* changes
 };
@@ -95,9 +96,11 @@ a diff is created, permissions are checked, and the commit is audited. There is 
 approval step in between.
 
 - **Default (`dryRun` omitted or `false`):** the tool stages the change and commits it in
-  the same call. Output: `{ "change": PendingChange, "committed": true, "outcome":
-  CommitOutcome }`. `change` carries the diff; review it and correct with a follow-up
-  write if needed.
+  the same call. Output (lean shape): `{ "change": PendingChange, "committed": true,
+  "records"?: TableRecord[], "formatError"?: string, "created"?: CreatedResource }`.
+  `change` is the committed change (`status: "committed"`) and carries the diff; it
+  appears once. `records` is omitted when empty, `formatError` and `created` when unset.
+  Review the diff and correct with a follow-up write if needed.
 - **`dryRun: true`:** the tool only stages. Output: `{ "change": PendingChange,
   "committed": false }`, with `change.status` `"pending"`. Apply it later with
   `commit_change`, or leave it; the user can discard a staged change from the desktop
@@ -120,7 +123,7 @@ spreadsheet link the user shared and read the exact tab without extra lookups:
 | `spreadsheetId:SheetName` | `1BxiMVs...:Q3 Summary` | the tab with that exact title |
 
 Resolution fetches the spreadsheet metadata once
-(`GET {SHEETS_ENDPOINT}/{id}?fields=properties.title,sheets.properties(sheetId,title)`)
+(`GET {SHEETS_ENDPOINT}/{id}?fields=properties(title,locale,timeZone),sheets.properties(sheetId,title,index)`)
 to map a gid to its tab title or validate a tab name; every subsequent read/write range is
 qualified by the resolved title (e.g. `'Q3 Summary'!A1:ZZ`). A gid or name that does not
 exist returns a `NotFound` tool error. Only the spreadsheet id and tab selector are ever
@@ -190,7 +193,17 @@ Input schema:
 | `sourceId` | string | optional, min length 1 |
 | `tableId` | string | min length 1 (any `tableId` form; the tab selector is ignored) |
 
-Output shape: `{ "spreadsheetId": string, "sheets": [{ "gid": string, "title": string }] }`
+Output shape: `{ "spreadsheetId": string, "locale"?: string, "timeZone"?: string, "sheets":
+[{ "gid": string, "title": string }] }`. `locale` and `timeZone` come from the
+spreadsheet's `properties.locale` / `properties.timeZone` (same metadata read, no extra
+request) and are omitted only when the source does not report them.
+
+The locale decides how `USER_ENTERED` values and formulas are parsed. Check it before
+writing formulas or decimals: in comma-decimal locales (for example `vi_VN`, `de_DE`,
+`fr_FR`, `pt_BR`, `es_ES`, `it_IT`, `ru_RU`, `id_ID`, `tr_TR`) formula arguments are
+separated with `;` (`=COUNTIF(D10:D21;"Done")`, where `,` gives `#ERROR!`) and decimals use
+a comma (`0,65`; `0.65` stays text). Percentages like `65%` and plain integers are safe in
+every locale. The write tools never rewrite values; they are sent exactly as given.
 
 Permission required: `read` on the source/spreadsheet.
 
@@ -205,6 +218,8 @@ Example response:
 ```json
 {
   "spreadsheetId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+  "locale": "vi_VN",
+  "timeZone": "Asia/Ho_Chi_Minh",
   "sheets": [
     { "gid": "0", "title": "Customers" },
     { "gid": "1234567", "title": "Q3 Summary" }
@@ -224,7 +239,8 @@ Input schema:
 | `sourceId` | string | optional, min length 1 |
 | `tableId` | string | min length 1 |
 
-Output shape: `{ "schema": TableSchema }`
+Output shape: `{ "schema": TableSchema }`. `schema.locale` is the spreadsheet locale
+(see `list_sheets`), omitted when the source does not report it.
 
 Permission required: `read` on the source/table.
 
@@ -240,7 +256,8 @@ Example response:
       { "name": "Name", "type": "string" },
       { "name": "Email", "type": "email" },
       { "name": "Seats", "type": "number" }
-    ]
+    ],
+    "locale": "en_US"
   }
 }
 ```
@@ -396,6 +413,7 @@ type CellStyle = {
   horizontalAlignment?: "LEFT" | "CENTER" | "RIGHT";
   numberFormat?: string;                             // pattern
   wrap?: boolean;
+  validation?: string;                               // "list", "checkbox", or another type in lowercase
 };
 type ColumnWidth = { column: string; pixels: number };
 type TableStyle = {
@@ -407,6 +425,7 @@ type TableStyle = {
   header: CellStyle[];                               // row 1
   sample: CellStyle[];                               // row 2 (first data row)
   columnWidths: ColumnWidth[];
+  conditionalFormatCount: number;                    // conditional-format rules on the tab
 };
 ```
 
@@ -427,8 +446,8 @@ Input schema:
 | `patches` | array of `{ recordId: string (min 1), fields: object }` | 1 to 100 items |
 | `dryRun` | boolean | optional, default `false` |
 
-Output shape: `{ "change": PendingChange, "committed": true, "outcome": CommitOutcome }`,
-or `{ "change": PendingChange, "committed": false }` with `dryRun: true`.
+Output shape: `{ "change": PendingChange, "committed": true, "records": TableRecord[] }`
+(see "Writes"), or `{ "change": PendingChange, "committed": false }` with `dryRun: true`.
 
 Diff shape (in `change.diff`): one entry per patch,
 `[{ "recordId", "before": fields | null, "after": merged fields }]`. `before` is `null`
@@ -459,39 +478,22 @@ Example response:
     "tableId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
     "type": "update",
     "createdAt": "2026-09-24T09:15:00.000Z",
-    "status": "pending",
+    "status": "committed",
     "diff": [
       {
         "recordId": "row_3",
         "before": { "Name": "Basalt Co", "Email": "it@basalt.co", "Seats": 3 },
         "after": { "Name": "Basalt Co", "Email": "it@basalt.co", "Seats": 10 }
       }
-    ]
+    ],
+    "decidedAt": "2026-09-24T09:15:00.410Z",
+    "decidedBy": "policy",
+    "committedAt": "2026-09-24T09:15:00.902Z"
   },
   "committed": true,
-  "outcome": {
-    "change": {
-      "id": "chg_1f0d3c62-9a44-4b1e-9a1f-b1d2c3e4f5a6",
-      "sourceId": "google-sheets:me_example_com",
-      "tableId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-      "type": "update",
-      "createdAt": "2026-09-24T09:15:00.000Z",
-      "status": "committed",
-      "diff": [
-        {
-          "recordId": "row_3",
-          "before": { "Name": "Basalt Co", "Email": "it@basalt.co", "Seats": 3 },
-          "after": { "Name": "Basalt Co", "Email": "it@basalt.co", "Seats": 10 }
-        }
-      ],
-      "decidedAt": "2026-09-24T09:15:00.410Z",
-      "decidedBy": "policy",
-      "committedAt": "2026-09-24T09:15:00.902Z"
-    },
-    "records": [
-      { "id": "row_3", "fields": { "Name": "Basalt Co", "Email": "it@basalt.co", "Seats": 10 } }
-    ]
-  }
+  "records": [
+    { "id": "row_3", "fields": { "Name": "Basalt Co", "Email": "it@basalt.co", "Seats": 10 } }
+  ]
 }
 ```
 
@@ -501,7 +503,8 @@ Purpose: append rows at the bottom of a tab and return the diff. On an empty tab
 record field names seed the header row. Commits in the same call unless `dryRun` is set.
 
 Optionally, the append may carry a formatting plan (the same `formats`, `freezeRows`,
-`freezeColumns`, and `columnWidths` fields as `format_table`). It is applied in the SAME
+`freezeColumns`, `columnWidths`, `validations`, and `conditionalFormats` fields as
+`format_table`). It is applied in the SAME
 commit, right after the rows land, so a fresh table is written and styled in one call.
 
 Input schema:
@@ -515,12 +518,14 @@ Input schema:
 | `freezeRows` | integer | optional, 0 to 100 |
 | `freezeColumns` | integer | optional, 0 to 100 |
 | `columnWidths` | array of `{ column, pixels }` | optional, at most 100 |
+| `validations` | array of `Validation` (see `format_table`) | optional, at most 100 |
+| `conditionalFormats` | array of `ConditionalFormat` (see `format_table`) | optional, at most 100 |
 | `dryRun` | boolean | optional, default `false` |
 
 Output shape: as in "Writes". Diff shape (in `change.diff`): `{ "after": records }`, plus
 `"format": FormatPlan` when a formatting plan was bundled.
 
-If the rows are written but the bundled styling fails, `outcome.formatError` carries the
+If the rows are written but the bundled styling fails, the top-level `formatError` carries the
 reason. The rows are already committed, so do not repeat the append; retry only the
 styling with `format_table`.
 
@@ -579,7 +584,11 @@ Input schema:
 | `dryRun` | boolean | optional, default `false` |
 
 Output shape: as in "Writes" (change type `update_cells`; the diff lists each
-`{ cell, value }`).
+`{ cell, value }`; `records` is omitted).
+
+Values are sent exactly as given and never rewritten, so they must match the
+spreadsheet's locale: in a comma-decimal locale such as `vi_VN`, write `0,65` (not
+`0.65`, which stays text) and separate formula arguments with `;`. See `list_sheets`.
 
 Permission required: `write` (evaluated as the `update` action; more than 20 cells
 escalates to `bulk_update` like a large record update).
@@ -587,7 +596,8 @@ escalates to `bulk_update` like a large record update).
 ## `format_table`
 
 Purpose: apply formatting to a tab. A plan is any mix of per-range cell formats, a
-freeze, and column widths; only the properties you set are changed (partial formatting).
+freeze, column widths, native data validations (dropdowns and checkboxes), and
+conditional formats; only the properties you set are changed (partial formatting).
 Commits in the same call unless `dryRun` is set.
 
 Input schema:
@@ -600,9 +610,12 @@ Input schema:
 | `freezeRows` | number (optional) | 0 to 100 |
 | `freezeColumns` | number (optional) | 0 to 100 |
 | `columnWidths` | array of `{ column: string, pixels: number (2..2000) }` | 0 to 100 items |
+| `validations` | array of `Validation` (below) | 0 to 100 items |
+| `conditionalFormats` | array of `ConditionalFormat` (below) | 0 to 100 items |
 | `dryRun` | boolean | optional, default `false` |
 
-At least one of `formats`, `freezeRows`, `freezeColumns`, or `columnWidths` must be set.
+At least one of `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `validations`,
+or `conditionalFormats` must be set.
 
 ```ts
 type CellFormat = {
@@ -618,11 +631,53 @@ type CellFormat = {
   wrap?: boolean;
   border?: "none" | "all" | "outer" | "bottom";
 };
+
+// Native data validation (setDataValidation). Setting a rule replaces the
+// range's previous validation.
+type Validation = {
+  range: string;                                     // A1 range, e.g. "D2:D100", "E:E"
+  type: "list" | "checkbox";
+  values?: string[];                                 // list only, required: 1..100 non-empty strings
+  strict?: boolean;                                  // default true; false only warns
+  showDropdown?: boolean;                            // list only, default true (showCustomUi)
+};
+
+// Conditional format (addConditionalFormatRule with a BooleanRule).
+type ConditionalFormat = {
+  range: string;                                     // A1 range
+  when: {                                            // exactly one key
+    textEq?: string;                                 // TEXT_EQ
+    textContains?: string;                           // TEXT_CONTAINS
+    numberGt?: number;                               // NUMBER_GREATER
+    numberLt?: number;                               // NUMBER_LESS
+    numberBetween?: [number, number];                // NUMBER_BETWEEN, low <= high
+    blank?: true;                                    // BLANK
+    notBlank?: true;                                 // NOT_BLANK
+    formula?: string;                                // CUSTOM_FORMULA, starts with "="
+  };
+  backgroundColor?: string;                          // "#rrggbb"
+  fontColor?: string;                                // "#rrggbb"
+  bold?: boolean;                                    // at least one of the three is required
+};
 ```
 
+A `list` validation gives the native dropdown chip; `checkbox` gives native checkboxes
+(`strict` rejects other values). `values` and `showDropdown` are rejected on a checkbox.
+
+Conditional formats **replace** rather than pile up: before adding, the commit reads the
+tab's rules (`spreadsheets.get` with `fields=sheets(properties.sheetId,conditionalFormats)`)
+and deletes every existing rule with a range that intersects any of the new rules' ranges,
+highest index first. The new rules are then inserted at the top in the order given
+(earlier = higher priority); rules on other ranges are kept. So calling `format_table`
+again with the same ranges updates the rules instead of duplicating them. Number values in
+`when` are sent with the spreadsheet's decimal mark (`0,5` in a comma-decimal locale).
+A `formula` is sent as written, so write it in the spreadsheet's locale syntax (`;`
+separators in comma-decimal locales).
+
 Output shape: as in "Writes". Diff shape (in `change.diff`): the plan itself (the
-`FormatPlan`: `formats`, `freezeRows`, `freezeColumns`, `columnWidths` with empty parts
-omitted).
+`FormatPlan`: `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `validations`,
+`conditionalFormats` with empty parts omitted; validations show their effective `strict`
+and, for lists, `showDropdown`).
 
 Permission required: `write` (evaluated as the `format` action). Only the Google Sheets
 connector applies formatting.
@@ -646,11 +701,44 @@ Example call:
 }
 ```
 
+Example call (status dropdown, done checkbox, and colored statuses):
+
+```json
+{
+  "tableId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms:Tasks",
+  "validations": [
+    { "range": "D2:D200", "type": "list", "values": ["Todo", "Doing", "Done"] },
+    { "range": "E2:E200", "type": "checkbox" }
+  ],
+  "conditionalFormats": [
+    { "range": "D2:D200", "when": { "textEq": "Done" }, "backgroundColor": "#d1fae5", "fontColor": "#065f46" },
+    { "range": "D2:D200", "when": { "textEq": "Doing" }, "backgroundColor": "#fef3c7" },
+    { "range": "F2:F200", "when": { "numberLt": 0.5 }, "fontColor": "#b91c1c", "bold": true }
+  ]
+}
+```
+
+Resulting diff (`change.diff`):
+
+```json
+{
+  "validations": [
+    { "range": "D2:D200", "type": "list", "values": ["Todo", "Doing", "Done"], "strict": true, "showDropdown": true },
+    { "range": "E2:E200", "type": "checkbox", "strict": true }
+  ],
+  "conditionalFormats": [
+    { "range": "D2:D200", "when": { "textEq": "Done" }, "backgroundColor": "#d1fae5", "fontColor": "#065f46" },
+    { "range": "D2:D200", "when": { "textEq": "Doing" }, "backgroundColor": "#fef3c7" },
+    { "range": "F2:F200", "when": { "numberLt": 0.5 }, "fontColor": "#b91c1c", "bold": true }
+  ]
+}
+```
+
 ## `create_spreadsheet`
 
 Purpose: create a brand-new spreadsheet on the account. Source-level (there is no
 `tableId` yet); when `sourceId` is omitted with several accounts connected, the first
-account is used. On commit, `outcome.created` carries the new `spreadsheetId` and `url`.
+account is used. On commit, the top-level `created` carries the new `spreadsheetId` and `url`.
 
 Input schema:
 
@@ -668,7 +756,7 @@ null `tableId`), since a create has no table yet.
 
 ## `create_sheet`
 
-Purpose: add a new tab to an existing spreadsheet. On commit, `outcome.created` carries
+Purpose: add a new tab to an existing spreadsheet. On commit, the top-level `created` carries
 the new tab's `sheetGid`. `tableId` is the spreadsheet (URL or id).
 
 Input schema:
@@ -706,7 +794,7 @@ with delete allowed; turn it off in the desktop permission rules to block this t
 ## `commit_change`
 
 Purpose: apply one or more changes staged with `dryRun: true`. Committing a
-`create_spreadsheet` or `create_sheet` change returns the new resource in the outcome's
+`create_spreadsheet` or `create_sheet` change returns the new resource in the top-level
 `created` field.
 
 Input schema (provide exactly one of the two forms):
@@ -717,9 +805,10 @@ Input schema (provide exactly one of the two forms):
 | `changeIds` | array of strings | batch; 1 to 100 change ids, committed in order |
 
 Output shape:
-- Single (`changeId`): `CommitOutcome` - `{ "change": PendingChange, "records":
-  TableRecord[], "formatError"?, "created"? }` with `change.status` `"committed"`.
-- Batch (`changeIds`): `{ "committed": CommitOutcome[] }`, one outcome per change in the
+- Single (`changeId`): the same lean shape as a direct write - `{ "change":
+  PendingChange, "committed": true, "records"?, "formatError"?, "created"? }` with
+  `change.status` `"committed"` and `records` omitted when empty.
+- Batch (`changeIds`): `{ "committed": [lean outcome, ...] }`, one per change in the
   order requested. All ids are checked to exist before any write, so a typo fails the batch
   before anything is committed; there is no cross-request rollback, so a failure partway
   through leaves the already-committed changes applied.
@@ -755,6 +844,7 @@ Example response:
     "decidedBy": "policy",
     "committedAt": "2026-09-24T09:17:04.620Z"
   },
+  "committed": true,
   "records": [
     { "id": "row_5", "fields": { "Name": "Dune Harbor", "Email": "hello@duneharbor.io", "Seats": 2 } }
   ]

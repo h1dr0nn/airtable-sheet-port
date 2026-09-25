@@ -17,9 +17,10 @@ use crate::error::CoreError;
 use crate::google;
 use crate::sources;
 use crate::types::{
-    BorderStyle, CellFormat, CellStyle, CellWrite, ColumnWidth, CreatedResource, DataSource,
-    FieldSchema, FormatPlan, GridColumn, GridData, GridRow, JsonMap, NumberFormatType, ReadOptions,
-    RecordPatch, SheetTab, SourceKind, TableRecord, TableRef, TableSchema, TableStyle,
+    BorderStyle, CellFormat, CellStyle, CellWrite, ColumnWidth, ConditionWhen, ConditionalFormat,
+    CreatedResource, DataSource, DataValidation, FieldSchema, FormatPlan, GridColumn, GridData,
+    GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch, SheetTab, SourceKind,
+    SpreadsheetInfo, TableRecord, TableRef, TableSchema, TableStyle, ValidationKind,
 };
 
 const DRIVE_FILES_ENDPOINT: &str = "https://www.googleapis.com/drive/v3/files";
@@ -178,6 +179,7 @@ impl TableConnector for GoogleSheetsConnector {
             table_id: table_id.to_string(),
             name: sheet.display_name(),
             fields: schema_from_rows(&header, first_data_row),
+            locale: sheet.locale.clone(),
         })
     }
 
@@ -497,6 +499,17 @@ impl TableConnector for GoogleSheetsConnector {
         source_id: &str,
         spreadsheet_id: &str,
     ) -> Result<Vec<SheetTab>, CoreError> {
+        Ok(self.spreadsheet_info(conn, source_id, spreadsheet_id)?.tabs)
+    }
+
+    /// The tabs plus `properties.locale` / `properties.timeZone`, from the
+    /// same single metadata read.
+    fn spreadsheet_info(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        spreadsheet_id: &str,
+    ) -> Result<SpreadsheetInfo, CoreError> {
         let token = google::access_token(conn, source_id)?;
         let meta = fetch_spreadsheet_meta(&token, spreadsheet_id)?;
         let mut tabs: Vec<SheetTab> = meta
@@ -509,7 +522,11 @@ impl TableConnector for GoogleSheetsConnector {
             })
             .collect();
         tabs.sort_by_key(|tab| tab.index);
-        Ok(tabs)
+        Ok(SpreadsheetInfo {
+            tabs,
+            locale: meta.locale,
+            time_zone: meta.time_zone,
+        })
     }
 
     /// RAW mirror of the sheet (Workbench). The whole used range is read from
@@ -849,6 +866,8 @@ struct ResolvedSheet {
     /// a `GridRange` for cell-formatting requests; A1 value ranges use the
     /// title instead.
     sheet_id: i64,
+    /// Spreadsheet locale (`properties.locale`), e.g. `vi_VN`.
+    locale: Option<String>,
 }
 
 impl ResolvedSheet {
@@ -866,6 +885,7 @@ impl ResolvedSheet {
             spreadsheet_title: meta.title,
             sheet_title,
             sheet_id,
+            locale: meta.locale,
         })
     }
 
@@ -888,9 +908,12 @@ impl ResolvedSheet {
     }
 }
 
-/// Minimal spreadsheet metadata: the spreadsheet title and its tabs.
+/// Minimal spreadsheet metadata: the spreadsheet title, locale settings, and
+/// its tabs.
 struct SpreadsheetMeta {
     title: String,
+    locale: Option<String>,
+    time_zone: Option<String>,
     sheets: Vec<SheetProperties>,
 }
 
@@ -901,13 +924,13 @@ struct SheetProperties {
     index: i64,
 }
 
-/// `GET {SHEETS_ENDPOINT}/{id}?fields=properties.title,sheets.properties(sheetId,title)`.
+/// `GET {SHEETS_ENDPOINT}/{id}?fields=properties(title,locale,timeZone),sheets.properties(sheetId,title,index)`.
 /// Fixed endpoint + token; the id only selects the resource.
 fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<SpreadsheetMeta, CoreError> {
     let mut url = sheets_base_url(spreadsheet_id)?;
     url.query_pairs_mut().append_pair(
         "fields",
-        "properties.title,sheets.properties(sheetId,title,index)",
+        "properties(title,locale,timeZone),sheets.properties(sheetId,title,index)",
     );
     let body = google::get_json(token, url.as_str())?;
     let title = body["properties"]["title"]
@@ -931,7 +954,18 @@ fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<Spreadshe
                 .collect()
         })
         .unwrap_or_default();
-    Ok(SpreadsheetMeta { title, sheets })
+    let text = |key: &str| {
+        body["properties"][key]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    Ok(SpreadsheetMeta {
+        title,
+        locale: text("locale"),
+        time_zone: text("timeZone"),
+        sheets,
+    })
 }
 
 /// Maps a parsed selector onto a concrete tab title using the metadata:
@@ -1317,7 +1351,22 @@ const DEFAULT_BORDER_COLOR: &str = "#bfbfbf";
 /// Field mask for a style read: the two sample rows plus sheet freeze counts
 /// and per-column pixel widths. Bounds the response to exactly what
 /// [`TableStyle`] reports.
-const STYLE_FIELDS_MASK: &str = "sheets(properties(sheetId,title,gridProperties(frozenRowCount,frozenColumnCount)),data(rowData(values(formattedValue,effectiveFormat(backgroundColor,horizontalAlignment,wrapStrategy,numberFormat,textFormat(bold,italic,fontSize,foregroundColor)))),columnMetadata(pixelSize)))";
+const STYLE_FIELDS_MASK: &str = "sheets(properties(sheetId,title,gridProperties(frozenRowCount,frozenColumnCount)),data(rowData(values(formattedValue,dataValidation(condition(type)),effectiveFormat(backgroundColor,horizontalAlignment,wrapStrategy,numberFormat,textFormat(bold,italic,fontSize,foregroundColor)))),columnMetadata(pixelSize)))";
+
+/// Field mask for the conditional-format read that precedes adding rules: the
+/// tab ids and every existing rule (for the intersect-and-replace step).
+const CONDITIONAL_FORMATS_FIELDS_MASK: &str = "sheets(properties.sheetId,conditionalFormats)";
+
+/// Locale languages whose decimal mark is a comma (Google Sheets then also
+/// separates formula arguments with `;`). Checked on the language prefix of
+/// `properties.locale`, with the dot-decimal regional exceptions below.
+const DECIMAL_COMMA_LANGUAGES: &[&str] = &[
+    "vi", "de", "fr", "es", "it", "pt", "ru", "id", "tr", "nl", "pl", "cs", "sk", "da", "fi", "nb",
+    "nn", "no", "sv", "uk", "ro", "hu", "el", "bg", "hr", "sl", "sr", "lt", "lv", "et", "ca", "be",
+    "kk", "az", "ka", "hy", "mk", "sq", "is", "gl", "eu",
+];
+/// Regional locales of the languages above that use a dot decimal mark.
+const DECIMAL_DOT_EXCEPTIONS: &[&str] = &["es_MX", "es_US", "es_419", "de_CH", "it_CH"];
 
 /// POSTs a formatting plan as a single `spreadsheets.batchUpdate`. An empty
 /// plan (no requests) is a no-op; plans are validated non-empty upstream.
@@ -1326,7 +1375,15 @@ fn apply_format_plan(
     sheet: &ResolvedSheet,
     plan: &FormatPlan,
 ) -> Result<(), CoreError> {
-    let requests = build_format_requests(sheet.sheet_id, plan)?;
+    // Replace semantics need the tab's current rules; skip the read when the
+    // plan adds none.
+    let existing_rules = if plan.conditional_formats.is_empty() {
+        Vec::new()
+    } else {
+        fetch_conditional_rule_ranges(token, sheet)?
+    };
+    let decimal_comma = locale_uses_decimal_comma(sheet.locale.as_deref());
+    let requests = build_format_requests(sheet.sheet_id, plan, &existing_rules, decimal_comma)?;
     if requests.is_empty() {
         return Ok(());
     }
@@ -1336,9 +1393,18 @@ fn apply_format_plan(
 }
 
 /// Turns a plan into ordered `spreadsheets.batchUpdate` requests: per-range cell
-/// formats and borders, then the header freeze, then column widths. Pure so the
-/// request shape can be unit-tested without a network call.
-fn build_format_requests(sheet_id: i64, plan: &FormatPlan) -> Result<Vec<Value>, CoreError> {
+/// formats and borders, data validations, conditional formats (deletes of the
+/// existing rules that intersect the new ranges, highest index first, then the
+/// new rules in plan order at the top of the list), then the header freeze,
+/// then column widths. `existing_rules` holds the ranges of each current rule
+/// on the tab, by rule index. Pure so the request shape can be unit-tested
+/// without a network call.
+fn build_format_requests(
+    sheet_id: i64,
+    plan: &FormatPlan,
+    existing_rules: &[Vec<A1Range>],
+    decimal_comma: bool,
+) -> Result<Vec<Value>, CoreError> {
     let mut requests = Vec::new();
     for format in &plan.formats {
         if let Some(request) = repeat_cell_request(sheet_id, format)? {
@@ -1346,6 +1412,30 @@ fn build_format_requests(sheet_id: i64, plan: &FormatPlan) -> Result<Vec<Value>,
         }
         if let Some(request) = border_request(sheet_id, format)? {
             requests.push(request);
+        }
+    }
+    for validation in &plan.validations {
+        requests.push(data_validation_request(sheet_id, validation)?);
+    }
+    if !plan.conditional_formats.is_empty() {
+        let targets = plan
+            .conditional_formats
+            .iter()
+            .map(|rule| parse_a1_range(&rule.range))
+            .collect::<Result<Vec<_>, _>>()?;
+        for index in replaced_rule_indices(existing_rules, &targets) {
+            requests.push(json!({
+                "deleteConditionalFormatRule": { "sheetId": sheet_id, "index": index }
+            }));
+        }
+        for (index, (rule, range)) in plan.conditional_formats.iter().zip(&targets).enumerate() {
+            requests.push(add_conditional_format_request(
+                sheet_id,
+                index,
+                rule,
+                range,
+                decimal_comma,
+            )?);
         }
     }
     if let Some(request) = freeze_request(sheet_id, plan.freeze_rows, plan.freeze_columns) {
@@ -1521,6 +1611,234 @@ fn column_width_requests(sheet_id: i64, widths: &[ColumnWidth]) -> Result<Vec<Va
         .collect()
 }
 
+/// A `setDataValidation` request: a dropdown (ONE_OF_LIST over `values`, with
+/// `showCustomUi` from `showDropdown`) or a checkbox (BOOLEAN). Setting a rule
+/// replaces whatever validation the range had.
+fn data_validation_request(sheet_id: i64, validation: &DataValidation) -> Result<Value, CoreError> {
+    let range = parse_a1_range(&validation.range)?;
+    let rule = match validation.kind {
+        ValidationKind::List => {
+            if validation.values.is_empty() {
+                return Err(CoreError::InvalidInput(format!(
+                    "The list validation on {} has no values",
+                    validation.range
+                )));
+            }
+            let values: Vec<Value> = validation
+                .values
+                .iter()
+                .map(|value| json!({ "userEnteredValue": value }))
+                .collect();
+            json!({
+                "condition": { "type": "ONE_OF_LIST", "values": values },
+                "strict": validation.strict,
+                "showCustomUi": validation.show_dropdown.unwrap_or(true),
+            })
+        }
+        ValidationKind::Checkbox => json!({
+            "condition": { "type": "BOOLEAN" },
+            "strict": validation.strict,
+        }),
+    };
+    Ok(json!({
+        "setDataValidation": {
+            "range": grid_range_json(sheet_id, &range),
+            "rule": rule,
+        }
+    }))
+}
+
+/// An `addConditionalFormatRule` request inserting a BooleanRule at `index`,
+/// so the plan's rules keep their order (earlier = higher priority) above any
+/// rules left untouched.
+fn add_conditional_format_request(
+    sheet_id: i64,
+    index: usize,
+    rule: &ConditionalFormat,
+    range: &A1Range,
+    decimal_comma: bool,
+) -> Result<Value, CoreError> {
+    let mut format = serde_json::Map::new();
+    let mut text_format = serde_json::Map::new();
+    if let Some(color) = &rule.background_color {
+        format.insert(
+            "backgroundColorStyle".to_string(),
+            json!({ "rgbColor": hex_to_color_json(color)? }),
+        );
+    }
+    if let Some(bold) = rule.bold {
+        text_format.insert("bold".to_string(), json!(bold));
+    }
+    if let Some(color) = &rule.font_color {
+        text_format.insert(
+            "foregroundColorStyle".to_string(),
+            json!({ "rgbColor": hex_to_color_json(color)? }),
+        );
+    }
+    if !text_format.is_empty() {
+        format.insert("textFormat".to_string(), Value::Object(text_format));
+    }
+    Ok(json!({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [grid_range_json(sheet_id, range)],
+                "booleanRule": {
+                    "condition": boolean_condition_json(&rule.when, decimal_comma)?,
+                    "format": Value::Object(format),
+                },
+            },
+            "index": index,
+        }
+    }))
+}
+
+/// Maps a [`ConditionWhen`] (exactly one key set) onto a BooleanCondition.
+/// Number values are written with the spreadsheet's decimal mark, since
+/// condition values are parsed as if typed into a cell.
+fn boolean_condition_json(when: &ConditionWhen, decimal_comma: bool) -> Result<Value, CoreError> {
+    if when.set_count() != 1 {
+        return Err(CoreError::InvalidInput(
+            "A conditional format needs exactly one condition".to_string(),
+        ));
+    }
+    let number = |value: f64| condition_number(value, decimal_comma);
+    let (kind, values): (&str, Vec<String>) = if let Some(text) = &when.text_eq {
+        ("TEXT_EQ", vec![text.clone()])
+    } else if let Some(text) = &when.text_contains {
+        ("TEXT_CONTAINS", vec![text.clone()])
+    } else if let Some(value) = when.number_gt {
+        ("NUMBER_GREATER", vec![number(value)])
+    } else if let Some(value) = when.number_lt {
+        ("NUMBER_LESS", vec![number(value)])
+    } else if let Some([low, high]) = when.number_between {
+        ("NUMBER_BETWEEN", vec![number(low), number(high)])
+    } else if when.blank == Some(true) {
+        ("BLANK", Vec::new())
+    } else if when.not_blank == Some(true) {
+        ("NOT_BLANK", Vec::new())
+    } else if let Some(formula) = &when.formula {
+        ("CUSTOM_FORMULA", vec![formula.clone()])
+    } else {
+        return Err(CoreError::InvalidInput(
+            "blank and notBlank conditions must be true".to_string(),
+        ));
+    };
+    if values.is_empty() {
+        return Ok(json!({ "type": kind }));
+    }
+    let values: Vec<Value> = values
+        .into_iter()
+        .map(|value| json!({ "userEnteredValue": value }))
+        .collect();
+    Ok(json!({ "type": kind, "values": values }))
+}
+
+/// A condition number as the spreadsheet would parse it: shortest decimal
+/// form, with a comma decimal mark in comma-decimal locales.
+fn condition_number(value: f64, decimal_comma: bool) -> String {
+    let text = value.to_string();
+    if decimal_comma {
+        text.replace('.', ",")
+    } else {
+        text
+    }
+}
+
+/// Whether a Sheets locale (e.g. `vi_VN`, `de_DE`, `en_US`) writes decimals
+/// with a comma. Unknown or absent locales are treated as dot-decimal.
+fn locale_uses_decimal_comma(locale: Option<&str>) -> bool {
+    let Some(locale) = locale else {
+        return false;
+    };
+    if DECIMAL_DOT_EXCEPTIONS.contains(&locale) {
+        return false;
+    }
+    let language = locale.split(['_', '-']).next().unwrap_or(locale);
+    DECIMAL_COMMA_LANGUAGES.contains(&language)
+}
+
+/// Indices of the existing rules to delete, highest first (so each delete
+/// leaves the remaining indices valid): every rule with a range that
+/// intersects one of the target ranges.
+fn replaced_rule_indices(existing_rules: &[Vec<A1Range>], targets: &[A1Range]) -> Vec<usize> {
+    let mut indices: Vec<usize> = existing_rules
+        .iter()
+        .enumerate()
+        .filter(|(_, ranges)| {
+            ranges
+                .iter()
+                .any(|range| targets.iter().any(|target| ranges_intersect(range, target)))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    indices.reverse();
+    indices
+}
+
+/// Whether two half-open grid ranges overlap; an unbounded side spans the
+/// whole dimension.
+fn ranges_intersect(a: &A1Range, b: &A1Range) -> bool {
+    fn overlaps(
+        a_start: Option<usize>,
+        a_end: Option<usize>,
+        b_start: Option<usize>,
+        b_end: Option<usize>,
+    ) -> bool {
+        let start = a_start.unwrap_or(0).max(b_start.unwrap_or(0));
+        let end = a_end.unwrap_or(usize::MAX).min(b_end.unwrap_or(usize::MAX));
+        start < end
+    }
+    overlaps(a.start_row, a.end_row, b.start_row, b.end_row)
+        && overlaps(a.start_col, a.end_col, b.start_col, b.end_col)
+}
+
+/// Reads the tab's conditional-format rules and returns each rule's ranges,
+/// by rule index (`spreadsheets.get` with
+/// [`CONDITIONAL_FORMATS_FIELDS_MASK`]).
+fn fetch_conditional_rule_ranges(
+    token: &str,
+    sheet: &ResolvedSheet,
+) -> Result<Vec<Vec<A1Range>>, CoreError> {
+    let mut url = sheets_base_url(&sheet.spreadsheet_id)?;
+    url.query_pairs_mut()
+        .append_pair("fields", CONDITIONAL_FORMATS_FIELDS_MASK);
+    let body = google::get_json(token, url.as_str())?;
+    Ok(conditional_rule_ranges(&body, sheet.sheet_id))
+}
+
+/// Pulls the rule ranges of one tab out of a conditional-format read. The API
+/// omits zero-valued ids and indices, so a missing one means 0 (and a missing
+/// end means unbounded).
+fn conditional_rule_ranges(body: &Value, sheet_id: i64) -> Vec<Vec<A1Range>> {
+    let index = |value: &Value| value.as_u64().map(|number| number as usize);
+    let grid_range = |range: &Value| A1Range {
+        start_row: index(&range["startRowIndex"]),
+        end_row: index(&range["endRowIndex"]),
+        start_col: index(&range["startColumnIndex"]),
+        end_col: index(&range["endColumnIndex"]),
+    };
+    let Some(rules) = body["sheets"]
+        .as_array()
+        .and_then(|sheets| {
+            sheets
+                .iter()
+                .find(|sheet| sheet["properties"]["sheetId"].as_i64().unwrap_or(0) == sheet_id)
+        })
+        .and_then(|sheet| sheet["conditionalFormats"].as_array())
+    else {
+        return Vec::new();
+    };
+    rules
+        .iter()
+        .map(|rule| {
+            rule["ranges"]
+                .as_array()
+                .map(|ranges| ranges.iter().map(grid_range).collect())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
 /// A `GridRange` JSON object; unbounded dimensions omit their start/end keys so
 /// a whole-column or whole-row range is expressed correctly.
 fn grid_range_json(sheet_id: i64, range: &A1Range) -> Value {
@@ -1591,7 +1909,10 @@ fn spreadsheet_batch_update_url(spreadsheet_id: &str) -> Result<url::Url, CoreEr
 }
 
 /// Reads the effective style of the tab via one `spreadsheets.get` with
-/// `includeGridData` over the header and first data row.
+/// `includeGridData` over the header and first data row, plus a second
+/// metadata read for the conditional-format count: a `ranges`-scoped get only
+/// returns the rules that touch those rows, so it would miss rules further
+/// down the tab.
 fn read_table_style_for(token: &str, sheet: &ResolvedSheet) -> Result<TableStyle, CoreError> {
     let mut url = sheets_base_url(&sheet.spreadsheet_id)?;
     url.query_pairs_mut()
@@ -1622,6 +1943,7 @@ fn read_table_style_for(token: &str, sheet: &ResolvedSheet) -> Result<TableStyle
         header: cell_styles(&header_values, used),
         sample: cell_styles(&sample_values, used),
         column_widths: style_column_widths(&data["columnMetadata"], used),
+        conditional_format_count: fetch_conditional_rule_ranges(token, sheet)?.len() as i64,
     })
 }
 
@@ -1651,12 +1973,24 @@ fn cell_styles(values: &[Value], used: usize) -> Vec<CellStyle> {
     let null = Value::Null;
     (0..used)
         .map(|index| {
-            let effective = values
-                .get(index)
-                .map_or(&null, |cell| &cell["effectiveFormat"]);
-            parse_cell_style(&column_id_for_index(index), effective)
+            let cell = values.get(index).unwrap_or(&null);
+            let mut style = parse_cell_style(&column_id_for_index(index), &cell["effectiveFormat"]);
+            style.validation = cell["dataValidation"]["condition"]["type"]
+                .as_str()
+                .map(validation_label);
+            style
         })
         .collect()
+}
+
+/// A short label for a cell's data-validation condition type: `list` for a
+/// dropdown, `checkbox` for BOOLEAN, otherwise the type in lowercase.
+fn validation_label(condition_type: &str) -> String {
+    match condition_type {
+        "ONE_OF_LIST" => "list".to_string(),
+        "BOOLEAN" => "checkbox".to_string(),
+        other => other.to_ascii_lowercase(),
+    }
 }
 
 /// Maps a Google `effectiveFormat` onto a [`CellStyle`]; only properties that
@@ -1681,6 +2015,7 @@ fn parse_cell_style(column: &str, effective_format: &Value) -> CellStyle {
         wrap: effective_format["wrapStrategy"]
             .as_str()
             .map(|strategy| strategy == "WRAP"),
+        validation: None,
     }
 }
 
@@ -1887,6 +2222,7 @@ mod tests {
             spreadsheet_title: "Book".to_string(),
             sheet_title: Some("Tab 27".to_string()),
             sheet_id: 851827100,
+            locale: None,
         };
         let cells = vec![
             CellWrite {
@@ -2090,6 +2426,7 @@ mod tests {
             spreadsheet_title: "Book".to_string(),
             sheet_title: None,
             sheet_id: 0,
+            locale: None,
         };
         assert_eq!(first.range("A1:ZZ1"), "A1:ZZ1");
 
@@ -2098,6 +2435,7 @@ mod tests {
             spreadsheet_title: "Book".to_string(),
             sheet_title: Some("My Sheet".to_string()),
             sheet_id: 42,
+            locale: None,
         };
         assert_eq!(named.range("A2:ZZ"), "'My Sheet'!A2:ZZ");
 
@@ -2107,6 +2445,7 @@ mod tests {
             spreadsheet_title: "Book".to_string(),
             sheet_title: Some("Bob's Tab".to_string()),
             sheet_id: 7,
+            locale: None,
         };
         assert_eq!(quoted.range("A1"), "'Bob''s Tab'!A1");
     }
@@ -2115,6 +2454,8 @@ mod tests {
     fn resolve_sheet_title_maps_gid_and_title_or_errors() {
         let meta = SpreadsheetMeta {
             title: "Workbook".to_string(),
+            locale: None,
+            time_zone: None,
             sheets: vec![
                 SheetProperties {
                     sheet_id: 0,
@@ -2349,29 +2690,306 @@ mod tests {
                 ..cell_format("A1:D1")
             }],
             freeze_rows: Some(1),
-            freeze_columns: None,
             column_widths: vec![ColumnWidth {
                 column: "A".to_string(),
                 pixels: 200,
             }],
+            ..FormatPlan::default()
         };
-        let requests = build_format_requests(0, &plan).expect("requests");
+        let requests = build_format_requests(0, &plan, &[], false).expect("requests");
         assert!(requests[0].get("repeatCell").is_some());
         assert!(requests[1].get("updateBorders").is_some());
         assert!(requests[2].get("updateSheetProperties").is_some());
         assert!(requests[3].get("updateDimensionProperties").is_some());
 
-        let empty = build_format_requests(
-            0,
-            &FormatPlan {
-                formats: Vec::new(),
-                freeze_rows: None,
-                freeze_columns: None,
-                column_widths: Vec::new(),
-            },
-        )
-        .expect("requests");
+        let empty = build_format_requests(0, &FormatPlan::default(), &[], false).expect("requests");
         assert!(empty.is_empty(), "an empty plan produces no requests");
+    }
+
+    fn list_validation(range: &str, values: &[&str]) -> DataValidation {
+        DataValidation {
+            range: range.to_string(),
+            kind: ValidationKind::List,
+            values: values.iter().map(|value| value.to_string()).collect(),
+            strict: true,
+            show_dropdown: Some(true),
+        }
+    }
+
+    fn rule(range: &str, when: ConditionWhen) -> ConditionalFormat {
+        ConditionalFormat {
+            range: range.to_string(),
+            when,
+            background_color: Some("#d1fae5".to_string()),
+            font_color: None,
+            bold: None,
+        }
+    }
+
+    #[test]
+    fn list_validation_builds_a_one_of_list_dropdown() {
+        let mut validation = list_validation("D2:D21", &["Todo", "Done"]);
+        validation.strict = false;
+        validation.show_dropdown = Some(false);
+        let request = data_validation_request(4, &validation).expect("request");
+        let set = &request["setDataValidation"];
+        assert_eq!(set["range"]["sheetId"], 4);
+        assert_eq!(set["range"]["startRowIndex"], 1);
+        assert_eq!(set["range"]["endRowIndex"], 21);
+        assert_eq!(set["range"]["startColumnIndex"], 3);
+        assert_eq!(
+            set["rule"],
+            json!({
+                "condition": {
+                    "type": "ONE_OF_LIST",
+                    "values": [{ "userEnteredValue": "Todo" }, { "userEnteredValue": "Done" }],
+                },
+                "strict": false,
+                "showCustomUi": false,
+            })
+        );
+
+        let empty = list_validation("D2:D21", &[]);
+        assert!(data_validation_request(4, &empty).is_err());
+    }
+
+    #[test]
+    fn checkbox_validation_builds_a_boolean_rule() {
+        let validation = DataValidation {
+            range: "E:E".to_string(),
+            kind: ValidationKind::Checkbox,
+            values: Vec::new(),
+            strict: true,
+            show_dropdown: None,
+        };
+        let request = data_validation_request(0, &validation).expect("request");
+        assert_eq!(
+            request["setDataValidation"]["rule"],
+            json!({ "condition": { "type": "BOOLEAN" }, "strict": true })
+        );
+        assert!(request["setDataValidation"]["range"]
+            .get("startRowIndex")
+            .is_none());
+    }
+
+    #[test]
+    fn every_condition_maps_to_its_boolean_condition_type() {
+        let cases = [
+            (
+                ConditionWhen {
+                    text_eq: Some("Done".to_string()),
+                    ..ConditionWhen::default()
+                },
+                json!({ "type": "TEXT_EQ", "values": [{ "userEnteredValue": "Done" }] }),
+            ),
+            (
+                ConditionWhen {
+                    text_contains: Some("late".to_string()),
+                    ..ConditionWhen::default()
+                },
+                json!({ "type": "TEXT_CONTAINS", "values": [{ "userEnteredValue": "late" }] }),
+            ),
+            (
+                ConditionWhen {
+                    number_gt: Some(100.0),
+                    ..ConditionWhen::default()
+                },
+                json!({ "type": "NUMBER_GREATER", "values": [{ "userEnteredValue": "100" }] }),
+            ),
+            (
+                ConditionWhen {
+                    number_lt: Some(0.5),
+                    ..ConditionWhen::default()
+                },
+                json!({ "type": "NUMBER_LESS", "values": [{ "userEnteredValue": "0.5" }] }),
+            ),
+            (
+                ConditionWhen {
+                    number_between: Some([1.0, 2.5]),
+                    ..ConditionWhen::default()
+                },
+                json!({
+                    "type": "NUMBER_BETWEEN",
+                    "values": [{ "userEnteredValue": "1" }, { "userEnteredValue": "2.5" }],
+                }),
+            ),
+            (
+                ConditionWhen {
+                    blank: Some(true),
+                    ..ConditionWhen::default()
+                },
+                json!({ "type": "BLANK" }),
+            ),
+            (
+                ConditionWhen {
+                    not_blank: Some(true),
+                    ..ConditionWhen::default()
+                },
+                json!({ "type": "NOT_BLANK" }),
+            ),
+            (
+                ConditionWhen {
+                    formula: Some("=$D2=\"Done\"".to_string()),
+                    ..ConditionWhen::default()
+                },
+                json!({
+                    "type": "CUSTOM_FORMULA",
+                    "values": [{ "userEnteredValue": "=$D2=\"Done\"" }],
+                }),
+            ),
+        ];
+        for (when, expected) in cases {
+            assert_eq!(
+                boolean_condition_json(&when, false).expect("condition"),
+                expected
+            );
+        }
+        assert!(boolean_condition_json(&ConditionWhen::default(), false).is_err());
+        let two = ConditionWhen {
+            blank: Some(true),
+            number_gt: Some(1.0),
+            ..ConditionWhen::default()
+        };
+        assert!(boolean_condition_json(&two, false).is_err());
+    }
+
+    #[test]
+    fn condition_numbers_follow_the_locale_decimal_mark() {
+        let when = ConditionWhen {
+            number_between: Some([0.25, 0.65]),
+            ..ConditionWhen::default()
+        };
+        let condition = boolean_condition_json(&when, true).expect("condition");
+        assert_eq!(condition["values"][0]["userEnteredValue"], "0,25");
+        assert_eq!(condition["values"][1]["userEnteredValue"], "0,65");
+
+        assert!(locale_uses_decimal_comma(Some("vi_VN")));
+        assert!(locale_uses_decimal_comma(Some("de_DE")));
+        assert!(locale_uses_decimal_comma(Some("pt_BR")));
+        assert!(!locale_uses_decimal_comma(Some("en_US")));
+        assert!(!locale_uses_decimal_comma(Some("es_MX")));
+        assert!(!locale_uses_decimal_comma(None));
+    }
+
+    #[test]
+    fn conditional_format_rule_carries_the_format_styles() {
+        let conditional = ConditionalFormat {
+            font_color: Some("#065f46".to_string()),
+            bold: Some(true),
+            ..rule(
+                "D2:D21",
+                ConditionWhen {
+                    text_eq: Some("Done".to_string()),
+                    ..ConditionWhen::default()
+                },
+            )
+        };
+        let range = parse_a1_range("D2:D21").expect("range");
+        let request =
+            add_conditional_format_request(3, 0, &conditional, &range, false).expect("request");
+        let add = &request["addConditionalFormatRule"];
+        assert_eq!(add["index"], 0);
+        assert_eq!(add["rule"]["ranges"][0]["sheetId"], 3);
+        let format = &add["rule"]["booleanRule"]["format"];
+        assert!(format["backgroundColorStyle"]["rgbColor"].is_object());
+        assert_eq!(format["textFormat"]["bold"], true);
+        assert!(format["textFormat"]["foregroundColorStyle"]["rgbColor"].is_object());
+        assert_eq!(add["rule"]["booleanRule"]["condition"]["type"], "TEXT_EQ");
+    }
+
+    #[test]
+    fn conditional_formats_delete_intersecting_rules_before_adding() {
+        let body = json!({
+            "sheets": [
+                { "properties": { "sheetId": 9 }, "conditionalFormats": [
+                    { "ranges": [{ "sheetId": 9 }] }
+                ]},
+                { "properties": { "sheetId": 5 }, "conditionalFormats": [
+                    // D2:D21 overlaps the target.
+                    { "ranges": [{ "sheetId": 5, "startRowIndex": 1, "endRowIndex": 21,
+                                   "startColumnIndex": 3, "endColumnIndex": 4 }] },
+                    // H1:H5 does not.
+                    { "ranges": [{ "sheetId": 5, "startRowIndex": 0, "endRowIndex": 5,
+                                   "startColumnIndex": 7, "endColumnIndex": 8 }] },
+                    // Whole column D (unbounded rows) overlaps.
+                    { "ranges": [{ "sheetId": 5, "startColumnIndex": 3, "endColumnIndex": 4 }] }
+                ]}
+            ]
+        });
+        let existing = conditional_rule_ranges(&body, 5);
+        assert_eq!(existing.len(), 3);
+
+        let plan = FormatPlan {
+            validations: vec![list_validation("D2:D21", &["Todo", "Done"])],
+            conditional_formats: vec![
+                rule(
+                    "D10:D21",
+                    ConditionWhen {
+                        text_eq: Some("Done".to_string()),
+                        ..ConditionWhen::default()
+                    },
+                ),
+                rule(
+                    "D10:D21",
+                    ConditionWhen {
+                        blank: Some(true),
+                        ..ConditionWhen::default()
+                    },
+                ),
+            ],
+            freeze_rows: Some(1),
+            ..FormatPlan::default()
+        };
+        let requests = build_format_requests(5, &plan, &existing, false).expect("requests");
+        let kinds: Vec<&str> = requests
+            .iter()
+            .map(|request| {
+                request
+                    .as_object()
+                    .and_then(|object| object.keys().next())
+                    .map(String::as_str)
+                    .expect("request kind")
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "setDataValidation",
+                "deleteConditionalFormatRule",
+                "deleteConditionalFormatRule",
+                "addConditionalFormatRule",
+                "addConditionalFormatRule",
+                "updateSheetProperties",
+            ]
+        );
+        // Deletes run highest index first so earlier indices stay valid.
+        assert_eq!(requests[1]["deleteConditionalFormatRule"]["index"], 2);
+        assert_eq!(requests[2]["deleteConditionalFormatRule"]["index"], 0);
+        assert_eq!(requests[2]["deleteConditionalFormatRule"]["sheetId"], 5);
+        // New rules keep plan order at the top of the list.
+        assert_eq!(requests[3]["addConditionalFormatRule"]["index"], 0);
+        assert_eq!(requests[4]["addConditionalFormatRule"]["index"], 1);
+
+        // No existing rules: only adds.
+        let fresh = build_format_requests(5, &plan, &[], false).expect("requests");
+        assert!(fresh
+            .iter()
+            .all(|request| request.get("deleteConditionalFormatRule").is_none()));
+    }
+
+    #[test]
+    fn missing_sheet_id_in_a_conditional_read_means_the_first_tab() {
+        let body = json!({
+            "sheets": [{ "properties": {}, "conditionalFormats": [{ "ranges": [{}] }] }]
+        });
+        let existing = conditional_rule_ranges(&body, 0);
+        assert_eq!(existing.len(), 1);
+        let target = parse_a1_range("Z100").expect("range");
+        assert!(
+            ranges_intersect(&existing[0][0], &target),
+            "an unbounded rule covers the tab"
+        );
+        assert!(conditional_rule_ranges(&body, 3).is_empty());
     }
 
     #[test]

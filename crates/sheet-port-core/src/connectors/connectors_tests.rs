@@ -254,10 +254,8 @@ fn mock_connector_does_not_support_formatting() {
         SOURCE,
         TABLE,
         &crate::types::FormatPlan {
-            formats: Vec::new(),
             freeze_rows: Some(1),
-            freeze_columns: None,
-            column_widths: Vec::new(),
+            ..Default::default()
         },
     );
     assert!(matches!(format, Err(CoreError::Unsupported(_))));

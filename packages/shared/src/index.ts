@@ -28,6 +28,8 @@ export type TableSchema = {
   tableId: string;
   name: string;
   fields: FieldSchema[];
+  /** Spreadsheet locale, e.g. "vi_VN"; absent when the source does not report it. */
+  locale?: string;
 };
 
 export type TableRecord = {

@@ -75,6 +75,10 @@ pub struct TableSchema {
     pub table_id: String,
     pub name: String,
     pub fields: Vec<FieldSchema>,
+    /// Spreadsheet locale (e.g. `vi_VN`), which decides the formula argument
+    /// separator and decimal mark. Absent when the source does not report it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -153,6 +157,15 @@ pub struct SheetTab {
     pub title: String,
     /// Tab order, left to right.
     pub index: i64,
+}
+
+/// A spreadsheet's tabs plus its locale settings (`properties.locale` /
+/// `properties.timeZone`), as `list_sheets` reports them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpreadsheetInfo {
+    pub tabs: Vec<SheetTab>,
+    pub locale: Option<String>,
+    pub time_zone: Option<String>,
 }
 
 /// A grid column: a stable id (A1 column letter) plus the header title.
@@ -581,9 +594,111 @@ pub struct ColumnWidth {
     pub pixels: i64,
 }
 
-/// A staged formatting change: any mix of per-range cell formats, a header
-/// freeze, and column widths. Serialized verbatim as the agent-visible diff.
+/// Kind of a native data-validation rule: a dropdown of fixed options or a
+/// checkbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidationKind {
+    List,
+    Checkbox,
+}
+
+impl ValidationKind {
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "list" => Some(Self::List),
+            "checkbox" => Some(Self::Checkbox),
+            _ => None,
+        }
+    }
+}
+
+/// A native data-validation rule over an A1 range within the resolved tab
+/// (Google's `setDataValidation`): a dropdown (`list`, ONE_OF_LIST) or a
+/// checkbox (BOOLEAN).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataValidation {
+    pub range: String,
+    #[serde(rename = "type")]
+    pub kind: ValidationKind,
+    /// Dropdown options (`list` only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+    /// Reject input that fails the rule (false only warns).
+    pub strict: bool,
+    /// Show the dropdown chip (`list` only; Google's `showCustomUi`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_dropdown: Option<bool>,
+}
+
+/// The condition of a conditional-format rule. Exactly one field is set
+/// (enforced at the tool boundary); the shape mirrors the tool input so the
+/// agent-visible diff reads like what was sent.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionWhen {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_eq: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_contains: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_gt: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_lt: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_between: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blank: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_blank: Option<bool>,
+    /// Custom formula starting with `=` (written in the spreadsheet's locale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+}
+
+impl ConditionWhen {
+    /// How many condition keys are set (a valid condition has exactly one).
+    pub fn set_count(&self) -> usize {
+        [
+            self.text_eq.is_some(),
+            self.text_contains.is_some(),
+            self.number_gt.is_some(),
+            self.number_lt.is_some(),
+            self.number_between.is_some(),
+            self.blank.is_some(),
+            self.not_blank.is_some(),
+            self.formula.is_some(),
+        ]
+        .into_iter()
+        .filter(|set| *set)
+        .count()
+    }
+}
+
+/// A conditional-format rule over an A1 range within the resolved tab
+/// (Google's `addConditionalFormatRule` with a BooleanRule). Committing a plan
+/// with rules first deletes the tab's existing rules whose ranges intersect
+/// these ranges, so repeated calls replace instead of piling up duplicates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionalFormat {
+    pub range: String,
+    pub when: ConditionWhen,
+    /// `#rrggbb` fill when the condition holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    /// `#rrggbb` text color when the condition holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+}
+
+/// A staged formatting change: any mix of per-range cell formats, a header
+/// freeze, column widths, data validations, and conditional formats.
+/// Serialized verbatim as the agent-visible diff.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FormatPlan {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -596,6 +711,10 @@ pub struct FormatPlan {
     pub freeze_columns: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub column_widths: Vec<ColumnWidth>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validations: Vec<DataValidation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditional_formats: Vec<ConditionalFormat>,
 }
 
 impl FormatPlan {
@@ -605,6 +724,8 @@ impl FormatPlan {
             && self.freeze_rows.is_none()
             && self.freeze_columns.is_none()
             && self.column_widths.is_empty()
+            && self.validations.is_empty()
+            && self.conditional_formats.is_empty()
     }
 }
 
@@ -630,6 +751,10 @@ pub struct CellStyle {
     pub number_format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wrap: Option<bool>,
+    /// Data validation on the cell: `list` (dropdown), `checkbox`, or another
+    /// Google condition type in lowercase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation: Option<String>,
 }
 
 /// The existing style of a tab: sheet-level freeze/width plus the effective
@@ -651,4 +776,6 @@ pub struct TableStyle {
     /// empty when the sheet has no data row.
     pub sample: Vec<CellStyle>,
     pub column_widths: Vec<ColumnWidth>,
+    /// Number of conditional-format rules on the tab.
+    pub conditional_format_count: i64,
 }

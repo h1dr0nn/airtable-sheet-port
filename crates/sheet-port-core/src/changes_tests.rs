@@ -201,10 +201,8 @@ fn commit_auto_approves_pending_change_by_policy() {
 
 fn freeze_only_plan() -> FormatPlan {
     FormatPlan {
-        formats: Vec::new(),
         freeze_rows: Some(1),
-        freeze_columns: None,
-        column_widths: Vec::new(),
+        ..Default::default()
     }
 }
 

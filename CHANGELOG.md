@@ -4,15 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.1.0] - 2026-09-25
 
 ### Added
 - **Guide tab** with the bridge setup steps, both Apps Script files shown in full
   with Copy buttons, and tips. The script.google.com link opens in the system
   browser through the Tauri opener plugin, limited to that URL.
 - Google bridges are managed directly on **Data Sources**.
+- `format_table` and `append_records` accept `validations` (native dropdowns and
+  checkboxes) and `conditionalFormats`, which replace any existing rules on
+  intersecting ranges.
+- `list_sheets` reports the spreadsheet's `locale` and `timeZone`, `describe_table`
+  reports `locale`, and the server instructions explain `;` separators and comma
+  decimals in comma-decimal locales.
 
 ### Changed
+- Committed write results are leaner: `{ change, committed: true, records?,
+  formatError?, created? }`, with the committed change included once instead of
+  nested again under `outcome`. `commit_change` returns the same shape.
 - Calmer themes:
   - Light no longer uses pure white.
   - Dark is a dimmed graphite with elevation shown by lighter surfaces.

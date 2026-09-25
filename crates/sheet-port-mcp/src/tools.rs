@@ -15,8 +15,8 @@ use sheet_port_core::connectors::{parse_spreadsheet_id, ConnectorRegistry};
 use sheet_port_core::constants::BULK_UPDATE_THRESHOLD;
 use sheet_port_core::rusqlite::Connection;
 use sheet_port_core::types::{
-    AuditActor, AuditEvent, ChangeType, DataSource, GridRow, PendingChange, ReadOptions,
-    RecordPatch, TableRecord, TableRef, TableSchema, TableStyle, WriteAction,
+    AuditActor, AuditEvent, ChangeType, CreatedResource, DataSource, GridRow, PendingChange,
+    ReadOptions, RecordPatch, TableRecord, TableRef, TableSchema, TableStyle, WriteAction,
 };
 use sheet_port_core::{audit, changes, google, permissions, CoreError};
 
@@ -48,6 +48,12 @@ struct SheetOutput {
 #[serde(rename_all = "camelCase")]
 struct SheetsOutput {
     spreadsheet_id: String,
+    /// Spreadsheet locale (e.g. `vi_VN`): decides the formula argument
+    /// separator and the decimal mark for USER_ENTERED writes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    time_zone: Option<String>,
     sheets: Vec<SheetOutput>,
 }
 
@@ -61,23 +67,53 @@ struct RecordsOutput {
     records: Vec<TableRecord>,
 }
 
-/// Result of every write tool: the staged change (with its diff, so the agent
-/// can self-review what was written) and, unless it was a dry run, the commit
-/// outcome.
+/// Result of every write tool and of a single `commit_change`: the change
+/// with its diff (so the agent can self-review what was written) and whether
+/// it was committed. A committed result carries the committed change (status
+/// `committed`) once, with the commit outcome fields flattened beside it;
+/// `records` is omitted when empty. A dry run is just `{ change, committed:
+/// false }`.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WriteOutput {
     change: PendingChange,
     committed: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    records: Vec<TableRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    outcome: Option<changes::CommitOutcome>,
+    format_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<CreatedResource>,
+}
+
+impl WriteOutput {
+    fn staged(change: PendingChange) -> Self {
+        Self {
+            change,
+            committed: false,
+            records: Vec::new(),
+            format_error: None,
+            created: None,
+        }
+    }
+
+    fn committed(outcome: changes::CommitOutcome) -> Self {
+        Self {
+            change: outcome.change,
+            committed: true,
+            records: outcome.records,
+            format_error: outcome.format_error,
+            created: outcome.created,
+        }
+    }
 }
 
 /// Response for a batch `commit_change` (the plural `changeIds` form): one
-/// outcome per committed change, in the order requested.
+/// lean outcome per committed change, in the order requested.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CommitBatchOutput {
-    committed: Vec<changes::CommitOutcome>,
+    committed: Vec<WriteOutput>,
 }
 
 #[derive(Serialize)]
@@ -137,11 +173,7 @@ fn finish_write(
         Some(&metadata),
     )?;
     if call.dry_run {
-        return pretty(&WriteOutput {
-            change,
-            committed: false,
-            outcome: None,
-        });
+        return pretty(&WriteOutput::staged(change));
     }
     // The change stays staged when applying it fails; name it so the agent
     // can retry with commit_change instead of staging a duplicate.
@@ -153,11 +185,7 @@ fn finish_write(
             )
         })
     })?;
-    pretty(&WriteOutput {
-        change,
-        committed: true,
-        outcome: Some(outcome),
-    })
+    pretty(&WriteOutput::committed(outcome))
 }
 
 pub fn list_sources(state: &BrokerState) -> Result<String, CoreError> {
@@ -201,18 +229,21 @@ pub fn list_sheets(state: &BrokerState, args: &SourceTableArgs) -> Result<String
         let source_id = resolve(conn, args.source_id.as_deref(), Some(&args.table_id))?;
         permissions::assert_can_read(conn, &source_id, Some(&args.table_id))?;
         let spreadsheet_id = parse_spreadsheet_id(&args.table_id)?;
-        let tabs = registry.list_sheet_tabs(conn, &source_id, &spreadsheet_id)?;
+        let info = registry.spreadsheet_info(conn, &source_id, &spreadsheet_id)?;
         audit::record(
             conn,
             AuditActor::Agent,
             "list_sheets",
             Some(&source_id),
             Some(&args.table_id),
-            Some(&json!({ "count": tabs.len() })),
+            Some(&json!({ "count": info.tabs.len() })),
         )?;
         pretty(&SheetsOutput {
             spreadsheet_id,
-            sheets: tabs
+            locale: info.locale,
+            time_zone: info.time_zone,
+            sheets: info
+                .tabs
                 .into_iter()
                 .map(|tab| SheetOutput {
                     gid: tab.gid,
@@ -513,6 +544,8 @@ pub fn format_table(state: &BrokerState, args: FormatTableArgs) -> Result<String
         let source_id = resolve(conn, args.source_id.as_deref(), Some(&args.table_id))?;
         permissions::assert_can_write(conn, &source_id, &args.table_id, WriteAction::Format)?;
         let format_count = plan.formats.len();
+        let validation_count = plan.validations.len();
+        let conditional_format_count = plan.conditional_formats.len();
         let change = changes::create_format_change(conn, &source_id, &args.table_id, plan)?;
         finish_write(
             conn,
@@ -522,7 +555,11 @@ pub fn format_table(state: &BrokerState, args: FormatTableArgs) -> Result<String
                 source_id: &source_id,
                 table_id: Some(&args.table_id),
                 dry_run: args.dry_run,
-                metadata: json!({ "formatCount": format_count }),
+                metadata: json!({
+                    "formatCount": format_count,
+                    "validationCount": validation_count,
+                    "conditionalFormatCount": conditional_format_count,
+                }),
             },
             change,
         )
@@ -637,7 +674,7 @@ pub fn commit_change(state: &BrokerState, args: &CommitChangeArgs) -> Result<Str
                 })),
             )?;
             pretty(&CommitBatchOutput {
-                committed: outcomes,
+                committed: outcomes.into_iter().map(WriteOutput::committed).collect(),
             })
         } else {
             let outcome = changes::commit(conn, registry, &change_ids[0])?;
@@ -652,7 +689,7 @@ pub fn commit_change(state: &BrokerState, args: &CommitChangeArgs) -> Result<Str
                     "recordCount": outcome.records.len(),
                 })),
             )?;
-            pretty(&outcome)
+            pretty(&WriteOutput::committed(outcome))
         }
     })
 }
