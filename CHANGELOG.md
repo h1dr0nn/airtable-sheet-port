@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-09-25
+
+### Changed
+- Closing the window quits the app. There is no close prompt, tray icon or
+  background mode. MCP clients on stdio start their own server, so Claude keeps
+  working after the app is closed. On the http transport the server is a child
+  of the app and stops when the window closes.
+- `conditionalFormats` now replace only existing rules on exactly the same
+  range. Overlapping rules are kept, so a whole-row rule on `B10:I21` no longer
+  wipes the status and priority rules in columns D and E. Pass
+  `replaceIntersecting: true` on `format_table` or `append_records` to delete
+  every intersecting rule as before.
+
+### Removed
+- The "When Closing the Window" setting, the close dialog, the tray icon and
+  menu, and the `set_close_behavior`, `window_hide_to_tray` and `window_quit`
+  commands.
+
+### Fixed
+- Clearing Activity now leaves the list empty. The clear no longer shows up as
+  a new `audit_cleared` entry (it stays in the audit trail for `get_audit_log`)
+  and no "Activity cleared" toast is shown.
+- `format_table` and `append_records` schemas now list `validations` and
+  `conditionalFormats`. Every tool's input schema is inlined (no `$defs` or
+  `$ref`), with a description per field and item schemas that show their fields
+  instead of `{}`. The tool descriptions and server instructions mention
+  dropdowns, checkboxes and color rules.
+- `get_table_style` takes an optional `headerRow` (1-based, default 1) for
+  document-style sheets whose header is lower down. The sample is the next row,
+  and the result reports `headerRow`.
+
 ## [2.1.0] - 2026-09-25
 
 ### Added
