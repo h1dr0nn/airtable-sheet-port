@@ -1,5 +1,6 @@
-//! Headless bridge management: `sheet-port-mcp bridge add|list|remove`. Lets
-//! a bridge be added without opening the desktop app (and drives the live
+//! Headless commands: `sheet-port-mcp --version` and bridge management
+//! (`sheet-port-mcp bridge add|list|remove`). The bridge commands let
+//! a bridge be added without opening the desktop app (and drive the live
 //! smoke). The secret is read from `SHEET_PORT_BRIDGE_SECRET` or, when that is
 //! unset, from the first line of stdin, so it never appears in the process
 //! list. Output is JSON on stdout; errors go to stderr.
@@ -19,10 +20,16 @@ const USAGE: &str =
 /// Returns Some(result) when `args` (without the program name) is a CLI
 /// command, None when the process should serve MCP as usual.
 pub fn try_run(args: &[String]) -> Option<Result<String, CoreError>> {
-    if args.first().map(String::as_str) != Some("bridge") {
-        return None;
+    match args.first().map(String::as_str) {
+        Some("--version" | "-V") => Some(Ok(version())),
+        Some("bridge") => Some(run_bridge(&args[1..])),
+        _ => None,
     }
-    Some(run_bridge(&args[1..]))
+}
+
+/// `sheet-port-mcp <version>`, printed by `--version` / `-V`.
+fn version() -> String {
+    format!("sheet-port-mcp {}", env!("CARGO_PKG_VERSION"))
 }
 
 fn run_bridge(args: &[String]) -> Result<String, CoreError> {
@@ -84,5 +91,16 @@ mod tests {
     fn non_bridge_args_fall_through_to_the_server() {
         assert!(try_run(&[]).is_none());
         assert!(try_run(&["--stdio".to_string()]).is_none());
+    }
+
+    #[test]
+    fn version_flags_print_the_package_version() {
+        let expected = format!("sheet-port-mcp {}", env!("CARGO_PKG_VERSION"));
+        for flag in ["--version", "-V"] {
+            match try_run(&[flag.to_string()]) {
+                Some(Ok(output)) => assert_eq!(output, expected),
+                other => panic!("{flag}: unexpected {other:?}"),
+            }
+        }
     }
 }

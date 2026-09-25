@@ -280,10 +280,14 @@ try {
   assert.equal(dryAudit.metadata.dryRun, true, "audit metadata carries dryRun");
 
   const hb = new DatabaseSync(dbPath);
-  const rows = hb.prepare("SELECT pid, last_seen FROM mcp_heartbeat").all();
+  const rows = hb.prepare("SELECT pid, last_seen, version FROM mcp_heartbeat").all();
   hb.close();
   assert.equal(rows.length, 1, "heartbeat row present");
   assert.equal(Number(rows[0].pid), child.pid, "heartbeat pid matches sidecar");
+  const cargoToml = readFileSync(join(scriptDir, "..", "crates", "sheet-port-mcp", "Cargo.toml"), "utf8");
+  const crateVersion = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+  assert.ok(crateVersion, "sheet-port-mcp Cargo.toml declares a version");
+  assert.equal(rows[0].version, crateVersion, "heartbeat carries the sidecar version");
 
   process.stdout.write("PROTOCOL SMOKE: ALL PASS\n");
 } catch (error) {

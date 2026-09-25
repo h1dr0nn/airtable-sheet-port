@@ -268,6 +268,22 @@ before the first release; the workflow overwrites its `version`, `pub_date`, and
 `platforms` (six keys: `windows-x86_64` + `-nsis`, `linux-x86_64` + `-appimage`,
 `darwin-x86_64`, `darwin-aarch64`) on every release.
 
+### Windows installer and the running sidecar
+
+MCP clients keep `sheet-port-mcp.exe` running, and Windows cannot overwrite a running
+exe. `apps/desktop/src-tauri/windows/hooks.nsh` (`bundle.windows.nsis.installerHooks`)
+renames it to the first free `sheet-port-mcp.old-N.exe` before files are copied, which
+Windows allows for a running exe on the same volume, then the new sidecar is written under
+the original name. Clients keep the old process until they restart it. Leftover
+`.old-N.exe` files are removed by the next install, on app start (`lib.rs`), and on
+uninstall (`/REBOOTOK` for copies still in use). Only NSIS has this hook, so Windows
+builds NSIS only (`bundle.targets` has no `msi`).
+
+To see which sidecar is installed, run `sheet-port-mcp.exe --version` (or `-V`), or check
+the file version: `(Get-Item "<install dir>\sheet-port-mcp.exe").VersionInfo`. The version
+resource comes from `crates/sheet-port-mcp/build.rs` (`tauri-winres`, Windows targets only)
+and always matches the crate version.
+
 ## Window Behavior
 
 The desktop shell uses three native Tauri features, wired in

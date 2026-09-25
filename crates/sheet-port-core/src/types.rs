@@ -423,6 +423,21 @@ pub struct AppStatus {
     pub mcp_running: bool,
     pub mcp_pid: Option<i64>,
     pub mcp_last_seen: Option<String>,
+    /// Every sidecar with a fresh heartbeat (newest first). Several can run at
+    /// once (one per MCP client); after an app update an old one keeps
+    /// running until its client restarts.
+    pub sidecars: Vec<SidecarHeartbeat>,
+}
+
+/// One running MCP sidecar from its heartbeat row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarHeartbeat {
+    pub pid: i64,
+    /// The sidecar's package version; `None` for sidecars that predate the
+    /// heartbeat `version` column.
+    pub version: Option<String>,
+    pub last_seen: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

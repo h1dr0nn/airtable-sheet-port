@@ -16,6 +16,13 @@ export type AppStatus = {
   mcpRunning: boolean;      // any mcp_heartbeat row with last_seen within 30s
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
+  sidecars: SidecarHeartbeat[];  // every fresh heartbeat row, newest first
+};
+
+export type SidecarHeartbeat = {
+  pid: number;
+  version: string | null;     // sidecar package version; null for sidecars that predate it
+  lastSeen: string;           // ISO timestamp
 };
 
 export type TablePage = {

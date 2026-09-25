@@ -75,7 +75,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
 CREATE TABLE IF NOT EXISTS mcp_heartbeat (
   pid INTEGER PRIMARY KEY,
   started_at TEXT NOT NULL,
-  last_seen TEXT NOT NULL
+  last_seen TEXT NOT NULL,
+  -- Sidecar package version (CARGO_PKG_VERSION). NULL for sidecars built
+  -- before schema_version 5, which never write it. Added to existing
+  -- databases by the v4 -> v5 migration in db.rs.
+  version TEXT
 );
 
 -- Mock connector data lives in the DB so the desktop UI and the MCP sidecar

@@ -39,6 +39,8 @@ const DEFAULT_AUDIT_LIMIT = 100;
 const MAX_AUDIT_LIMIT = 500;
 const DEMO_MCP_PID = 48213;
 const HEARTBEAT_AGE_MS = 4_000;
+/** The demo sidecar reports the same version, so the demo shows no warning. */
+const DEMO_APP_VERSION = "0.0.1";
 
 // Mirrors core::db defaults for the MCP sidecar config.
 const DEFAULT_MCP_TRANSPORT: McpTransport = "stdio";
@@ -194,12 +196,14 @@ export function createDemoIpc(): IpcApi {
   return {
     ...workbench,
     async getAppStatus(): Promise<AppStatus> {
+      const lastSeen = new Date(Date.now() - HEARTBEAT_AGE_MS).toISOString();
       return {
-        appVersion: "0.0.1 (browser demo)",
+        appVersion: `${DEMO_APP_VERSION} (browser demo)`,
         dbPath: "C:\\Users\\demo\\AppData\\Roaming\\sheet-port\\sheet-port.db",
         mcpRunning: true,
         mcpPid: DEMO_MCP_PID,
-        mcpLastSeen: new Date(Date.now() - HEARTBEAT_AGE_MS).toISOString()
+        mcpLastSeen: lastSeen,
+        sidecars: [{ pid: DEMO_MCP_PID, version: DEMO_APP_VERSION, lastSeen }]
       };
     },
     async listSources(): Promise<DataSource[]> {

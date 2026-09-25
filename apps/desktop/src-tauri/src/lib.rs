@@ -25,6 +25,7 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            remove_renamed_sidecars();
             // Opens (or creates) the SQLite DB shared with the MCP server and
             // applies schema + seed; see docs/ipc.md for the shared-state model.
             let state = commands::DbState::init().map_err(std::io::Error::other)?;
@@ -110,3 +111,32 @@ fn kill_managed_sidecar(app: &tauri::AppHandle) {
         }
     }
 }
+
+/// Deletes `sheet-port-mcp.old-*.exe` next to the app. The NSIS installer
+/// renames a sidecar that an MCP client still runs to that name so the new one
+/// can be written (windows/hooks.nsh). Best-effort: a copy still in use fails
+/// to delete and is retried on the next launch.
+#[cfg(windows)]
+fn remove_renamed_sidecars() {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("sheet-port-mcp.old-") && name.ends_with(".exe") {
+            if let Err(error) = std::fs::remove_file(entry.path()) {
+                eprintln!("[sheet-port] could not remove {name}: {error}");
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn remove_renamed_sidecars() {}

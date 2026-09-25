@@ -119,6 +119,9 @@ The desktop app never polls the sidecar directly; liveness flows through the DB:
   (best effort).
 - The desktop `get_app_status` command reports `mcpRunning: true` when the newest
   heartbeat row has `last_seen` within 30s, plus `mcpPid` and `mcpLastSeen`.
+- Each row also carries the sidecar's `version`, and `get_app_status` lists the
+  fresh rows as `sidecars`, so the Dashboard can tell the user to restart an MCP
+  client that still runs the sidecar from an older install.
 
 ## Workspace Layout
 

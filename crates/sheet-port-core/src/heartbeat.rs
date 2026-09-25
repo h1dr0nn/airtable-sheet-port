@@ -9,14 +9,17 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::constants::HEARTBEAT_STALE_MS;
 use crate::db::{iso_before, now_iso};
 use crate::error::{db_error, CoreError};
-use crate::types::{AppStatus, HeartbeatStatus};
+use crate::types::{AppStatus, HeartbeatStatus, SidecarHeartbeat};
 
-pub fn upsert_own(conn: &Connection, pid: i64) -> Result<(), CoreError> {
+/// Upserts this sidecar's row. `version` is the sidecar's package version
+/// (`CARGO_PKG_VERSION`) so the desktop can spot sidecars left running from
+/// an older install.
+pub fn upsert_own(conn: &Connection, pid: i64, version: &str) -> Result<(), CoreError> {
     let now = now_iso();
     conn.execute(
-        "INSERT INTO mcp_heartbeat (pid, started_at, last_seen) VALUES (?1, ?2, ?2)
-         ON CONFLICT(pid) DO UPDATE SET last_seen = excluded.last_seen",
-        params![pid, now],
+        "INSERT INTO mcp_heartbeat (pid, started_at, last_seen, version) VALUES (?1, ?2, ?2, ?3)
+         ON CONFLICT(pid) DO UPDATE SET last_seen = excluded.last_seen, version = excluded.version",
+        params![pid, now, version],
     )
     .map_err(|error| db_error("Could not upsert heartbeat", error))?;
     Ok(())
@@ -64,7 +67,7 @@ pub fn status(conn: &Connection, ttl_ms: i64) -> Result<HeartbeatStatus, CoreErr
 
 /// Desktop status readout (docs/ipc.md get_app_status). Unlike [`status`],
 /// the newest pid/last_seen are reported even when stale so the UI can show
-/// when the server was last alive.
+/// when the server was last alive. `sidecars` lists only the fresh rows.
 pub fn app_status(
     conn: &Connection,
     app_version: String,
@@ -88,13 +91,40 @@ pub fn app_status(
         None => (None, None, false),
     };
 
+    let sidecars = fresh_sidecars(conn, &freshness_floor)?;
+
     Ok(AppStatus {
         app_version,
         db_path,
         mcp_running,
         mcp_pid,
         mcp_last_seen,
+        sidecars,
     })
+}
+
+/// Heartbeat rows at or after `freshness_floor`, newest first.
+fn fresh_sidecars(
+    conn: &Connection,
+    freshness_floor: &str,
+) -> Result<Vec<SidecarHeartbeat>, CoreError> {
+    let read_error = |error| db_error("Could not read MCP heartbeats", error);
+    let mut statement = conn
+        .prepare(
+            "SELECT pid, version, last_seen FROM mcp_heartbeat
+             WHERE last_seen >= ?1 ORDER BY last_seen DESC, pid",
+        )
+        .map_err(read_error)?;
+    let rows = statement
+        .query_map([freshness_floor], |row| {
+            Ok(SidecarHeartbeat {
+                pid: row.get(0)?,
+                version: row.get(1)?,
+                last_seen: row.get(2)?,
+            })
+        })
+        .map_err(read_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(read_error)
 }
 
 #[cfg(test)]

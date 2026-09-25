@@ -41,6 +41,10 @@ const ENV_TRANSPORT: &str = "SHEET_PORT_MCP_TRANSPORT";
 /// Env override for the HTTP port (decimal). Out-of-range or unparseable
 /// values clamp to the valid window exactly like the meta value.
 const ENV_PORT: &str = "SHEET_PORT_MCP_PORT";
+/// Written to our heartbeat row so the desktop can flag a sidecar left
+/// running from an older install (the MCP client must restart to pick up
+/// the new binary).
+const SIDECAR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -85,7 +89,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Done before serving so status is accurate on both transports.
     state.with_conn(|conn, _| {
         heartbeat::delete_stale(conn, HEARTBEAT_STALE_MS)?;
-        heartbeat::upsert_own(conn, pid)
+        heartbeat::upsert_own(conn, pid, SIDECAR_VERSION)
     })?;
     let heartbeat_task = spawn_heartbeat(Arc::clone(&state), pid);
 
@@ -158,7 +162,9 @@ fn spawn_heartbeat(state: Arc<BrokerState>, pid: i64) -> tokio::task::JoinHandle
         let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         loop {
             ticker.tick().await;
-            if let Err(error) = state.with_conn(|conn, _| heartbeat::upsert_own(conn, pid)) {
+            if let Err(error) =
+                state.with_conn(|conn, _| heartbeat::upsert_own(conn, pid, SIDECAR_VERSION))
+            {
                 log(&format!("heartbeat update failed: {error}"));
             }
         }

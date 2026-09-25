@@ -20,6 +20,13 @@ import { useSources } from "../hooks/useSources.js";
 import { useTokenStatus } from "../hooks/useTokenStatus.js";
 import { useTranslation } from "../i18n/useTranslation.js";
 import { DASHBOARD_AUDIT_COUNT } from "../lib/constants.js";
+import type { SidecarHeartbeat } from "../lib/ipc.js";
+import {
+  isSidecarOutdated,
+  normalizeVersion,
+  outdatedSidecars,
+  outdatedVersionLabel
+} from "../lib/sidecars.js";
 import type { ScreenId } from "../lib/nav.js";
 import { CopyButton } from "../components/CopyButton.js";
 import { RelativeTime } from "../components/RelativeTime.js";
@@ -59,6 +66,56 @@ function StatCard({ label, action, className, children }: StatCardProps) {
 // stat cards leave no gap; at xl all three sit side by side.
 const MCP_CARD_SPAN = "md:col-span-2 xl:col-span-1";
 
+type SidecarListProps = {
+  sidecars: SidecarHeartbeat[];
+  appVersion: string;
+};
+
+/**
+ * One line per running sidecar ("PID 1234 · v2.2.1"), plus a restart warning
+ * when any of them runs a version other than the app's (see lib/sidecars.ts).
+ */
+function SidecarList({ sidecars, appVersion }: SidecarListProps) {
+  const { t } = useTranslation();
+  const outdated = outdatedSidecars(sidecars, appVersion);
+  const oldVersion = outdatedVersionLabel(outdated);
+  const current = normalizeVersion(appVersion);
+
+  return (
+    <>
+      <ul className="mt-2 space-y-1 font-mono text-[12px] text-ink-muted">
+        {sidecars.map((sidecar) => (
+          <li key={sidecar.pid} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <span>
+              PID <span className="text-ink">{sidecar.pid}</span>
+              {" · "}
+              <span className="text-ink">
+                {sidecar.version
+                  ? `v${normalizeVersion(sidecar.version)}`
+                  : t("dashboard.sidecarVersionUnknown")}
+              </span>
+              {" · heartbeat "}
+              <RelativeTime iso={sidecar.lastSeen} className="text-ink" />
+            </span>
+            {isSidecarOutdated(sidecar, appVersion) ? (
+              <Badge variant="warning" className="font-sans">
+                {t("dashboard.sidecarOutdatedBadge")}
+              </Badge>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {outdated.length > 0 ? (
+        <p role="status" className="mt-2 text-[12.5px] leading-5 text-warning">
+          {oldVersion
+            ? t("dashboard.sidecarOutdated", { old: oldVersion, current })
+            : t("dashboard.sidecarOutdatedUnknown", { current })}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 function McpStatCard() {
   const { data: status, isPending } = useAppStatus();
   const { t } = useTranslation();
@@ -86,7 +143,9 @@ function McpStatCard() {
         </Tooltip>
         <span className="text-[15px] font-semibold text-ink">{statusLabel}</span>
       </div>
-      {status.mcpRunning ? (
+      {status.mcpRunning && status.sidecars.length > 0 ? (
+        <SidecarList sidecars={status.sidecars} appVersion={status.appVersion} />
+      ) : status.mcpRunning ? (
         <p className="mt-2 font-mono text-[12px] text-ink-muted">
           PID <span className="text-ink">{status.mcpPid ?? "?"}</span>
           {status.mcpLastSeen ? (

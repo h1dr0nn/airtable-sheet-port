@@ -192,8 +192,8 @@ jobs:
             SIG=$(find "$BUNDLE/nsis" -name "*-setup.exe.sig" | head -n 1)
             [ -n "$EXE" ] && cp "$EXE" "release-artifacts/${PREFIX}-setup.exe"
             [ -n "$SIG" ] && cp "$SIG" "release-artifacts/${PREFIX}-setup.exe.sig"
-            # MSI — secondary installer, no updater wiring.
-            cp "$BUNDLE"/msi/*.msi "release-artifacts/${PREFIX}.msi" 2>/dev/null || true
+            # No MSI: bundle.targets builds NSIS only on Windows, since the
+            # sidecar rename hook (windows/hooks.nsh) exists only for NSIS.
             if [ -z "$EXE" ] || [ -z "$SIG" ]; then
               echo "::error::Windows NSIS bundle missing — exe='$EXE' sig='$SIG'."
               exit 1

@@ -3720,6 +3720,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sheet-port-core",
+ "tauri-winres",
  "tokio",
  "uuid",
 ]

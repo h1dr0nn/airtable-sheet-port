@@ -6,6 +6,7 @@
 //! seeded on first run, and the v2 -> v3 / v3 -> v4 migrations widen the
 //! pending-change CHECK constraint to allow the 'format' and then the
 //! structural ('create_spreadsheet' / 'create_sheet' / 'delete_sheet') types.
+//! v4 -> v5 adds the nullable `mcp_heartbeat.version` column.
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +28,7 @@ const BUSY_TIMEOUT_MS: u64 = 5000;
 
 const META_SEEDED_KEY: &str = "seeded";
 const META_SCHEMA_VERSION_KEY: &str = "schema_version";
-const SCHEMA_VERSION_CURRENT: &str = "4";
+const SCHEMA_VERSION_CURRENT: &str = "5";
 
 // include_str! paths are relative to THIS source file. The .sql files are the
 // single source of truth for the shared database contract.
@@ -200,7 +201,7 @@ fn apply_schema_and_seed(conn: &Connection) -> Result<(), CoreError> {
 }
 
 /// Brings older databases up to `SCHEMA_VERSION_CURRENT` by applying each
-/// migration in sequence (v1 -> v2 -> v3 -> v4). A missing schema_version means a v1
+/// migration in sequence (v1 -> v2 -> v3 -> v4 -> v5). A missing schema_version means a v1
 /// database (the v1 seed always wrote it, but be defensive); fresh databases
 /// get the current version from the seed and skip every step. Each step
 /// advances the version marker inside its own transaction, so the loop
@@ -216,6 +217,10 @@ fn migrate_to_current_version(conn: &Connection) -> Result<(), CoreError> {
             None | Some("1") => (MIGRATE_V1_TO_V2_SQL, "2"),
             Some("2") => (MIGRATE_V2_TO_V3_SQL, "3"),
             Some("3") => (MIGRATE_V3_TO_V4_SQL, "4"),
+            Some("4") => {
+                migrate_v4_to_v5(conn)?;
+                continue;
+            }
             Some(_) => return Ok(()),
         };
         conn.execute_batch(sql).map_err(|error| {
@@ -225,6 +230,42 @@ fn migrate_to_current_version(conn: &Connection) -> Result<(), CoreError> {
             )
         })?;
     }
+}
+
+/// v4 -> v5: add the nullable `mcp_heartbeat.version` column. Old sidecars
+/// never write it, so their rows keep NULL. schema.sql already creates the
+/// column for tables it makes, and another process may migrate concurrently,
+/// so the ALTER only runs while the column is still missing, checked inside
+/// the same write transaction that bumps the version.
+fn migrate_v4_to_v5(conn: &Connection) -> Result<(), CoreError> {
+    let fail = |error| db_error("Could not migrate database to schema version 5", error);
+    conn.execute_batch("BEGIN IMMEDIATE;").map_err(fail)?;
+    let result = (|| {
+        if !column_exists(conn, "mcp_heartbeat", "version")? {
+            conn.execute_batch("ALTER TABLE mcp_heartbeat ADD COLUMN version TEXT;")?;
+        }
+        conn.execute_batch(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '5')
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+             COMMIT;",
+        )
+    })();
+    if let Err(error) = result {
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err(fail(error));
+    }
+    Ok(())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for name in names {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn is_seeded(conn: &Connection) -> Result<bool, CoreError> {
@@ -675,6 +716,53 @@ VALUES
             [],
         )
         .expect("format change type is accepted after migration");
+    }
+
+    #[test]
+    fn migrates_v4_heartbeat_table_to_v5_with_nullable_version() {
+        let path = temp_db_path();
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        let setup = Connection::open(&path).expect("open raw");
+        setup.execute_batch(SCHEMA_SQL).expect("apply schema");
+        setup
+            .execute_batch(
+                "DROP TABLE mcp_heartbeat;
+                 CREATE TABLE mcp_heartbeat (
+                   pid INTEGER PRIMARY KEY,
+                   started_at TEXT NOT NULL,
+                   last_seen TEXT NOT NULL
+                 );
+                 INSERT INTO mcp_heartbeat (pid, started_at, last_seen)
+                   VALUES (7, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 INSERT INTO meta (key, value) VALUES ('seeded', '1'), ('schema_version', '4');",
+            )
+            .expect("install v4 heartbeat table");
+        assert!(!column_exists(&setup, "mcp_heartbeat", "version").expect("table_info"));
+        drop(setup);
+
+        let conn = open_at(&path).expect("open migrates v4 database");
+
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some(SCHEMA_VERSION_CURRENT.to_string())
+        );
+        assert!(column_exists(&conn, "mcp_heartbeat", "version").expect("table_info"));
+        let version: Option<String> = conn
+            .query_row(
+                "SELECT version FROM mcp_heartbeat WHERE pid = 7",
+                [],
+                |row| row.get(0),
+            )
+            .expect("kept row");
+        assert_eq!(version, None, "rows from old sidecars keep NULL");
+        drop(conn);
+        open_at(&path).expect("reopen at v5 is a no-op");
+    }
+
+    #[test]
+    fn fresh_databases_have_heartbeat_version_column() {
+        let conn = test_support::open_temp_db();
+        assert!(column_exists(&conn, "mcp_heartbeat", "version").expect("table_info"));
     }
 
     #[test]

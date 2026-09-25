@@ -113,6 +113,12 @@ export const en = {
   "dashboard.mcpServer": "MCP Server",
   "dashboard.mcpOfflineHint":
     "Register Sheet Port with your MCP client from Settings, then restart the client.",
+  "dashboard.sidecarVersionUnknown": "older version",
+  "dashboard.sidecarOutdatedBadge": "Outdated",
+  "dashboard.sidecarOutdated":
+    "An MCP client is still running sidecar v{old}. Restart Claude or your MCP client to use v{current}.",
+  "dashboard.sidecarOutdatedUnknown":
+    "An MCP client is still running an older sidecar version. Restart Claude or your MCP client to use v{current}.",
   "dashboard.database": "Database",
   "dashboard.copyDatabasePath": "Copy database path",
   "dashboard.sharedSqlite": "Shared SQLite",
@@ -578,6 +584,12 @@ const vi: Dictionary = {
   "dashboard.mcpServer": "Máy chủ MCP",
   "dashboard.mcpOfflineHint":
     "Đăng ký Sheet Port với client MCP của bạn từ Cài đặt, sau đó khởi động lại client.",
+  "dashboard.sidecarVersionUnknown": "bản cũ",
+  "dashboard.sidecarOutdatedBadge": "Bản cũ",
+  "dashboard.sidecarOutdated":
+    "Claude đang dùng sidecar bản cũ (v{old}). Khởi động lại Claude hoặc client MCP để dùng bản v{current}.",
+  "dashboard.sidecarOutdatedUnknown":
+    "Claude đang dùng sidecar bản cũ. Khởi động lại Claude hoặc client MCP để dùng bản v{current}.",
   "dashboard.database": "Cơ sở dữ liệu",
   "dashboard.copyDatabasePath": "Sao chép đường dẫn cơ sở dữ liệu",
   "dashboard.sharedSqlite": "SQLite dùng chung",

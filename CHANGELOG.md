@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `sheet-port-mcp --version` (or `-V`) prints the sidecar version. On Windows,
+  `sheet-port-mcp.exe` now carries file version info (FileVersion,
+  ProductVersion, description), shown in Explorer's Details tab.
+- The Dashboard's MCP card lists each running sidecar with its version
+  ("PID 1234 · v2.2.1") and warns when an MCP client still runs an older
+  sidecar, so you know to restart Claude after an update. Sidecars record
+  their version in the heartbeat (database schema_version 5).
+
+### Changed
+- The Windows release ships only the NSIS installer (`-setup.exe`), which is
+  also what the updater installs. The MSI is no longer built.
+
+### Fixed
+- Updating while an MCP client runs the sidecar. The installer used to fail on
+  the locked `sheet-port-mcp.exe` and keep the old build. It now renames the
+  running copy to `sheet-port-mcp.old-N.exe` and installs the new one; the old
+  copies are deleted on the next update, app start or uninstall.
+
 ## [2.2.0] - 2026-09-25
 
 ### Changed

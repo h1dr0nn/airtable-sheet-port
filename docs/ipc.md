@@ -26,8 +26,22 @@ type AppStatus = {
   mcpRunning: boolean;      // any mcp_heartbeat row with last_seen within 30s
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
+  sidecars: SidecarHeartbeat[];  // every fresh heartbeat row, newest first
+};
+
+type SidecarHeartbeat = {
+  pid: number;
+  version: string | null;     // sidecar package version; null for sidecars that predate it
+  lastSeen: string;           // ISO timestamp
 };
 ```
+
+`mcpPid` / `mcpLastSeen` describe the newest heartbeat row even when it is
+stale; `sidecars` lists only rows seen within 30s. Each sidecar writes its
+`CARGO_PKG_VERSION` to `mcp_heartbeat.version` (schema_version 5); older
+sidecars leave it NULL. The Dashboard flags a sidecar as outdated when its
+version is null or differs from `appVersion`, because an MCP client keeps
+running the old sidecar until it restarts.
 
 ### `list_sources() -> DataSource[]`
 

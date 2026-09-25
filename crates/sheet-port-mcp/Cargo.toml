@@ -26,6 +26,11 @@ schemars = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 
+[build-dependencies]
+# Windows version resource (build.rs, only when the target OS is windows).
+# Already in the lock file through tauri-build.
+tauri-winres = "0.3"
+
 [dev-dependencies]
 # Tests (unit and tests/http_transport.rs) run against the mock connector, so
 # `cargo test -p sheet-port-mcp` needs no --features flag. Release builds stay
