@@ -5,7 +5,9 @@ mod google_sheets;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 
-pub use google_sheets::{parse_spreadsheet_id, spreadsheet_title, GoogleSheetsConnector};
+pub use google_sheets::{
+    parse_spreadsheet_id, spreadsheet_title, GoogleSheetsConnector, STYLE_HEADER_ROW_MAX,
+};
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockConnector;
 
@@ -181,13 +183,15 @@ pub trait TableConnector: Send + Sync {
     // the Unsupported defaults below.
     // -----------------------------------------------------------------------
 
-    /// The existing style of a tab (header + first data row + sheet freeze and
-    /// column widths) so an agent can match it instead of imposing a new look.
+    /// The existing style of a tab (the 1-based `header_row`, the row below it,
+    /// sheet freeze and column widths) so an agent can match it instead of
+    /// imposing a new look.
     fn read_table_style(
         &self,
         _conn: &Connection,
         _source_id: &str,
         _table_id: &str,
+        _header_row: i64,
     ) -> Result<TableStyle, CoreError> {
         Err(CoreError::Unsupported(
             "This source does not support reading cell formatting".to_string(),
@@ -456,9 +460,10 @@ impl ConnectorRegistry {
         conn: &Connection,
         source_id: &str,
         table_id: &str,
+        header_row: i64,
     ) -> Result<TableStyle, CoreError> {
         self.for_source(conn, source_id)?
-            .read_table_style(conn, source_id, table_id)
+            .read_table_style(conn, source_id, table_id, header_row)
     }
 
     pub fn format_cells(

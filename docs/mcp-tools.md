@@ -16,16 +16,22 @@ writes an audit event (actor `agent`).
 | `read_formulas` | read | `{ sourceId?, tableId, limit, offset }` |
 | `find_records` | read | `{ sourceId?, tableId, query }` |
 | `read_cells` | read | `{ sourceId?, tableId, range?, limit, offset }` |
-| `get_table_style` | read | `{ sourceId?, tableId }` |
+| `get_table_style` | read | `{ sourceId?, tableId, headerRow? }` |
 | `update_records` | write | `{ sourceId?, tableId, patches, dryRun? }` |
-| `append_records` | write | `{ sourceId?, tableId, records, formats?, freezeRows?, freezeColumns?, columnWidths?, dryRun? }` |
+| `append_records` | write | `{ sourceId?, tableId, records, formats?, freezeRows?, freezeColumns?, columnWidths?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
 | `update_cells` | write | `{ sourceId?, tableId, cells, dryRun? }` |
-| `format_table` | write | `{ sourceId?, tableId, formats?, freezeRows?, freezeColumns?, columnWidths?, dryRun? }` |
+| `format_table` | write | `{ sourceId?, tableId, formats?, freezeRows?, freezeColumns?, columnWidths?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
 | `create_spreadsheet` | write | `{ sourceId?, title, dryRun? }` |
 | `create_sheet` | write | `{ sourceId?, tableId, title, dryRun? }` |
 | `delete_sheet` | delete | `{ sourceId?, tableId, confirm: true, dryRun? }` |
 | `commit_change` | write | `{ changeId }` or `{ changeIds }` |
 | `get_audit_log` | read | `{ limit? }` |
+
+Every `inputSchema` in `tools/list` is fully inlined: no `$defs` or `$ref`, and every
+field sits at the top level (the shared formatting fields of `format_table` and
+`append_records` included) with a description. Array items describe their own fields
+(`formats`, `validations`, `conditionalFormats`, `cells`, `patches`, ...), so clients that
+drop `$defs` still show them.
 
 Renamed in 2.0.0: `preview_update_records` -> `update_records`, `preview_update_cells`
 -> `update_cells`, `preview_format_table` -> `format_table`,
@@ -391,9 +397,13 @@ Permission required: `read` on the source/table.
 ## `get_table_style`
 
 Purpose: read a tab's existing cell formatting so an agent can match it (read-only). It
-returns the effective style of the header row and the first data row, plus the frozen
-row/column counts and per-column pixel widths. Only properties actually set on a cell are
-included, so the output stays compact.
+returns the effective style of the header row and the row below it (the sample), plus the
+frozen row/column counts and per-column pixel widths. Only properties actually set on a
+cell are included, so the output stays compact.
+
+The header is row 1 by default. On a document-style sheet whose table starts lower (banner
+rows above a header on row 9, say) pass `headerRow: 9`; the sample is then row 10. The
+read fetches only `A{headerRow}:ZZ{headerRow+1}`.
 
 Input schema:
 
@@ -401,6 +411,7 @@ Input schema:
 |---|---|---|
 | `sourceId` | string | optional, min length 1 |
 | `tableId` | string | min length 1 |
+| `headerRow` | integer | optional, 1-based, 1 to 1000000, default 1 |
 
 Output shape: `{ "style": TableStyle }` where
 
@@ -421,9 +432,10 @@ type TableStyle = {
   sheetTitle?: string;                               // omitted for the first tab
   frozenRowCount: number;
   frozenColumnCount: number;
+  headerRow: number;                                 // 1-based row read as the header
   columnCount: number;                               // used (header) width
-  header: CellStyle[];                               // row 1
-  sample: CellStyle[];                               // row 2 (first data row)
+  header: CellStyle[];                               // row headerRow
+  sample: CellStyle[];                               // row headerRow + 1 (first data row)
   columnWidths: ColumnWidth[];
   conditionalFormatCount: number;                    // conditional-format rules on the tab
 };
@@ -503,8 +515,8 @@ Purpose: append rows at the bottom of a tab and return the diff. On an empty tab
 record field names seed the header row. Commits in the same call unless `dryRun` is set.
 
 Optionally, the append may carry a formatting plan (the same `formats`, `freezeRows`,
-`freezeColumns`, `columnWidths`, `validations`, and `conditionalFormats` fields as
-`format_table`). It is applied in the SAME
+`freezeColumns`, `columnWidths`, `validations`, `conditionalFormats`, and
+`replaceIntersecting` fields as `format_table`). It is applied in the SAME
 commit, right after the rows land, so a fresh table is written and styled in one call.
 
 Input schema:
@@ -520,6 +532,7 @@ Input schema:
 | `columnWidths` | array of `{ column, pixels }` | optional, at most 100 |
 | `validations` | array of `Validation` (see `format_table`) | optional, at most 100 |
 | `conditionalFormats` | array of `ConditionalFormat` (see `format_table`) | optional, at most 100 |
+| `replaceIntersecting` | boolean | optional, default `false` (see `format_table`) |
 | `dryRun` | boolean | optional, default `false` |
 
 Output shape: as in "Writes". Diff shape (in `change.diff`): `{ "after": records }`, plus
@@ -612,6 +625,7 @@ Input schema:
 | `columnWidths` | array of `{ column: string, pixels: number (2..2000) }` | 0 to 100 items |
 | `validations` | array of `Validation` (below) | 0 to 100 items |
 | `conditionalFormats` | array of `ConditionalFormat` (below) | 0 to 100 items |
+| `replaceIntersecting` | boolean | optional, default `false`; widens the rule replace (below) |
 | `dryRun` | boolean | optional, default `false` |
 
 At least one of `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `validations`,
@@ -665,18 +679,26 @@ A `list` validation gives the native dropdown chip; `checkbox` gives native chec
 (`strict` rejects other values). `values` and `showDropdown` are rejected on a checkbox.
 
 Conditional formats **replace** rather than pile up: before adding, the commit reads the
-tab's rules (`spreadsheets.get` with `fields=sheets(properties.sheetId,conditionalFormats)`)
-and deletes every existing rule with a range that intersects any of the new rules' ranges,
-highest index first. The new rules are then inserted at the top in the order given
-(earlier = higher priority); rules on other ranges are kept. So calling `format_table`
-again with the same ranges updates the rules instead of duplicating them. Number values in
+tab's rules (one `spreadsheets.get` with
+`fields=sheets(properties.sheetId,conditionalFormats)`, only when the plan has rules) and
+deletes every existing rule whose range set is exactly one of the new rules' ranges (the
+same grid range), highest index first. The new rules are then inserted at the top in the
+order given (earlier = higher priority). Rules on any other range are kept, including
+ones that merely overlap: adding a whole-row rule on `B10:I21` leaves the status and
+priority rules on `D10:D21` and `E10:E21` in place. So calling `format_table` again with
+the same ranges updates the rules instead of duplicating them.
+
+With `replaceIntersecting: true` the commit instead deletes every existing rule with a
+range that intersects any of the new rules' ranges (the 2.1.0 behavior), which is the
+way to clear a block's old color rules before restyling it. The flag appears in the diff
+only when true. Number values in
 `when` are sent with the spreadsheet's decimal mark (`0,5` in a comma-decimal locale).
 A `formula` is sent as written, so write it in the spreadsheet's locale syntax (`;`
 separators in comma-decimal locales).
 
 Output shape: as in "Writes". Diff shape (in `change.diff`): the plan itself (the
 `FormatPlan`: `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `validations`,
-`conditionalFormats` with empty parts omitted; validations show their effective `strict`
+`conditionalFormats`, `replaceIntersecting` with empty parts and a false flag omitted; validations show their effective `strict`
 and, for lists, `showDropdown`).
 
 Permission required: `write` (evaluated as the `format` action). Only the Google Sheets

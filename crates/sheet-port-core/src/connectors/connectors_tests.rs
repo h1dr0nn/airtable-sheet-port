@@ -247,7 +247,7 @@ fn mock_rejects_unknown_source_and_table() {
 #[test]
 fn mock_connector_does_not_support_formatting() {
     let conn = demo_db();
-    let style = MockConnector.read_table_style(&conn, SOURCE, TABLE);
+    let style = MockConnector.read_table_style(&conn, SOURCE, TABLE, 1);
     assert!(matches!(style, Err(CoreError::Unsupported(_))));
     let format = MockConnector.format_cells(
         &conn,

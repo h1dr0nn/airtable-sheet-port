@@ -22,8 +22,8 @@ use sheet_port_core::{audit, changes, google, permissions, CoreError};
 
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
-    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, ReadCellsArgs,
-    ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
+    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, GetTableStyleArgs, ListTablesArgs,
+    ReadCellsArgs, ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
 };
 use crate::state::BrokerState;
 
@@ -426,12 +426,12 @@ pub fn find_records(state: &BrokerState, args: &FindRecordsArgs) -> Result<Strin
     })
 }
 
-pub fn get_table_style(state: &BrokerState, args: &SourceTableArgs) -> Result<String, CoreError> {
-    args.validate()?;
+pub fn get_table_style(state: &BrokerState, args: &GetTableStyleArgs) -> Result<String, CoreError> {
+    let header_row = args.validate()?;
     state.with_conn(|conn, registry| {
         let source_id = resolve(conn, args.source_id.as_deref(), Some(&args.table_id))?;
         permissions::assert_can_read(conn, &source_id, Some(&args.table_id))?;
-        let style = registry.read_table_style(conn, &source_id, &args.table_id)?;
+        let style = registry.read_table_style(conn, &source_id, &args.table_id, header_row)?;
         audit::record(
             conn,
             AuditActor::Agent,

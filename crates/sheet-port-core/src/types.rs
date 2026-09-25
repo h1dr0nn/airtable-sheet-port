@@ -678,8 +678,10 @@ impl ConditionWhen {
 
 /// A conditional-format rule over an A1 range within the resolved tab
 /// (Google's `addConditionalFormatRule` with a BooleanRule). Committing a plan
-/// with rules first deletes the tab's existing rules whose ranges intersect
-/// these ranges, so repeated calls replace instead of piling up duplicates.
+/// with rules first deletes the tab's existing rules whose range is exactly
+/// this range, so repeated calls replace instead of piling up duplicates
+/// (every rule that merely intersects when [`FormatPlan::replace_intersecting`]
+/// is set).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConditionalFormat {
@@ -715,6 +717,11 @@ pub struct FormatPlan {
     pub validations: Vec<DataValidation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditional_formats: Vec<ConditionalFormat>,
+    /// When true, adding conditional formats deletes every existing rule whose
+    /// range intersects a new rule's range; by default only rules on exactly
+    /// the same range are replaced. Only meaningful with `conditional_formats`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replace_intersecting: bool,
 }
 
 impl FormatPlan {
@@ -768,12 +775,15 @@ pub struct TableStyle {
     pub sheet_title: Option<String>,
     pub frozen_row_count: i64,
     pub frozen_column_count: i64,
+    /// 1-based sheet row read as the header (row 1 unless the caller asked
+    /// for another, e.g. a document-style sheet whose table starts lower).
+    pub header_row: i64,
     /// Number of used columns the style covers (header width).
     pub column_count: i64,
-    /// Effective format of each used cell in sheet row 1 (the header row).
+    /// Effective format of each used cell in the header row.
     pub header: Vec<CellStyle>,
-    /// Effective format of each used cell in sheet row 2 (first data row);
-    /// empty when the sheet has no data row.
+    /// Effective format of each used cell in the row below the header (the
+    /// first data row); empty when that row is absent.
     pub sample: Vec<CellStyle>,
     pub column_widths: Vec<ColumnWidth>,
     /// Number of conditional-format rules on the tab.

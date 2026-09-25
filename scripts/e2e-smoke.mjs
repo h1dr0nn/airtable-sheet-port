@@ -146,7 +146,25 @@ try {
     assert.doesNotMatch(tool.description, /approv/i, `${tool.name} has no approval wording`);
     const required = tool.inputSchema?.required ?? [];
     assert.ok(!required.includes("sourceId"), `${tool.name} keeps sourceId optional`);
+    assert.doesNotMatch(JSON.stringify(tool.inputSchema), /\$ref|\$defs/, `${tool.name} schema is inlined`);
   }
+
+  // format_table (and append_records) expose the native-rule fields at the top
+  // level, with item schemas that describe their fields.
+  const byName = Object.fromEntries(tools.result.tools.map((t) => [t.name, t]));
+  for (const name of ["format_table", "append_records"]) {
+    const props = byName[name].inputSchema.properties;
+    for (const key of ["formats", "validations", "conditionalFormats", "replaceIntersecting"]) {
+      assert.ok(key in props, `${name} schema lists ${key}`);
+    }
+    assert.ok("type" in props.validations.items.properties, `${name} validations items describe type`);
+    assert.ok("when" in props.conditionalFormats.items.properties, `${name} conditionalFormats items describe when`);
+    assert.ok("range" in props.formats.items.properties, `${name} formats items describe range`);
+  }
+  assert.match(byName.format_table.description, /validations/);
+  assert.match(byName.format_table.description, /conditionalFormats/);
+  assert.ok("headerRow" in byName.get_table_style.inputSchema.properties, "get_table_style takes headerRow");
+  assert.match(instructions, /conditionalFormats/, "instructions mention color rules");
 
   const src = toolJson(await callTool("list_sources"));
   assert.ok(!src.isError && JSON.stringify(src.json).includes("mock-source"), "list_sources works");
@@ -204,6 +222,22 @@ try {
   assert.equal(native.json.change.diff.validations[0].showDropdown, true, "showDropdown defaults to true");
   assert.equal(native.json.change.diff.validations[1].type, "checkbox");
   assert.deepEqual(native.json.change.diff.conditionalFormats[0].when, { textEq: "Done" });
+  assert.ok(!("replaceIntersecting" in native.json.change.diff), "exact-range replace is the default");
+
+  const intersecting = toolJson(await callTool("format_table", {
+    sourceId: "mock-source", tableId: "customers", dryRun: true, replaceIntersecting: true,
+    conditionalFormats: [
+      { range: "B10:I21", when: { notBlank: true }, bold: true }
+    ]
+  }));
+  assert.ok(!intersecting.isError, `replaceIntersecting failed: ${intersecting.text}`);
+  assert.equal(intersecting.json.change.diff.replaceIntersecting, true, "the flag reaches the plan");
+
+  const badHeader = toolJson(await callTool("get_table_style", {
+    sourceId: "mock-source", tableId: "customers", headerRow: 0
+  }));
+  assert.ok(badHeader.isError, "headerRow 0 is rejected");
+  assert.match(badHeader.text, /headerRow must be between 1/);
 
   const twoConditions = toolJson(await callTool("format_table", {
     sourceId: "mock-source", tableId: "customers", dryRun: true,

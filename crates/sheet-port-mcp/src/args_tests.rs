@@ -642,3 +642,65 @@ fn conditional_formats_reject_invalid_conditions() {
         .to_string()
         .contains("conditionalFormats must contain at most 100 items"));
 }
+
+#[test]
+fn replace_intersecting_defaults_off_and_reaches_the_plan() {
+    let parsed: FormatTableArgs = serde_json::from_str(
+        r#"{"tableId":"t","conditionalFormats":[{"range":"B10:I21","when":{"notBlank":true},"bold":true}]}"#,
+    )
+    .expect("parse");
+    let plan = parsed.validate().expect("valid");
+    assert!(!plan.replace_intersecting, "exact-range replace by default");
+    assert!(
+        !serde_json::to_string(&plan)
+            .expect("serialize")
+            .contains("replaceIntersecting"),
+        "the default flag stays out of the diff"
+    );
+
+    let plan = FormatSpec {
+        conditional_formats: vec![rule_arg(ConditionWhenArg {
+            blank: Some(true),
+            ..ConditionWhenArg::default()
+        })],
+        replace_intersecting: true,
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect("valid");
+    assert!(plan.replace_intersecting);
+
+    // The flag alone formats nothing.
+    let flag_only = FormatSpec {
+        replace_intersecting: true,
+        ..empty_spec()
+    };
+    assert!(flag_only.to_plan().is_err());
+}
+
+#[test]
+fn get_table_style_defaults_header_row_and_checks_bounds() {
+    let args = |header_row: Option<i64>| GetTableStyleArgs {
+        source_id: None,
+        table_id: "t".to_string(),
+        header_row,
+    };
+    assert_eq!(args(None).validate().expect("default"), 1);
+    assert_eq!(args(Some(9)).validate().expect("row 9"), 9);
+    assert_eq!(
+        args(Some(STYLE_HEADER_ROW_MAX)).validate().expect("max"),
+        STYLE_HEADER_ROW_MAX
+    );
+    for bad in [0, -1, STYLE_HEADER_ROW_MAX + 1] {
+        assert_eq!(
+            args(Some(bad))
+                .validate()
+                .expect_err("out of bounds")
+                .to_string(),
+            format!("headerRow must be between 1 and {STYLE_HEADER_ROW_MAX}")
+        );
+    }
+    let parsed: GetTableStyleArgs =
+        serde_json::from_str(r#"{"tableId":"t","headerRow":9}"#).expect("parse");
+    assert_eq!(parsed.header_row, Some(9));
+}

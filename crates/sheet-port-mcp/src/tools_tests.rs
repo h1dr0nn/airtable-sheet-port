@@ -593,9 +593,10 @@ fn get_table_style_is_unsupported_on_the_mock_connector() {
     let state = temp_state();
     let error = get_table_style(
         &state,
-        &SourceTableArgs {
+        &GetTableStyleArgs {
             source_id: source(),
             table_id: TABLE.to_string(),
+            header_row: Some(9),
         },
     )
     .expect_err("mock connector has no style read");

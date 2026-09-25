@@ -6,14 +6,18 @@
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, ContentBlock, Implementation, JsonObject, ServerCapabilities, ServerInfo,
+};
+use rmcp::schemars::generate::SchemaSettings;
+use rmcp::schemars::JsonSchema;
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use sheet_port_core::CoreError;
 
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
-    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, ListTablesArgs, ReadCellsArgs,
-    ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
+    FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, GetTableStyleArgs, ListTablesArgs,
+    ReadCellsArgs, ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
 };
 use crate::state::BrokerState;
 use crate::tools;
@@ -37,7 +41,28 @@ Writing: update_records, append_records, update_cells, format_table, create_spre
 
 Locale: call list_sheets to learn the spreadsheet's locale before writing formulas or decimals. In comma-decimal locales (e.g. vi_VN, de_DE, fr_FR, pt_BR, es_ES, it_IT, ru_RU, id_ID, tr_TR) separate formula arguments with ; (=COUNTIF(D2:D9;\"Done\")) and write decimals with a comma (0,65); percentages like 65% and plain integers are safe everywhere. Values are written exactly as given, never rewritten.
 
-Style: call get_table_style first when a sheet already has data or formatting, and match it. For a fresh sheet, freeze the header row, make it bold with a light neutral fill (such as #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat, right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained: one or two muted accents, no full gridlines, no loud fills. Pass format fields to append_records to write and style new data in one call.";
+Style: call get_table_style first when a sheet already has data or formatting, and match it. For a fresh sheet, freeze the header row, make it bold with a light neutral fill (such as #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat, right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained: one or two muted accents, no full gridlines, no loud fills. Use validations for dropdowns (type list with values) and checkboxes, and conditionalFormats for color rules such as a status fill; a new rule replaces existing rules on exactly the same range and keeps the rest (replaceIntersecting: true clears every overlapping rule). Pass format fields to append_records to write and style new data in one call.";
+
+/// The input schema of a tool's argument type with every subschema inlined:
+/// no `$defs`/`$ref`, so array items such as `formats`, `validations`, and
+/// `conditionalFormats` show their fields even in clients that drop `$defs`
+/// (rmcp's default generator emits refs, which those clients render as `{}`).
+/// Root `title`/`description` are stripped as rmcp does.
+fn inline_input_schema<T: JsonSchema>() -> Arc<JsonObject> {
+    let generator = SchemaSettings::draft2020_12()
+        .with(|settings| settings.inline_subschemas = true)
+        .into_generator();
+    let schema = generator.into_root_schema_for::<T>();
+    let Ok(serde_json::Value::Object(mut object)) = serde_json::to_value(schema) else {
+        panic!(
+            "input schema of {} is not a JSON object",
+            std::any::type_name::<T>()
+        );
+    };
+    object.remove("title");
+    object.remove("description");
+    Arc::new(object)
+}
 
 pub struct SheetPortServer {
     state: Arc<BrokerState>,
@@ -89,7 +114,8 @@ impl SheetPortServer {
     #[tool(
         name = "list_tables",
         description = "List the spreadsheets (tables) in a source; each tableId is a spreadsheet id.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<ListTablesArgs>()
     )]
     async fn list_tables(&self, Parameters(args): Parameters<ListTablesArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -99,7 +125,8 @@ impl SheetPortServer {
     #[tool(
         name = "list_sheets",
         description = "List the tabs of a spreadsheet as {gid, title}, plus its locale and timeZone. Use a gid as spreadsheetId:gid to target that tab.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<SourceTableArgs>()
     )]
     async fn list_sheets(&self, Parameters(args): Parameters<SourceTableArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -109,7 +136,8 @@ impl SheetPortServer {
     #[tool(
         name = "describe_table",
         description = "Describe a tab's fields (row 1 as the header) with inferred types.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<SourceTableArgs>()
     )]
     async fn describe_table(
         &self,
@@ -122,7 +150,8 @@ impl SheetPortServer {
     #[tool(
         name = "read_table",
         description = "Read records from a tab, treating row 1 as the header. limit/offset page over data rows.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<ReadTableArgs>()
     )]
     async fn read_table(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -132,7 +161,8 @@ impl SheetPortServer {
     #[tool(
         name = "read_formulas",
         description = "Like read_table, but formula cells return their =... text instead of the computed value. Check it before overwriting cells that may be computed.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<ReadTableArgs>()
     )]
     async fn read_formulas(&self, Parameters(args): Parameters<ReadTableArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -142,7 +172,8 @@ impl SheetPortServer {
     #[tool(
         name = "find_records",
         description = "Case-insensitive text search across every field of a tab's records.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<FindRecordsArgs>()
     )]
     async fn find_records(&self, Parameters(args): Parameters<FindRecordsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -152,7 +183,8 @@ impl SheetPortServer {
     #[tool(
         name = "read_cells",
         description = "Read raw cells keyed by A1 column letter, each row with its real sheet row number and no header interpretation. Pass range (e.g. B40:F60, A:C, 5:9) to fetch only that window; limit/offset page within it. Use for document-style sheets read_table cannot see.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<ReadCellsArgs>()
     )]
     async fn read_cells(&self, Parameters(args): Parameters<ReadCellsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -161,12 +193,13 @@ impl SheetPortServer {
 
     #[tool(
         name = "get_table_style",
-        description = "Read a tab's existing look: header and first-row cell styles, frozen rows/columns, and column widths. Call before format_table on a sheet that already has styling.",
+        description = "Read a tab's existing look: header-row and next-row cell styles, frozen rows/columns, and column widths. The header is row 1 unless headerRow says otherwise (e.g. 9 on a document-style sheet). Call before format_table on a sheet that already has styling.",
+        input_schema = inline_input_schema::<GetTableStyleArgs>(),
         annotations(read_only_hint = true)
     )]
     async fn get_table_style(
         &self,
-        Parameters(args): Parameters<SourceTableArgs>,
+        Parameters(args): Parameters<GetTableStyleArgs>,
     ) -> CallToolResult {
         let state = Arc::clone(&self.state);
         respond_blocking(move || tools::get_table_style(&state, &args)).await
@@ -174,7 +207,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "update_records",
-        description = "Patch existing records by recordId (from read_table). Returns the before/after diff."
+        description = "Patch existing records by recordId (from read_table). Returns the before/after diff.",
+        input_schema = inline_input_schema::<UpdateRecordsArgs>()
     )]
     async fn update_records(
         &self,
@@ -186,7 +220,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "append_records",
-        description = "Append records as rows; on an empty tab the field names become the header row. Optional format fields (as in format_table) are applied in the same write."
+        description = "Append records as rows; on an empty tab the field names become the header row. Accepts the format_table fields (formats, freezes, columnWidths, validations for dropdowns and checkboxes, conditionalFormats for color rules), applied in the same write.",
+        input_schema = inline_input_schema::<AppendRecordsArgs>()
     )]
     async fn append_records(
         &self,
@@ -198,7 +233,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "update_cells",
-        description = "Write individual cells by A1 reference (e.g. E48), typed as a user would: numbers stay numbers and a leading = makes a formula. Reaches any cell, including document-style sheets."
+        description = "Write individual cells by A1 reference (e.g. E48), typed as a user would: numbers stay numbers and a leading = makes a formula. Reaches any cell, including document-style sheets.",
+        input_schema = inline_input_schema::<UpdateCellsArgs>()
     )]
     async fn update_cells(&self, Parameters(args): Parameters<UpdateCellsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -207,7 +243,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "format_table",
-        description = "Format a tab: per-range bold, italic, fontSize, fontColor/backgroundColor (#rrggbb), horizontalAlignment, numberFormat, wrap, border, plus freezeRows, freezeColumns, columnWidths, validations (native dropdown list or checkbox) and conditionalFormats (which replace existing rules on intersecting ranges). Only the properties you set change."
+        description = "Format a tab: per-range styles in formats (bold, colors, alignment, numberFormat, wrap, border), freezeRows/freezeColumns, columnWidths, validations (dropdowns and checkboxes) and conditionalFormats (color rules; each replaces existing rules on the same range). Only what you set changes.",
+        input_schema = inline_input_schema::<FormatTableArgs>()
     )]
     async fn format_table(&self, Parameters(args): Parameters<FormatTableArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -216,7 +253,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "create_spreadsheet",
-        description = "Create a new spreadsheet titled title. The result's created field carries its spreadsheetId and url."
+        description = "Create a new spreadsheet titled title. The result's created field carries its spreadsheetId and url.",
+        input_schema = inline_input_schema::<CreateSpreadsheetArgs>()
     )]
     async fn create_spreadsheet(
         &self,
@@ -228,7 +266,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "create_sheet",
-        description = "Add a tab titled title to the spreadsheet in tableId. The result's created field carries the new gid."
+        description = "Add a tab titled title to the spreadsheet in tableId. The result's created field carries the new gid.",
+        input_schema = inline_input_schema::<CreateSheetArgs>()
     )]
     async fn create_sheet(&self, Parameters(args): Parameters<CreateSheetArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -238,7 +277,8 @@ impl SheetPortServer {
     #[tool(
         name = "delete_sheet",
         description = "Delete the tab named by tableId. Destructive: needs confirm: true and the source's delete permission.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        input_schema = inline_input_schema::<DeleteSheetArgs>()
     )]
     async fn delete_sheet(&self, Parameters(args): Parameters<DeleteSheetArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -247,7 +287,8 @@ impl SheetPortServer {
 
     #[tool(
         name = "commit_change",
-        description = "Apply changes staged with dryRun: changeId returns one result like a direct write, changeIds returns {committed: [...]} in order."
+        description = "Apply changes staged with dryRun: changeId returns one result like a direct write, changeIds returns {committed: [...]} in order.",
+        input_schema = inline_input_schema::<CommitChangeArgs>()
     )]
     async fn commit_change(
         &self,
@@ -260,7 +301,8 @@ impl SheetPortServer {
     #[tool(
         name = "get_audit_log",
         description = "Recent audit events (reads, writes, commits), newest first.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<GetAuditLogArgs>()
     )]
     async fn get_audit_log(&self, Parameters(args): Parameters<GetAuditLogArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
@@ -277,3 +319,7 @@ impl ServerHandler for SheetPortServer {
         info
     }
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

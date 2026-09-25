@@ -32,6 +32,10 @@ const DRIVE_PAGE_SIZE: &str = "100";
 const LAST_COLUMN: &str = "ZZ";
 const HEADER_ROW: i64 = 1;
 const FIRST_DATA_ROW: i64 = 2;
+/// Highest 1-based header row get_table_style accepts (its sample row is the
+/// next one); Google Sheets caps a tab at 10 million cells, so rows beyond this
+/// are never a real header.
+pub const STYLE_HEADER_ROW_MAX: i64 = 1_000_000;
 /// First row of the RAW Workbench grid mirror: row 1 is real data, not a
 /// header (the record/table view above still treats row 1 as the header).
 const FIRST_SHEET_ROW: i64 = 1;
@@ -659,18 +663,21 @@ impl TableConnector for GoogleSheetsConnector {
         Ok(start_row - FIRST_SHEET_ROW)
     }
 
-    /// The effective style of the tab: header row, first data row, sheet freeze
-    /// counts, and column widths. One `spreadsheets.get` with `includeGridData`
-    /// over the first two rows (docs/mcp-tools.md "get_table_style").
+    /// The effective style of the tab: header row, the row below it, sheet
+    /// freeze counts, and column widths. One `spreadsheets.get` with
+    /// `includeGridData` over those two rows (docs/mcp-tools.md
+    /// "get_table_style").
     fn read_table_style(
         &self,
         conn: &Connection,
         source_id: &str,
         table_id: &str,
+        header_row: i64,
     ) -> Result<TableStyle, CoreError> {
+        let range = style_range_a1(header_row)?;
         let token = google::access_token(conn, source_id)?;
         let sheet = ResolvedSheet::resolve(&token, table_id)?;
-        read_table_style_for(&token, &sheet)
+        read_table_style_for(&token, &sheet, &range, header_row)
     }
 
     /// Applies a formatting plan through `spreadsheets.batchUpdate` (cell
@@ -1354,7 +1361,7 @@ const DEFAULT_BORDER_COLOR: &str = "#bfbfbf";
 const STYLE_FIELDS_MASK: &str = "sheets(properties(sheetId,title,gridProperties(frozenRowCount,frozenColumnCount)),data(rowData(values(formattedValue,dataValidation(condition(type)),effectiveFormat(backgroundColor,horizontalAlignment,wrapStrategy,numberFormat,textFormat(bold,italic,fontSize,foregroundColor)))),columnMetadata(pixelSize)))";
 
 /// Field mask for the conditional-format read that precedes adding rules: the
-/// tab ids and every existing rule (for the intersect-and-replace step).
+/// tab ids and every existing rule (for the replace step).
 const CONDITIONAL_FORMATS_FIELDS_MASK: &str = "sheets(properties.sheetId,conditionalFormats)";
 
 /// Locale languages whose decimal mark is a comma (Google Sheets then also
@@ -1394,8 +1401,9 @@ fn apply_format_plan(
 
 /// Turns a plan into ordered `spreadsheets.batchUpdate` requests: per-range cell
 /// formats and borders, data validations, conditional formats (deletes of the
-/// existing rules that intersect the new ranges, highest index first, then the
-/// new rules in plan order at the top of the list), then the header freeze,
+/// existing rules on exactly the new ranges, or every intersecting rule when
+/// the plan sets `replace_intersecting`, highest index first, then the new
+/// rules in plan order at the top of the list), then the header freeze,
 /// then column widths. `existing_rules` holds the ranges of each current rule
 /// on the tab, by rule index. Pure so the request shape can be unit-tested
 /// without a network call.
@@ -1423,7 +1431,7 @@ fn build_format_requests(
             .iter()
             .map(|rule| parse_a1_range(&rule.range))
             .collect::<Result<Vec<_>, _>>()?;
-        for index in replaced_rule_indices(existing_rules, &targets) {
+        for index in replaced_rule_indices(existing_rules, &targets, plan.replace_intersecting) {
             requests.push(json!({
                 "deleteConditionalFormatRule": { "sheetId": sheet_id, "index": index }
             }));
@@ -1758,21 +1766,43 @@ fn locale_uses_decimal_comma(locale: Option<&str>) -> bool {
 }
 
 /// Indices of the existing rules to delete, highest first (so each delete
-/// leaves the remaining indices valid): every rule with a range that
-/// intersects one of the target ranges.
-fn replaced_rule_indices(existing_rules: &[Vec<A1Range>], targets: &[A1Range]) -> Vec<usize> {
+/// leaves the remaining indices valid). By default only a rule whose range set
+/// is exactly one target range is replaced, so a new rule never wipes rules on
+/// neighbouring or overlapping ranges; with `intersecting` every rule with a
+/// range that intersects one of the target ranges is deleted.
+fn replaced_rule_indices(
+    existing_rules: &[Vec<A1Range>],
+    targets: &[A1Range],
+    intersecting: bool,
+) -> Vec<usize> {
     let mut indices: Vec<usize> = existing_rules
         .iter()
         .enumerate()
         .filter(|(_, ranges)| {
-            ranges
-                .iter()
-                .any(|range| targets.iter().any(|target| ranges_intersect(range, target)))
+            if intersecting {
+                ranges
+                    .iter()
+                    .any(|range| targets.iter().any(|target| ranges_intersect(range, target)))
+            } else {
+                !ranges.is_empty()
+                    && targets
+                        .iter()
+                        .any(|target| ranges.iter().all(|range| same_grid_range(range, target)))
+            }
         })
         .map(|(index, _)| index)
         .collect();
     indices.reverse();
     indices
+}
+
+/// Whether two ranges cover the same grid cells. A missing start is row or
+/// column 0 (the API omits zero indices), a missing end is unbounded.
+fn same_grid_range(a: &A1Range, b: &A1Range) -> bool {
+    a.start_row.unwrap_or(0) == b.start_row.unwrap_or(0)
+        && a.start_col.unwrap_or(0) == b.start_col.unwrap_or(0)
+        && a.end_row == b.end_row
+        && a.end_col == b.end_col
 }
 
 /// Whether two half-open grid ranges overlap; an unbounded side spans the
@@ -1908,18 +1938,33 @@ fn spreadsheet_batch_update_url(spreadsheet_id: &str) -> Result<url::Url, CoreEr
     Ok(url)
 }
 
+/// The A1 window a style read fetches: the 1-based `header_row` and the row
+/// below it (the sample row), across the supported column window. Rejects a
+/// header row outside `1..=`[`STYLE_HEADER_ROW_MAX`].
+fn style_range_a1(header_row: i64) -> Result<String, CoreError> {
+    if !(HEADER_ROW..=STYLE_HEADER_ROW_MAX).contains(&header_row) {
+        return Err(CoreError::InvalidInput(format!(
+            "headerRow must be between {HEADER_ROW} and {STYLE_HEADER_ROW_MAX}"
+        )));
+    }
+    let sample_row = header_row + 1;
+    Ok(format!("A{header_row}:{LAST_COLUMN}{sample_row}"))
+}
+
 /// Reads the effective style of the tab via one `spreadsheets.get` with
-/// `includeGridData` over the header and first data row, plus a second
-/// metadata read for the conditional-format count: a `ranges`-scoped get only
-/// returns the rules that touch those rows, so it would miss rules further
-/// down the tab.
-fn read_table_style_for(token: &str, sheet: &ResolvedSheet) -> Result<TableStyle, CoreError> {
+/// `includeGridData` over `range` (the header row and the row below it, from
+/// [`style_range_a1`]), plus a second metadata read for the conditional-format
+/// count: a `ranges`-scoped get only returns the rules that touch those rows,
+/// so it would miss rules further down the tab.
+fn read_table_style_for(
+    token: &str,
+    sheet: &ResolvedSheet,
+    range: &str,
+    header_row: i64,
+) -> Result<TableStyle, CoreError> {
     let mut url = sheets_base_url(&sheet.spreadsheet_id)?;
     url.query_pairs_mut()
-        .append_pair(
-            "ranges",
-            &sheet.range(&format!("A{HEADER_ROW}:{LAST_COLUMN}{FIRST_DATA_ROW}")),
-        )
+        .append_pair("ranges", &sheet.range(range))
         .append_pair("includeGridData", "true")
         .append_pair("fields", STYLE_FIELDS_MASK);
     let body = google::get_json(token, url.as_str())?;
@@ -1939,6 +1984,7 @@ fn read_table_style_for(token: &str, sheet: &ResolvedSheet) -> Result<TableStyle
         sheet_title: sheet.sheet_title.clone(),
         frozen_row_count,
         frozen_column_count,
+        header_row,
         column_count: used as i64,
         header: cell_styles(&header_values, used),
         sample: cell_styles(&sample_values, used),
@@ -2897,29 +2943,41 @@ mod tests {
         assert_eq!(add["rule"]["booleanRule"]["condition"]["type"], "TEXT_EQ");
     }
 
-    #[test]
-    fn conditional_formats_delete_intersecting_rules_before_adding() {
+    /// Existing rules on tab 5 used by the replace tests, by index:
+    /// 0 = D2:D21 (overlaps D10:D21), 1 = H1:H5 (disjoint), 2 = whole column D
+    /// (overlaps), 3 = exactly D10:D21 (API form: zero start omitted elsewhere),
+    /// 4 = D10:D21 plus E10:E21 (overlaps, but not the same range set).
+    fn existing_replace_rules() -> Vec<Vec<A1Range>> {
         let body = json!({
             "sheets": [
                 { "properties": { "sheetId": 9 }, "conditionalFormats": [
                     { "ranges": [{ "sheetId": 9 }] }
                 ]},
                 { "properties": { "sheetId": 5 }, "conditionalFormats": [
-                    // D2:D21 overlaps the target.
                     { "ranges": [{ "sheetId": 5, "startRowIndex": 1, "endRowIndex": 21,
                                    "startColumnIndex": 3, "endColumnIndex": 4 }] },
-                    // H1:H5 does not.
-                    { "ranges": [{ "sheetId": 5, "startRowIndex": 0, "endRowIndex": 5,
+                    { "ranges": [{ "sheetId": 5, "endRowIndex": 5,
                                    "startColumnIndex": 7, "endColumnIndex": 8 }] },
-                    // Whole column D (unbounded rows) overlaps.
-                    { "ranges": [{ "sheetId": 5, "startColumnIndex": 3, "endColumnIndex": 4 }] }
+                    { "ranges": [{ "sheetId": 5, "startColumnIndex": 3, "endColumnIndex": 4 }] },
+                    { "ranges": [{ "sheetId": 5, "startRowIndex": 9, "endRowIndex": 21,
+                                   "startColumnIndex": 3, "endColumnIndex": 4 }] },
+                    { "ranges": [
+                        { "sheetId": 5, "startRowIndex": 9, "endRowIndex": 21,
+                          "startColumnIndex": 3, "endColumnIndex": 4 },
+                        { "sheetId": 5, "startRowIndex": 9, "endRowIndex": 21,
+                          "startColumnIndex": 4, "endColumnIndex": 5 }
+                    ]}
                 ]}
             ]
         });
         let existing = conditional_rule_ranges(&body, 5);
-        assert_eq!(existing.len(), 3);
+        assert_eq!(existing.len(), 5);
+        existing
+    }
 
-        let plan = FormatPlan {
+    /// Two rules on D10:D21 plus a validation and a freeze.
+    fn replace_plan(replace_intersecting: bool) -> FormatPlan {
+        FormatPlan {
             validations: vec![list_validation("D2:D21", &["Todo", "Done"])],
             conditional_formats: vec![
                 rule(
@@ -2938,10 +2996,13 @@ mod tests {
                 ),
             ],
             freeze_rows: Some(1),
+            replace_intersecting,
             ..FormatPlan::default()
-        };
-        let requests = build_format_requests(5, &plan, &existing, false).expect("requests");
-        let kinds: Vec<&str> = requests
+        }
+    }
+
+    fn request_kinds(requests: &[Value]) -> Vec<&str> {
+        requests
             .iter()
             .map(|request| {
                 request
@@ -2950,31 +3011,86 @@ mod tests {
                     .map(String::as_str)
                     .expect("request kind")
             })
-            .collect();
+            .collect()
+    }
+
+    fn deleted_indices(requests: &[Value]) -> Vec<i64> {
+        requests
+            .iter()
+            .filter_map(|request| request["deleteConditionalFormatRule"]["index"].as_i64())
+            .collect()
+    }
+
+    #[test]
+    fn conditional_formats_replace_only_rules_on_the_exact_same_range() {
+        let existing = existing_replace_rules();
+        let requests =
+            build_format_requests(5, &replace_plan(false), &existing, false).expect("requests");
         assert_eq!(
-            kinds,
+            request_kinds(&requests),
             [
                 "setDataValidation",
-                "deleteConditionalFormatRule",
                 "deleteConditionalFormatRule",
                 "addConditionalFormatRule",
                 "addConditionalFormatRule",
                 "updateSheetProperties",
             ]
         );
-        // Deletes run highest index first so earlier indices stay valid.
-        assert_eq!(requests[1]["deleteConditionalFormatRule"]["index"], 2);
-        assert_eq!(requests[2]["deleteConditionalFormatRule"]["index"], 0);
-        assert_eq!(requests[2]["deleteConditionalFormatRule"]["sheetId"], 5);
+        assert_eq!(
+            deleted_indices(&requests),
+            [3],
+            "only the exact D10:D21 rule"
+        );
+        assert_eq!(requests[1]["deleteConditionalFormatRule"]["sheetId"], 5);
         // New rules keep plan order at the top of the list.
-        assert_eq!(requests[3]["addConditionalFormatRule"]["index"], 0);
-        assert_eq!(requests[4]["addConditionalFormatRule"]["index"], 1);
+        assert_eq!(requests[2]["addConditionalFormatRule"]["index"], 0);
+        assert_eq!(requests[3]["addConditionalFormatRule"]["index"], 1);
 
         // No existing rules: only adds.
-        let fresh = build_format_requests(5, &plan, &[], false).expect("requests");
-        assert!(fresh
-            .iter()
-            .all(|request| request.get("deleteConditionalFormatRule").is_none()));
+        let fresh = build_format_requests(5, &replace_plan(false), &[], false).expect("requests");
+        assert!(deleted_indices(&fresh).is_empty());
+    }
+
+    #[test]
+    fn conditional_formats_keep_intersecting_rules_by_default() {
+        // A full-row rule over B10:I21 must not wipe the per-column rules in D.
+        let existing = existing_replace_rules();
+        let plan = FormatPlan {
+            conditional_formats: vec![rule(
+                "B10:I21",
+                ConditionWhen {
+                    formula: Some("=$E10=\"High\"".to_string()),
+                    ..ConditionWhen::default()
+                },
+            )],
+            ..FormatPlan::default()
+        };
+        let requests = build_format_requests(5, &plan, &existing, false).expect("requests");
+        assert!(deleted_indices(&requests).is_empty());
+        assert_eq!(request_kinds(&requests), ["addConditionalFormatRule"]);
+
+        // An exact-range match works with the zero-start form too (A1 vs API).
+        let whole_d = parse_a1_range("D:D").expect("range");
+        assert_eq!(replaced_rule_indices(&existing, &[whole_d], false), [2]);
+        let top = parse_a1_range("H1:H5").expect("range");
+        assert_eq!(replaced_rule_indices(&existing, &[top], false), [1]);
+    }
+
+    #[test]
+    fn conditional_formats_delete_intersecting_rules_with_the_flag() {
+        let existing = existing_replace_rules();
+        let requests =
+            build_format_requests(5, &replace_plan(true), &existing, false).expect("requests");
+        // Deletes run highest index first so earlier indices stay valid; H1:H5
+        // (index 1) is disjoint and survives.
+        assert_eq!(deleted_indices(&requests), [4, 3, 2, 0]);
+        assert_eq!(
+            request_kinds(&requests)
+                .iter()
+                .filter(|kind| **kind == "addConditionalFormatRule")
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -3023,6 +3139,23 @@ mod tests {
         let empty = parse_cell_style("A", &Value::Null);
         assert_eq!(empty.bold, None);
         assert_eq!(empty.background_color, None);
+    }
+
+    #[test]
+    fn style_range_covers_the_header_row_and_the_row_below() {
+        assert_eq!(style_range_a1(1).expect("default"), "A1:ZZ2");
+        assert_eq!(style_range_a1(9).expect("document-style"), "A9:ZZ10");
+        assert_eq!(
+            style_range_a1(STYLE_HEADER_ROW_MAX).expect("max"),
+            format!("A{STYLE_HEADER_ROW_MAX}:ZZ{}", STYLE_HEADER_ROW_MAX + 1)
+        );
+        for bad in [0, -3, STYLE_HEADER_ROW_MAX + 1] {
+            let error = style_range_a1(bad).expect_err("out of bounds");
+            assert!(
+                matches!(&error, CoreError::InvalidInput(message) if message.contains("headerRow")),
+                "unexpected error for {bad}: {error}"
+            );
+        }
     }
 
     #[test]
