@@ -158,3 +158,41 @@ export function useConfigureAllMcpClients() {
     }
   });
 }
+
+/** Stops one (outdated) sidecar by PID, then refreshes the sidecar list. */
+export function useStopSidecar() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: (pid: number) => ipc.mcpStopSidecar(pid),
+    onError: (error: unknown) => {
+      toast.error(t("toast.sidecarStopError"), { description: getErrorMessage(error) });
+    },
+    onSuccess: () => {
+      toast.success(t("toast.sidecarStopped"), { description: t("toast.sidecarStoppedHint") });
+    },
+    onSettled: () => {
+      invalidateMcpConfig(queryClient);
+    }
+  });
+}
+
+/** Quits and relaunches Claude Desktop so it spawns the current sidecar. */
+export function useRestartClaudeDesktop() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: () => ipc.claudeDesktopRestart(),
+    onError: (error: unknown) => {
+      toast.error(t("toast.claudeDesktopRestartError"), { description: getErrorMessage(error) });
+    },
+    onSuccess: () => {
+      toast.success(t("toast.claudeDesktopRestarted"));
+    },
+    onSettled: () => {
+      invalidateMcpConfig(queryClient);
+    }
+  });
+}

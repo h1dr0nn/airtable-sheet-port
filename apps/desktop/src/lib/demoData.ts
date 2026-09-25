@@ -19,6 +19,7 @@ import type {
   McpTransport,
   PermissionRuleRow,
   SavePermissionRule,
+  SidecarHeartbeat,
   SidecarStatus,
   TablePage,
   TokenStatus
@@ -41,6 +42,16 @@ const DEMO_MCP_PID = 48213;
 const HEARTBEAT_AGE_MS = 4_000;
 /** The demo sidecar reports the same version, so the demo shows no warning. */
 const DEMO_APP_VERSION = "0.0.1";
+const DEMO_SIDECAR_PATH = "C:\\Program Files\\Airtable - Sheet Port\\sheet-port-mcp.exe";
+/** A Claude Desktop sidecar on the current version, shown on the Dashboard. */
+const DEMO_SIDECAR: Omit<SidecarHeartbeat, "lastSeen"> = {
+  pid: DEMO_MCP_PID,
+  version: DEMO_APP_VERSION,
+  clientName: "claude-ai",
+  clientVersion: "0.1.0",
+  exePath: DEMO_SIDECAR_PATH,
+  parentExePath: "C:\\Users\\demo\\AppData\\Local\\AnthropicClaude\\app-1.0.0\\claude.exe"
+};
 
 // Mirrors core::db defaults for the MCP sidecar config.
 const DEFAULT_MCP_TRANSPORT: McpTransport = "stdio";
@@ -148,6 +159,8 @@ export function createDemoIpc(): IpcApi {
 
   // Desktop-managed HTTP sidecar: not running until mcp_server_start.
   let managedSidecarPid: number | null = null;
+  // Heartbeat rows the Dashboard lists; mcp_stop_sidecar removes one.
+  let demoSidecars: Omit<SidecarHeartbeat, "lastSeen">[] = [{ ...DEMO_SIDECAR }];
 
   // MCP sidecar config mirror; the demo sidecar is treated as always running.
   let mcpTransport: McpTransport = DEFAULT_MCP_TRANSPORT;
@@ -203,7 +216,10 @@ export function createDemoIpc(): IpcApi {
         mcpRunning: true,
         mcpPid: DEMO_MCP_PID,
         mcpLastSeen: lastSeen,
-        sidecars: [{ pid: DEMO_MCP_PID, version: DEMO_APP_VERSION, lastSeen }]
+        sidecars: demoSidecars.map((sidecar) => ({ ...sidecar, lastSeen })),
+        bundledSidecarPath: DEMO_SIDECAR_PATH,
+        claudeDesktopRunning: true,
+        managedSidecarPid
       };
     },
     async listSources(): Promise<DataSource[]> {
@@ -525,6 +541,24 @@ export function createDemoIpc(): IpcApi {
         });
       }
       return { running: false, pid: null };
+    },
+    async mcpStopSidecar(pid: number): Promise<void> {
+      await delay();
+      // Mirrors the backend guard: only a listed (fresh) sidecar can be stopped.
+      const target = demoSidecars.find((sidecar) => sidecar.pid === pid);
+      if (!target) {
+        throw new Error("No running MCP sidecar has this PID");
+      }
+      demoSidecars = demoSidecars.filter((sidecar) => sidecar.pid !== pid);
+      pushAudit({
+        actor: "user",
+        action: "mcp_sidecar_stopped",
+        metadata: { pid, version: target.version }
+      });
+    },
+    async claudeDesktopRestart(): Promise<void> {
+      await delay();
+      pushAudit({ actor: "user", action: "claude_desktop_restarted" });
     }
   };
 }

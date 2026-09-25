@@ -427,6 +427,17 @@ pub struct AppStatus {
     /// once (one per MCP client); after an app update an old one keeps
     /// running until its client restarts.
     pub sidecars: Vec<SidecarHeartbeat>,
+    /// The sidecar binary this install ships (next to the app executable), so
+    /// the UI can tell a sidecar started from somewhere else ("dev build").
+    /// `None` when the shell cannot resolve it.
+    pub bundled_sidecar_path: Option<String>,
+    /// Whether a Claude Desktop process is running right now (Windows and
+    /// macOS; always false elsewhere). Gates the "Restart Claude Desktop"
+    /// button.
+    pub claude_desktop_running: bool,
+    /// PID of the sidecar child this app started itself (auto-start or
+    /// mcp_server_start), so the UI can label that row as the app's own.
+    pub managed_sidecar_pid: Option<i64>,
 }
 
 /// One running MCP sidecar from its heartbeat row.
@@ -438,6 +449,19 @@ pub struct SidecarHeartbeat {
     /// heartbeat `version` column.
     pub version: Option<String>,
     pub last_seen: String,
+    /// `clientInfo.name` the MCP client sent in `initialize` (e.g.
+    /// "claude-code", "claude-ai"). `None` before initialize and for sidecars
+    /// that predate schema_version 6.
+    pub client_name: Option<String>,
+    /// `clientInfo.version` from the same `initialize` request.
+    pub client_version: Option<String>,
+    /// The sidecar's own executable path; `None` for sidecars that predate
+    /// schema_version 6.
+    pub exe_path: Option<String>,
+    /// The executable of the process that spawned the sidecar (the MCP
+    /// client); tells Claude Code in a terminal from Claude Desktop's Code
+    /// tab, which both send "claude-code". `None` when unknown.
+    pub parent_exe_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -6,7 +6,9 @@
 //! seeded on first run, and the v2 -> v3 / v3 -> v4 migrations widen the
 //! pending-change CHECK constraint to allow the 'format' and then the
 //! structural ('create_spreadsheet' / 'create_sheet' / 'delete_sheet') types.
-//! v4 -> v5 adds the nullable `mcp_heartbeat.version` column.
+//! v4 -> v5 adds the nullable `mcp_heartbeat.version` column; v5 -> v6 adds
+//! the nullable `client_name`, `client_version`, `exe_path` and
+//! `parent_exe_path` columns.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +30,7 @@ const BUSY_TIMEOUT_MS: u64 = 5000;
 
 const META_SEEDED_KEY: &str = "seeded";
 const META_SCHEMA_VERSION_KEY: &str = "schema_version";
-const SCHEMA_VERSION_CURRENT: &str = "5";
+const SCHEMA_VERSION_CURRENT: &str = "6";
 
 // include_str! paths are relative to THIS source file. The .sql files are the
 // single source of truth for the shared database contract.
@@ -201,7 +203,7 @@ fn apply_schema_and_seed(conn: &Connection) -> Result<(), CoreError> {
 }
 
 /// Brings older databases up to `SCHEMA_VERSION_CURRENT` by applying each
-/// migration in sequence (v1 -> v2 -> v3 -> v4 -> v5). A missing schema_version means a v1
+/// migration in sequence (v1 -> v2 -> v3 -> v4 -> v5 -> v6). A missing schema_version means a v1
 /// database (the v1 seed always wrote it, but be defensive); fresh databases
 /// get the current version from the seed and skip every step. Each step
 /// advances the version marker inside its own transaction, so the loop
@@ -219,6 +221,10 @@ fn migrate_to_current_version(conn: &Connection) -> Result<(), CoreError> {
             Some("3") => (MIGRATE_V3_TO_V4_SQL, "4"),
             Some("4") => {
                 migrate_v4_to_v5(conn)?;
+                continue;
+            }
+            Some("5") => {
+                migrate_v5_to_v6(conn)?;
                 continue;
             }
             Some(_) => return Ok(()),
@@ -246,6 +252,44 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), CoreError> {
         }
         conn.execute_batch(
             "INSERT INTO meta (key, value) VALUES ('schema_version', '5')
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+             COMMIT;",
+        )
+    })();
+    if let Err(error) = result {
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err(fail(error));
+    }
+    Ok(())
+}
+
+/// Columns added to `mcp_heartbeat` by the v5 -> v6 migration: which MCP
+/// client runs the sidecar (from its `initialize` clientInfo), the sidecar's
+/// own executable path, and its parent process's executable path.
+const V6_HEARTBEAT_COLUMNS: [&str; 4] = [
+    "client_name",
+    "client_version",
+    "exe_path",
+    "parent_exe_path",
+];
+
+/// v5 -> v6: add the nullable client/exe columns to `mcp_heartbeat`. Same
+/// shape as [`migrate_v4_to_v5`]: each ALTER only runs while its column is
+/// missing, inside the transaction that bumps the version, so concurrent
+/// openers and tables already created by schema.sql are both safe.
+fn migrate_v5_to_v6(conn: &Connection) -> Result<(), CoreError> {
+    let fail = |error| db_error("Could not migrate database to schema version 6", error);
+    conn.execute_batch("BEGIN IMMEDIATE;").map_err(fail)?;
+    let result = (|| {
+        for column in V6_HEARTBEAT_COLUMNS {
+            if !column_exists(conn, "mcp_heartbeat", column)? {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE mcp_heartbeat ADD COLUMN {column} TEXT;"
+                ))?;
+            }
+        }
+        conn.execute_batch(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '6')
                ON CONFLICT(key) DO UPDATE SET value = excluded.value;
              COMMIT;",
         )
@@ -757,6 +801,84 @@ VALUES
         assert_eq!(version, None, "rows from old sidecars keep NULL");
         drop(conn);
         open_at(&path).expect("reopen at v5 is a no-op");
+    }
+
+    #[test]
+    fn migrates_v5_heartbeat_table_to_v6_with_nullable_client_columns() {
+        let path = temp_db_path();
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        let setup = Connection::open(&path).expect("open raw");
+        setup.execute_batch(SCHEMA_SQL).expect("apply schema");
+        setup
+            .execute_batch(
+                "DROP TABLE mcp_heartbeat;
+                 CREATE TABLE mcp_heartbeat (
+                   pid INTEGER PRIMARY KEY,
+                   started_at TEXT NOT NULL,
+                   last_seen TEXT NOT NULL,
+                   version TEXT
+                 );
+                 INSERT INTO mcp_heartbeat (pid, started_at, last_seen, version)
+                   VALUES (8, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2.2.1');
+                 INSERT INTO meta (key, value) VALUES ('seeded', '1'), ('schema_version', '5');",
+            )
+            .expect("install v5 heartbeat table");
+        for column in V6_HEARTBEAT_COLUMNS {
+            assert!(!column_exists(&setup, "mcp_heartbeat", column).expect("table_info"));
+        }
+        drop(setup);
+
+        let conn = open_at(&path).expect("open migrates v5 database");
+
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some("6".to_string())
+        );
+        for column in V6_HEARTBEAT_COLUMNS {
+            assert!(column_exists(&conn, "mcp_heartbeat", column).expect("table_info"));
+        }
+        let version: Option<String> = conn
+            .query_row(
+                "SELECT version FROM mcp_heartbeat WHERE pid = 8",
+                [],
+                |row| row.get(0),
+            )
+            .expect("kept row");
+        assert_eq!(version.as_deref(), Some("2.2.1"));
+        let nulls: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mcp_heartbeat WHERE pid = 8
+                   AND client_name IS NULL AND client_version IS NULL
+                   AND exe_path IS NULL AND parent_exe_path IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("kept row");
+        assert_eq!(
+            nulls, 1,
+            "rows from older sidecars keep their version and NULL client info"
+        );
+        drop(conn);
+        open_at(&path).expect("reopen at v6 is a no-op");
+    }
+
+    #[test]
+    fn v5_to_v6_migration_is_idempotent_when_columns_already_exist() {
+        let conn = test_support::open_temp_db();
+        set_meta(&conn, "schema_version", "5").expect("rewind marker");
+        migrate_to_current_version(&conn).expect("re-run migration");
+        assert_eq!(
+            get_meta(&conn, "schema_version").expect("meta"),
+            Some("6".to_string())
+        );
+    }
+
+    #[test]
+    fn fresh_databases_have_heartbeat_client_columns() {
+        let conn = test_support::open_temp_db();
+        for column in V6_HEARTBEAT_COLUMNS {
+            assert!(column_exists(&conn, "mcp_heartbeat", column).expect("table_info"));
+        }
     }
 
     #[test]

@@ -11,8 +11,12 @@ use rmcp::model::{
 };
 use rmcp::schemars::generate::SchemaSettings;
 use rmcp::schemars::JsonSchema;
-use rmcp::{tool, tool_handler, tool_router, ServerHandler};
+use rmcp::service::NotificationContext;
+use rmcp::{tool, tool_handler, tool_router, RoleServer, ServerHandler};
+use sheet_port_core::heartbeat::HeartbeatIdentity;
 use sheet_port_core::CoreError;
+
+use crate::logging::log;
 
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
@@ -317,6 +321,45 @@ impl ServerHandler for SheetPortServer {
         info.server_info = Implementation::new(SERVER_NAME, SERVER_VERSION);
         info.instructions = Some(SERVER_INSTRUCTIONS.to_string());
         info
+    }
+
+    /// Records which MCP client runs this sidecar. rmcp stores the
+    /// `initialize` params on the peer before this notification arrives; the
+    /// heartbeat row is rewritten right away so the desktop can label it.
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        let Some(info) = context.peer.peer_info() else {
+            return;
+        };
+        let client = &info.client_info;
+        log(&format!("client {} {}", client.name, client.version));
+        self.state
+            .update_identity(client_identity(&client.name, &client.version));
+        let state = Arc::clone(&self.state);
+        let pid = i64::from(std::process::id());
+        let written = tokio::task::spawn_blocking(move || state.write_heartbeat(pid)).await;
+        match written {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => log(&format!("heartbeat client update failed: {error}")),
+            Err(error) => log(&format!("heartbeat client update failed: {error}")),
+        }
+    }
+}
+
+/// Longest client name/version stored in the heartbeat; clientInfo is
+/// client-controlled, so it is trimmed and capped.
+const CLIENT_FIELD_MAX_CHARS: usize = 128;
+
+/// The heartbeat identity update for an `initialize` clientInfo. Blank values
+/// become `None` so they never overwrite anything.
+pub(crate) fn client_identity(name: &str, version: &str) -> HeartbeatIdentity {
+    let clean = |value: &str| {
+        let value: String = value.trim().chars().take(CLIENT_FIELD_MAX_CHARS).collect();
+        (!value.is_empty()).then_some(value)
+    };
+    HeartbeatIdentity {
+        client_name: clean(name),
+        client_version: clean(version),
+        ..HeartbeatIdentity::default()
     }
 }
 

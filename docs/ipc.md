@@ -27,12 +27,19 @@ type AppStatus = {
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
   sidecars: SidecarHeartbeat[];  // every fresh heartbeat row, newest first
+  bundledSidecarPath: string | null; // sidecar binary this install launches
+  claudeDesktopRunning: boolean;     // Claude Desktop process running (Windows/macOS)
+  managedSidecarPid: number | null;  // sidecar child started by this app, if any
 };
 
 type SidecarHeartbeat = {
   pid: number;
   version: string | null;     // sidecar package version; null for sidecars that predate it
   lastSeen: string;           // ISO timestamp
+  clientName: string | null;  // MCP initialize clientInfo.name; null before initialize / older sidecars
+  clientVersion: string | null; // MCP initialize clientInfo.version
+  exePath: string | null;     // the sidecar's own executable; null for older sidecars
+  parentExePath: string | null; // executable of the process that spawned the sidecar
 };
 ```
 
@@ -42,6 +49,20 @@ stale; `sidecars` lists only rows seen within 30s. Each sidecar writes its
 sidecars leave it NULL. The Dashboard flags a sidecar as outdated when its
 version is null or differs from `appVersion`, because an MCP client keeps
 running the old sidecar until it restarts.
+
+Since schema_version 6 each sidecar also writes who runs it: `exe_path`
+(`std::env::current_exe`) and `parent_exe_path` (the spawning process, found
+through the Windows toolhelp snapshot or the Unix parent PID) at startup, and
+`client_name` / `client_version` from the MCP `initialize` clientInfo once the
+client sends `notifications/initialized`. A heartbeat tick never clears these
+fields. Sidecars older than schema_version 6 leave all four NULL.
+
+The shell adds three fields the database cannot know: `bundledSidecarPath`
+(the binary `resolve_sidecar_bin` picks, i.e. the one this install launches;
+a row whose `exePath` lives in another directory is a "dev build"),
+`claudeDesktopRunning` (a `claude.exe` under `%LOCALAPPDATA%\AnthropicClaude\`
+on Windows, `pgrep -x Claude` on macOS, always false elsewhere), and
+`managedSidecarPid` (the child from `mcp_server_start` / auto-start).
 
 ### `list_sources() -> DataSource[]`
 
@@ -266,6 +287,35 @@ event (`actor='user'`, `action='mcp_server_started'`, metadata
 Kills the managed sidecar child if one is running. Idempotent: no managed child
 is not an error. Audit event (`actor='user'`, `action='mcp_server_stopped'`,
 metadata `{pid}`) is written only when a child was actually stopped.
+
+### `mcp_stop_sidecar(pid: number) -> void`
+
+Stops one running sidecar, typically an outdated one an MCP client still runs.
+The PID must have a fresh heartbeat row (seen within 30s), must not be the app
+itself, and its process image must be `sheet-port-mcp(.exe)` (or the
+installer's `sheet-port-mcp.old-N.exe`); anything else is refused with an
+error and nothing is killed. The image is checked again on the handle used to
+terminate, so a recycled PID is never hit. Only that single process is
+stopped; then its heartbeat row is deleted. Audit event (`actor='user'`,
+`action='mcp_sidecar_stopped'`, metadata `{pid, version}`). The MCP client
+starts the current sidecar when it reconnects (Claude Code: `/mcp` ->
+Reconnect).
+
+### `claude_desktop_restart() -> void`
+
+Quits and relaunches Claude Desktop so it spawns the current sidecar.
+Windows: asks the tree of every `claude.exe` under
+`%LOCALAPPDATA%\AnthropicClaude\` to close (`taskkill /T` without `/F`),
+force-stops the Claude Desktop processes still alive after 5s (re-verifying
+each image path), then starts `%LOCALAPPDATA%\AnthropicClaude\claude.exe`
+(the Squirrel launcher, which opens the newest version) or, when that is
+missing, the executable of a stopped process. `claude.exe` from any other
+path (Claude Code in `%USERPROFILE%\.local\bin`, the Desktop Code tab's
+copy under `%APPDATA%\Claude\claude-code\`) is never targeted directly.
+macOS: `osascript -e 'quit app "Claude"'`, wait up to 10s, `open -a Claude`.
+Other platforms: error. Errors when Claude Desktop is not running or a
+restart is already in progress. Audit event (`actor='user'`,
+`action='claude_desktop_restarted'`) on success.
 
 ## Google Sheets accounts (bridge pool)
 

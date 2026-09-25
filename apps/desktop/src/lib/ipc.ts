@@ -17,12 +17,19 @@ export type AppStatus = {
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
   sidecars: SidecarHeartbeat[];  // every fresh heartbeat row, newest first
+  bundledSidecarPath: string | null; // sidecar binary this install launches
+  claudeDesktopRunning: boolean;     // Claude Desktop process running (Windows/macOS)
+  managedSidecarPid: number | null;  // sidecar child started by this app, if any
 };
 
 export type SidecarHeartbeat = {
   pid: number;
   version: string | null;     // sidecar package version; null for sidecars that predate it
   lastSeen: string;           // ISO timestamp
+  clientName: string | null;  // MCP initialize clientInfo.name; null before initialize / older sidecars
+  clientVersion: string | null; // MCP initialize clientInfo.version
+  exePath: string | null;     // the sidecar's own executable; null for older sidecars
+  parentExePath: string | null; // executable of the process that spawned the sidecar
 };
 
 export type TablePage = {
@@ -227,6 +234,10 @@ export interface IpcApi {
   mcpServerStart(): Promise<SidecarStatus>;
   /** Stops the desktop-managed sidecar if one is running. Idempotent. */
   mcpServerStop(): Promise<SidecarStatus>;
+  /** Stops one running sidecar (fresh heartbeat + sheet-port-mcp image only). */
+  mcpStopSidecar(pid: number): Promise<void>;
+  /** Quits and relaunches Claude Desktop (Windows/macOS). */
+  claudeDesktopRestart(): Promise<void>;
 
   // --- Workbench ---
   /** The full curated tree: every folder plus every added spreadsheet. */
@@ -309,6 +320,8 @@ const tauriIpc: IpcApi = {
   mcpConfigureAll: () => invoke<void>("mcp_configure_all"),
   mcpServerStart: () => invoke<SidecarStatus>("mcp_server_start"),
   mcpServerStop: () => invoke<SidecarStatus>("mcp_server_stop"),
+  mcpStopSidecar: (pid) => invoke<void>("mcp_stop_sidecar", { pid }),
+  claudeDesktopRestart: () => invoke<void>("claude_desktop_restart"),
   // Workbench: wired to the Rust workbench commands (see src-tauri/commands.rs).
   workbenchTree: () =>
     invoke<{ folders: WorkbenchFolder[]; items: WorkbenchItem[] }>("workbench_tree"),

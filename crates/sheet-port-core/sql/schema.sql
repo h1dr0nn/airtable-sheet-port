@@ -79,7 +79,17 @@ CREATE TABLE IF NOT EXISTS mcp_heartbeat (
   -- Sidecar package version (CARGO_PKG_VERSION). NULL for sidecars built
   -- before schema_version 5, which never write it. Added to existing
   -- databases by the v4 -> v5 migration in db.rs.
-  version TEXT
+  version TEXT,
+  -- The MCP client running this sidecar, from its `initialize` clientInfo
+  -- (e.g. "claude-code", "claude-ai"), the sidecar's own executable path,
+  -- and the executable of the process that spawned it (the MCP client).
+  -- The client columns stay NULL until initialize arrives; all four are
+  -- NULL for sidecars built before schema_version 6. Added to existing
+  -- databases by the v5 -> v6 migration in db.rs.
+  client_name TEXT,
+  client_version TEXT,
+  exe_path TEXT,
+  parent_exe_path TEXT
 );
 
 -- Mock connector data lives in the DB so the desktop UI and the MCP sidecar

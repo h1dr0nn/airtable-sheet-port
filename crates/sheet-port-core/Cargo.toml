@@ -22,3 +22,13 @@ keyring = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
 toml_edit = { workspace = true }
+
+# Process lookups for the MCP card (sidecar parent process, verified sidecar
+# stop, Claude Desktop detection). Already in the lock file through tauri and
+# tokio, so this adds no new crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+] }

@@ -24,7 +24,7 @@ use sheet_port_core::types::{
 };
 use sheet_port_core::workbench::{self, WorkbenchFolder, WorkbenchItem, WorkbenchTree};
 use sheet_port_core::{
-    audit, db, google, heartbeat, mcp_clients, permissions, sources, vault, CoreError,
+    audit, db, google, heartbeat, mcp_clients, permissions, processes, sources, vault, CoreError,
 };
 use tauri::{Manager, State};
 
@@ -87,15 +87,32 @@ where
     .map_err(|error| format!("Background task failed: {error}"))?
 }
 
+/// The DB readout plus what only the shell knows: the sidecar path this
+/// install launches, whether Claude Desktop runs, and the managed child PID.
 #[tauri::command]
-pub fn get_app_status(app: tauri::AppHandle, state: Db<'_>) -> Result<AppStatus, String> {
+pub fn get_app_status(
+    app: tauri::AppHandle,
+    state: Db<'_>,
+    sidecar: Sidecar<'_>,
+) -> Result<AppStatus, String> {
+    // Process enumeration runs before taking the DB lock.
+    let claude_desktop_running = crate::claude_desktop::is_running();
+    let managed_sidecar_pid = sidecar
+        .child
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|child| i64::from(child.id())));
     let conn = lock_conn(&state)?;
-    heartbeat::app_status(
+    let mut status = heartbeat::app_status(
         &conn,
         app.package_info().version.to_string(),
         state.path.display().to_string(),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    status.bundled_sidecar_path = Some(resolve_sidecar_bin().to_string_lossy().into_owned());
+    status.claude_desktop_running = claude_desktop_running;
+    status.managed_sidecar_pid = managed_sidecar_pid;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -901,6 +918,76 @@ pub fn mcp_server_stop(state: Db<'_>, sidecar: Sidecar<'_>) -> Result<SidecarSta
         running: false,
         pid: None,
     })
+}
+
+const MCP_SIDECAR_STOPPED_ACTION: &str = "mcp_sidecar_stopped";
+const CLAUDE_DESKTOP_RESTARTED_ACTION: &str = "claude_desktop_restarted";
+
+/// Stops one running sidecar by PID, typically an outdated one an MCP client
+/// still runs. Only a PID with a fresh heartbeat row whose process image is
+/// sheet-port-mcp(.exe) is killed (see `processes::validate_stop_target`);
+/// the image is checked again on the handle used for the kill. Then the
+/// heartbeat row is deleted and `mcp_sidecar_stopped` audited.
+#[tauri::command]
+pub fn mcp_stop_sidecar(state: Db<'_>, pid: i64) -> Result<(), String> {
+    let row = {
+        let conn = lock_conn(&state)?;
+        heartbeat::fresh_sidecar(&conn, pid, HEARTBEAT_STALE_MS)
+            .map_err(|error| error.to_string())?
+    };
+    let image = u32::try_from(pid).ok().and_then(processes::image_path);
+    let target =
+        processes::validate_stop_target(pid, std::process::id(), row.as_ref(), image.as_deref())
+            .map_err(|refusal| refusal.to_string())?;
+    processes::terminate_verified(target, processes::is_sidecar_image)?;
+
+    let conn = lock_conn(&state)?;
+    heartbeat::delete_own(&conn, pid).map_err(|error| error.to_string())?;
+    let version = row.and_then(|row| row.version);
+    audit::record(
+        &conn,
+        AuditActor::User,
+        MCP_SIDECAR_STOPPED_ACTION,
+        None,
+        None,
+        Some(&json!({ "pid": pid, "version": version })),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Set while a Claude Desktop restart runs so a second click cannot start
+/// another one.
+static CLAUDE_DESKTOP_RESTARTING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Quits and relaunches Claude Desktop so it respawns its MCP sidecar from
+/// this install (see claude_desktop.rs). Runs on a blocking task; errors when
+/// Claude Desktop is not running or a restart is already in progress.
+#[tauri::command]
+pub async fn claude_desktop_restart(state: Db<'_>) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    if CLAUDE_DESKTOP_RESTARTING.swap(true, Ordering::SeqCst) {
+        return Err("A Claude Desktop restart is already in progress".to_string());
+    }
+    let result = tauri::async_runtime::spawn_blocking(crate::claude_desktop::restart)
+        .await
+        .map_err(|error| format!("Background task failed: {error}"))
+        .and_then(|result| result);
+    CLAUDE_DESKTOP_RESTARTING.store(false, Ordering::SeqCst);
+    result?;
+
+    let conn = lock_conn(&state)?;
+    audit::record(
+        &conn,
+        AuditActor::User,
+        CLAUDE_DESKTOP_RESTARTED_ACTION,
+        None,
+        None,
+        None,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- The Dashboard's MCP card names the client behind each running sidecar
+  ("Claude Code", "Claude Desktop", "Cursor", ...), taken from the MCP
+  `initialize` clientInfo. Claude Desktop's Code tab shows as "Claude Code
+  (Claude Desktop)". Hover the name for the raw client name and version and
+  the sidecar and parent executables. Sidecars from before this version show
+  "Unknown client (older sidecar)".
+- A "Dev build" badge on sidecars that run from somewhere other than this
+  install (for example a workspace `target\debug` build).
+- A "Stop" button on outdated sidecar rows. It only stops a process that has a
+  fresh heartbeat and is a `sheet-port-mcp` executable, and only that process;
+  reconnect the MCP client afterwards (Claude Code: `/mcp`, then Reconnect).
+  Audited as `mcp_sidecar_stopped`.
+- A "Restart Claude Desktop" button on the MCP card while Claude Desktop runs
+  (Windows and macOS). It quits Claude Desktop and opens it again so it starts
+  the current sidecar. Claude Code in terminals is not touched. Audited as
+  `claude_desktop_restarted`.
+
+### Changed
+- Sidecars record their client name and version, their own executable path
+  and their parent process in the heartbeat (database schema_version 6).
+
 ## [2.2.1] - 2026-09-25
 
 ### Added

@@ -11,18 +11,80 @@ use crate::db::{iso_before, now_iso};
 use crate::error::{db_error, CoreError};
 use crate::types::{AppStatus, HeartbeatStatus, SidecarHeartbeat};
 
+/// Who is running a sidecar, written next to its heartbeat (schema_version
+/// 6). Every field is optional: the client is only known once `initialize`
+/// arrives, and the exe path can fail to resolve.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeartbeatIdentity {
+    /// `clientInfo.name` from the MCP `initialize` request (e.g. "claude-code").
+    pub client_name: Option<String>,
+    /// `clientInfo.version` from the MCP `initialize` request.
+    pub client_version: Option<String>,
+    /// The sidecar's own executable (`std::env::current_exe`).
+    pub exe_path: Option<String>,
+    /// The executable of the process that spawned the sidecar (normally the
+    /// MCP client itself, e.g. Claude Code's `claude.exe`).
+    pub parent_exe_path: Option<String>,
+}
+
 /// Upserts this sidecar's row. `version` is the sidecar's package version
 /// (`CARGO_PKG_VERSION`) so the desktop can spot sidecars left running from
-/// an older install.
+/// an older install. Leaves any recorded client info untouched.
 pub fn upsert_own(conn: &Connection, pid: i64, version: &str) -> Result<(), CoreError> {
+    upsert_own_with_identity(conn, pid, version, &HeartbeatIdentity::default())
+}
+
+/// [`upsert_own`] plus the client/exe identity. A `None` field keeps the
+/// stored value, so a heartbeat tick never erases what `initialize` wrote,
+/// and a row recreated after deletion gets the full identity back.
+pub fn upsert_own_with_identity(
+    conn: &Connection,
+    pid: i64,
+    version: &str,
+    identity: &HeartbeatIdentity,
+) -> Result<(), CoreError> {
     let now = now_iso();
     conn.execute(
-        "INSERT INTO mcp_heartbeat (pid, started_at, last_seen, version) VALUES (?1, ?2, ?2, ?3)
-         ON CONFLICT(pid) DO UPDATE SET last_seen = excluded.last_seen, version = excluded.version",
-        params![pid, now, version],
+        "INSERT INTO mcp_heartbeat
+           (pid, started_at, last_seen, version, client_name, client_version, exe_path,
+            parent_exe_path)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(pid) DO UPDATE SET
+           last_seen = excluded.last_seen,
+           version = excluded.version,
+           client_name = COALESCE(excluded.client_name, client_name),
+           client_version = COALESCE(excluded.client_version, client_version),
+           exe_path = COALESCE(excluded.exe_path, exe_path),
+           parent_exe_path = COALESCE(excluded.parent_exe_path, parent_exe_path)",
+        params![
+            pid,
+            now,
+            version,
+            identity.client_name,
+            identity.client_version,
+            identity.exe_path,
+            identity.parent_exe_path
+        ],
     )
     .map_err(|error| db_error("Could not upsert heartbeat", error))?;
     Ok(())
+}
+
+/// The fresh heartbeat row for `pid` (seen within `ttl_ms`), if any. The
+/// desktop's stop action only targets PIDs that pass this check.
+pub fn fresh_sidecar(
+    conn: &Connection,
+    pid: i64,
+    ttl_ms: i64,
+) -> Result<Option<SidecarHeartbeat>, CoreError> {
+    let read_error = |error| db_error("Could not read MCP heartbeat", error);
+    conn.query_row(
+        &format!("{SIDECAR_COLUMNS} WHERE pid = ?1 AND last_seen >= ?2"),
+        params![pid, iso_before(ttl_ms)],
+        sidecar_from_row,
+    )
+    .optional()
+    .map_err(read_error)
 }
 
 pub fn delete_stale(conn: &Connection, ttl_ms: i64) -> Result<(), CoreError> {
@@ -100,6 +162,27 @@ pub fn app_status(
         mcp_pid,
         mcp_last_seen,
         sidecars,
+        // Filled in by the desktop shell, which knows its install layout and
+        // can enumerate processes; the core only reads the database.
+        bundled_sidecar_path: None,
+        claude_desktop_running: false,
+        managed_sidecar_pid: None,
+    })
+}
+
+const SIDECAR_COLUMNS: &str = "SELECT pid, version, last_seen, client_name, client_version,
+       exe_path, parent_exe_path
+     FROM mcp_heartbeat";
+
+fn sidecar_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SidecarHeartbeat> {
+    Ok(SidecarHeartbeat {
+        pid: row.get(0)?,
+        version: row.get(1)?,
+        last_seen: row.get(2)?,
+        client_name: row.get(3)?,
+        client_version: row.get(4)?,
+        exe_path: row.get(5)?,
+        parent_exe_path: row.get(6)?,
     })
 }
 
@@ -110,19 +193,12 @@ fn fresh_sidecars(
 ) -> Result<Vec<SidecarHeartbeat>, CoreError> {
     let read_error = |error| db_error("Could not read MCP heartbeats", error);
     let mut statement = conn
-        .prepare(
-            "SELECT pid, version, last_seen FROM mcp_heartbeat
-             WHERE last_seen >= ?1 ORDER BY last_seen DESC, pid",
-        )
+        .prepare(&format!(
+            "{SIDECAR_COLUMNS} WHERE last_seen >= ?1 ORDER BY last_seen DESC, pid"
+        ))
         .map_err(read_error)?;
     let rows = statement
-        .query_map([freshness_floor], |row| {
-            Ok(SidecarHeartbeat {
-                pid: row.get(0)?,
-                version: row.get(1)?,
-                last_seen: row.get(2)?,
-            })
-        })
+        .query_map([freshness_floor], sidecar_from_row)
         .map_err(read_error)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(read_error)
 }

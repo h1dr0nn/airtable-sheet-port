@@ -149,3 +149,74 @@ fn app_status_lists_only_fresh_sidecars_with_versions() {
         .all(|sidecar| !sidecar.last_seen.is_empty()));
     assert!(status.mcp_running);
 }
+
+fn identity(client: Option<&str>, exe: Option<&str>) -> HeartbeatIdentity {
+    HeartbeatIdentity {
+        client_name: client.map(str::to_string),
+        client_version: client.map(|_| "1.2.3".to_string()),
+        exe_path: exe.map(str::to_string),
+        parent_exe_path: exe.map(|_| r"C:\Users\me\.local\bin\claude.exe".to_string()),
+    }
+}
+
+#[test]
+fn identity_is_written_and_survives_plain_heartbeat_ticks() {
+    let conn = open_temp_db();
+    let exe = r"C:\Program Files\Airtable - Sheet Port\sheet-port-mcp.exe";
+    // Startup: exe known, client not yet initialized.
+    upsert_own_with_identity(&conn, 500, "2.3.0", &identity(None, Some(exe))).expect("startup");
+    let before = fresh_sidecar(&conn, 500, TTL_MS)
+        .expect("read")
+        .expect("fresh");
+    assert_eq!(before.client_name, None);
+    assert_eq!(before.exe_path.as_deref(), Some(exe));
+
+    // initialize arrives: only the client fields are passed.
+    upsert_own_with_identity(&conn, 500, "2.3.0", &identity(Some("claude-code"), None))
+        .expect("initialize");
+    // A plain tick afterwards must not erase anything.
+    upsert_own(&conn, 500, "2.3.0").expect("tick");
+
+    let status = app_status(&conn, "2.3.0".into(), "test.db".into()).expect("status");
+    let row = &status.sidecars[0];
+    assert_eq!(row.client_name.as_deref(), Some("claude-code"));
+    assert_eq!(row.client_version.as_deref(), Some("1.2.3"));
+    assert_eq!(row.exe_path.as_deref(), Some(exe));
+    assert_eq!(
+        row.parent_exe_path.as_deref(),
+        Some(r"C:\Users\me\.local\bin\claude.exe")
+    );
+}
+
+#[test]
+fn app_status_reports_null_identity_for_older_sidecars() {
+    let conn = open_temp_db();
+    // What a v2.2.1 sidecar writes: version only.
+    upsert_own(&conn, 600, "2.2.1").expect("old sidecar");
+    let status = app_status(&conn, "2.3.0".into(), "test.db".into()).expect("status");
+    let row = &status.sidecars[0];
+    assert_eq!(row.pid, 600);
+    assert_eq!(row.client_name, None);
+    assert_eq!(row.client_version, None);
+    assert_eq!(row.exe_path, None);
+    assert_eq!(row.parent_exe_path, None);
+    assert_eq!(status.bundled_sidecar_path, None, "filled in by the shell");
+    assert!(!status.claude_desktop_running, "filled in by the shell");
+    assert_eq!(status.managed_sidecar_pid, None, "filled in by the shell");
+}
+
+#[test]
+fn fresh_sidecar_only_returns_fresh_rows_for_that_pid() {
+    let conn = open_temp_db();
+    upsert_own(&conn, 700, "2.3.0").expect("fresh");
+    insert_stale_row(&conn, 701);
+
+    assert_eq!(
+        fresh_sidecar(&conn, 700, TTL_MS)
+            .expect("read")
+            .map(|row| row.pid),
+        Some(700)
+    );
+    assert!(fresh_sidecar(&conn, 701, TTL_MS).expect("read").is_none());
+    assert!(fresh_sidecar(&conn, 702, TTL_MS).expect("read").is_none());
+}

@@ -131,3 +131,18 @@ fn get_table_style_schema_offers_header_row() {
     assert!(schema["properties"]["headerRow"]["description"].is_string());
     assert_eq!(schema["required"], serde_json::json!(["tableId"]));
 }
+
+#[test]
+fn client_identity_trims_caps_and_drops_blank_values() {
+    let identity = client_identity("  claude-code ", "2.1.0");
+    assert_eq!(identity.client_name.as_deref(), Some("claude-code"));
+    assert_eq!(identity.client_version.as_deref(), Some("2.1.0"));
+    assert_eq!(identity.exe_path, None, "exe paths are set at startup only");
+
+    let blank = client_identity("   ", "");
+    assert_eq!(blank.client_name, None);
+    assert_eq!(blank.client_version, None);
+
+    let long = client_identity(&"x".repeat(500), "1");
+    assert_eq!(long.client_name.map(|name| name.len()), Some(128));
+}

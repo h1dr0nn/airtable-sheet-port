@@ -1,3 +1,4 @@
+mod claude_desktop;
 mod commands;
 
 use tauri::{Manager, WindowEvent};
@@ -67,6 +68,8 @@ pub fn run() {
             commands::mcp_configure_all,
             commands::mcp_server_start,
             commands::mcp_server_stop,
+            commands::mcp_stop_sidecar,
+            commands::claude_desktop_restart,
             commands::get_autostart_enabled,
             commands::set_autostart_enabled,
             commands::google_list_accounts,

@@ -2,8 +2,9 @@
 //!
 //! Owns every behavior of the local permission broker: shared SQLite state
 //! (schema + seed under sql/), permission rules, pending-change lifecycle,
-//! audit log, connectors, MCP heartbeat, and keychain token status. The Tauri
-//! desktop shell and the MCP server are thin wrappers over this crate.
+//! audit log, connectors, MCP heartbeat, process helpers, and keychain token
+//! status. The Tauri desktop shell and the MCP server are thin wrappers over
+//! this crate.
 //! error wording is part of the contract (docs/mcp-tools.md, docs/ipc.md).
 
 pub mod audit;
@@ -18,6 +19,7 @@ pub mod mcp_clients;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock_data;
 pub mod permissions;
+pub mod processes;
 pub mod sources;
 pub mod types;
 pub mod vault;

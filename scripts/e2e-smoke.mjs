@@ -280,7 +280,9 @@ try {
   assert.equal(dryAudit.metadata.dryRun, true, "audit metadata carries dryRun");
 
   const hb = new DatabaseSync(dbPath);
-  const rows = hb.prepare("SELECT pid, last_seen, version FROM mcp_heartbeat").all();
+  const rows = hb
+    .prepare("SELECT pid, last_seen, version, client_name, client_version, exe_path FROM mcp_heartbeat")
+    .all();
   hb.close();
   assert.equal(rows.length, 1, "heartbeat row present");
   assert.equal(Number(rows[0].pid), child.pid, "heartbeat pid matches sidecar");
@@ -288,6 +290,13 @@ try {
   const crateVersion = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   assert.ok(crateVersion, "sheet-port-mcp Cargo.toml declares a version");
   assert.equal(rows[0].version, crateVersion, "heartbeat carries the sidecar version");
+  // Written after initialize from the clientInfo sent above.
+  assert.equal(rows[0].client_name, "smoke", "heartbeat records the MCP client name");
+  assert.equal(rows[0].client_version, "0.0.0", "heartbeat records the MCP client version");
+  assert.ok(
+    typeof rows[0].exe_path === "string" && /sheet-port-mcp/i.test(rows[0].exe_path),
+    "heartbeat records the sidecar exe path"
+  );
 
   process.stdout.write("PROTOCOL SMOKE: ALL PASS\n");
 } catch (error) {
