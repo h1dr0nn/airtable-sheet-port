@@ -34,7 +34,6 @@ import { isTauri, type CloseBehavior, type FontFamily, type FontScale, type Lang
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { CheckForUpdatesButton } from "../components/settings/CheckForUpdatesButton.js";
-import { GoogleBridgesCard } from "../components/settings/GoogleBridgesCard.js";
 import { PermissionPresetRow } from "../components/permissions/PermissionPresetRow.js";
 import { ScreenHeader } from "../components/ScreenHeader.js";
 import { SegmentedControl, type SegmentedOption } from "../components/SegmentedControl.js";
@@ -389,7 +388,6 @@ export function Settings() {
         <AppearanceCard />
         <McpServerCard />
         <McpClientsCard />
-        <GoogleBridgesCard />
         <PermissionsCard />
         <GeneralCard />
         <AboutCard />

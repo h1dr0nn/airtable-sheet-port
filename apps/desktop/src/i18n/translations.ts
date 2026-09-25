@@ -139,16 +139,6 @@ export const en = {
   "dashboard.recentChangesEmpty": "Agent writes show up here as they happen.",
 
   // Data Sources
-  "sources.googleSheets": "Google Sheets",
-  "sources.disconnect": "Disconnect",
-  "sources.disconnectTooltip": "Remove this account's bridge and its stored secret",
-  "sources.linkedTo": "Linked to {email}",
-  "sources.disconnectTitle": "Disconnect Google Account?",
-  "sources.disconnectDescription":
-    "Agents lose access to this account's spreadsheets, and its bridge URL and secret are removed from the OS keychain. You can add the bridge again at any time.",
-  "sources.addGoogleAccount": "Add Google Account",
-  "sources.addGoogleAccountHint":
-    "Add an Apps Script bridge in Settings to link another Google account",
   "sources.statusConnected": "Connected",
   "sources.statusPlaceholder": "Placeholder",
   "sources.statusError": "Error",
@@ -631,16 +621,6 @@ const vi: Dictionary = {
   "dashboard.recentChangesEmpty": "Thao tác ghi của agent xuất hiện tại đây ngay khi diễn ra.",
 
   // Data Sources
-  "sources.googleSheets": "Google Sheets",
-  "sources.disconnect": "Ngắt kết nối",
-  "sources.disconnectTooltip": "Xóa cầu nối của tài khoản này và secret đã lưu",
-  "sources.linkedTo": "Liên kết với {email}",
-  "sources.disconnectTitle": "Ngắt kết nối tài khoản Google?",
-  "sources.disconnectDescription":
-    "Agent mất quyền truy cập vào bảng tính của tài khoản này, và URL cùng secret của cầu nối sẽ bị xóa khỏi keychain của hệ điều hành. Bạn có thể thêm lại cầu nối bất cứ lúc nào.",
-  "sources.addGoogleAccount": "Thêm tài khoản Google",
-  "sources.addGoogleAccountHint":
-    "Thêm một cầu nối Apps Script trong Cài đặt để liên kết thêm tài khoản Google",
   "sources.statusConnected": "Đã kết nối",
   "sources.statusPlaceholder": "Chỗ giữ chỗ",
   "sources.statusError": "Lỗi",

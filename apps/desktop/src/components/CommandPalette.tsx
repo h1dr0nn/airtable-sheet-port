@@ -157,7 +157,7 @@ export function CommandPalette({ open, onOpenChange, onNavigate }: CommandPalett
             <CommandItem
               value="add-google-bridge"
               keywords={[t("palette.addGoogleBridge")]}
-              onSelect={() => runAndClose(() => onNavigate("settings"))}
+              onSelect={() => runAndClose(() => onNavigate("sources"))}
             >
               {t("palette.addGoogleBridge")}
             </CommandItem>

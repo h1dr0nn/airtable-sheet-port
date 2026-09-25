@@ -212,8 +212,8 @@ broker logic of its own.
 
 ### React frontend (`apps/desktop/src`)
 
-- Screens: Dashboard, Data Sources, Tables (the spreadsheet workbench), Changes (change
-  history with discard for staged dry runs), and Settings (Google bridges, permissions,
+- Screens: Dashboard, Data Sources (the Google bridge pool: add, test, remove), Tables (the spreadsheet workbench), Changes (change
+  history with discard for staged dry runs), and Settings (permissions,
   MCP server, MCP clients, appearance, updates). The audit log opens from the header
   dropdown.
 - `lib/ipc.ts` types every Tauri command from `docs/ipc.md`. In-memory demo fixtures are

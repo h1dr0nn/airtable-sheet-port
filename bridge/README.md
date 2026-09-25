@@ -29,7 +29,7 @@ Scopes requested: `spreadsheets`, `drive.metadata.readonly` (list spreadsheets),
    then copy the `SECRET = ...` value from the execution log.
 5. Click **Deploy > New deployment**, choose type **Web app**, set **Execute as: Me** and
    **Who has access: Anyone**, then deploy and copy the web app URL (ends in `/exec`).
-6. In the desktop app open **Settings > Google bridges**, paste the URL and the secret,
+6. In the desktop app open **Data Sources**, paste the URL and the secret,
    and add the bridge. The app calls the bridge once, reads the account email, and adds
    the source `google-sheets:{accountKey}`.
 

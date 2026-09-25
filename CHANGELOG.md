@@ -9,9 +9,9 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - Apps Script bridge auth. Paste a web app URL and a secret, with no Cloud Console
   project or OAuth client needed. The bridge files and setup guide are in
-  `bridge/`, and the guide is also built into Settings.
+  `bridge/`, and the guide is also built into Data Sources.
 - A pool of bridges, one per Google account, with Add, Test and Remove in
-  Settings > Google bridges.
+  Data Sources.
 - Automatic routing. `sourceId` is optional on every tool. With several accounts,
   the bridge that can open the referenced spreadsheet is used and the choice is
   remembered.

@@ -42,7 +42,7 @@ a token.
 
 ## Current Status (2.0.0)
 
-- Desktop app: Dashboard, Data Sources, Tables (workbench), Changes (history), and
+- Desktop app: Dashboard, Data Sources (Google bridges), Tables (workbench), Changes (history), and
   Settings (Google bridges, permissions, MCP server and clients, appearance, updates),
   live-wired to the Rust backend via typed Tauri IPC (`docs/ipc.md`).
 - Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 18 tools over stdio or loopback
