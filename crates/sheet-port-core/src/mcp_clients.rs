@@ -113,6 +113,9 @@ struct ClientDef {
     /// `configure_client` / `unregister_client` refuse with a clear error.
     detectable: bool,
     config_path: fn() -> Option<PathBuf>,
+    /// A second config file written together with `config_path`, for one
+    /// product that ships two clients reading different files.
+    extra_path: Option<fn() -> Option<PathBuf>>,
 }
 
 /// One detected client's state for the UI: whether its config directory exists
@@ -242,19 +245,16 @@ fn codex_path() -> Option<PathBuf> {
 /// user-level path.
 fn registry() -> Vec<ClientDef> {
     vec![
+        // Claude Desktop chat reads claude_desktop_config.json while Claude
+        // Code (the CLI and the desktop app's Code tab) reads ~/.claude.json,
+        // so one entry writes both and the user configures Claude once.
         ClientDef {
-            id: "claude-desktop",
-            display_name: "Claude Desktop",
+            id: CLAUDE_CLIENT_ID,
+            display_name: "Claude",
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: claude_desktop_path,
-        },
-        ClientDef {
-            id: "claude-code",
-            display_name: "Claude Code",
-            shape: ConfigShape::McpServers,
-            detectable: true,
-            config_path: claude_code_path,
+            extra_path: Some(claude_code_path),
         },
         ClientDef {
             id: "cursor",
@@ -262,6 +262,7 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: cursor_path,
+            extra_path: None,
         },
         ClientDef {
             id: "windsurf",
@@ -269,6 +270,7 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: windsurf_path,
+            extra_path: None,
         },
         ClientDef {
             id: "cline",
@@ -276,6 +278,7 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: cline_path,
+            extra_path: None,
         },
         ClientDef {
             id: "antigravity-2",
@@ -283,6 +286,7 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: antigravity_path,
+            extra_path: None,
         },
         ClientDef {
             id: "antigravity-ide",
@@ -290,6 +294,7 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::McpServers,
             detectable: true,
             config_path: antigravity_path,
+            extra_path: None,
         },
         ClientDef {
             id: "codex",
@@ -297,6 +302,7 @@ fn registry() -> Vec<ClientDef> {
             shape: ConfigShape::Toml,
             detectable: true,
             config_path: codex_path,
+            extra_path: None,
         },
         ClientDef {
             id: "vscode-copilot",
@@ -305,11 +311,24 @@ fn registry() -> Vec<ClientDef> {
             // See the registry() note: path + shape not settled, so never written.
             detectable: false,
             config_path: || None,
+            extra_path: None,
         },
     ]
 }
 
+/// The Claude client: writes both the Claude Desktop and Claude Code configs.
+const CLAUDE_CLIENT_ID: &str = "claude";
+
+/// Ids of the former separate Claude entries, still accepted so a remembered
+/// configured-client list keeps self-healing after the merge.
+const LEGACY_CLAUDE_IDS: [&str; 2] = ["claude-desktop", "claude-code"];
+
 fn find_client(id: &str) -> Result<ClientDef, CoreError> {
+    let id = if LEGACY_CLAUDE_IDS.contains(&id) {
+        CLAUDE_CLIENT_ID
+    } else {
+        id
+    };
     registry()
         .into_iter()
         .find(|client| client.id == id)
@@ -331,6 +350,33 @@ fn resolve_writable_path(client: &ClientDef) -> Result<PathBuf, CoreError> {
             client.id
         ))
     })
+}
+
+/// Every config file of a writable client: the primary path plus the extra one.
+/// Files whose directory does not exist yet are skipped (that app is not
+/// installed), except that the primary file is always kept so a first-time
+/// configure still has somewhere to write.
+fn writable_paths(client: &ClientDef) -> Result<Vec<PathBuf>, CoreError> {
+    let primary = resolve_writable_path(client)?;
+    let mut paths = Vec::new();
+    let extra = client.extra_path.and_then(|resolve| resolve());
+    for path in std::iter::once(primary.clone()).chain(extra) {
+        if path.parent().is_some_and(std::path::Path::is_dir) {
+            paths.push(path);
+        }
+    }
+    if paths.is_empty() {
+        paths.push(primary);
+    }
+    Ok(paths)
+}
+
+/// The config files a client is detected through (primary, then extra).
+fn detection_paths(client: &ClientDef) -> Vec<PathBuf> {
+    (client.config_path)()
+        .into_iter()
+        .chain(client.extra_path.and_then(|resolve| resolve()))
+        .collect()
 }
 
 /// Reads a client's config file into a JSON object. A missing file yields an
@@ -416,16 +462,26 @@ fn servers_map<'a>(
 /// or empty file (or a read/parse error) means not configured. Dispatches to
 /// the TOML detector for TOML shapes and the JSON one otherwise.
 fn is_configured(client: &ClientDef) -> bool {
-    let Some(path) = (client.config_path)() else {
-        return false;
-    };
-    if client.shape.is_toml() {
-        return toml_is_configured(&path);
+    // Configured means every installed file of the client has our entry.
+    let installed: Vec<PathBuf> = detection_paths(client)
+        .into_iter()
+        .filter(|path| path.parent().is_some_and(std::path::Path::is_dir))
+        .collect();
+    !installed.is_empty()
+        && installed
+            .iter()
+            .all(|path| path_is_configured(path, client.shape))
+}
+
+/// Whether the config file at `path` (shape `shape`) contains our entry.
+fn path_is_configured(path: &std::path::Path, shape: ConfigShape) -> bool {
+    if shape.is_toml() {
+        return toml_is_configured(path);
     }
-    let Ok(root) = read_config_object(&path) else {
+    let Ok(root) = read_config_object(path) else {
         return false;
     };
-    root.get(client.shape.servers_key())
+    root.get(shape.servers_key())
         .and_then(Value::as_object)
         .map(|servers| servers.contains_key(MCP_CLIENT_SERVER_NAME))
         .unwrap_or(false)
@@ -438,12 +494,9 @@ pub fn detect_clients() -> Vec<DetectedClient> {
     registry()
         .into_iter()
         .map(|client| {
-            let path = (client.config_path)();
-            let installed = path
-                .as_deref()
-                .and_then(std::path::Path::parent)
-                .map(std::path::Path::is_dir)
-                .unwrap_or(false);
+            let installed = detection_paths(&client)
+                .iter()
+                .any(|path| path.parent().is_some_and(std::path::Path::is_dir));
             let configured = is_configured(&client);
             DetectedClient {
                 id: client.id.to_string(),
@@ -646,9 +699,14 @@ fn toml_is_configured(path: &std::path::Path) -> bool {
 /// path written so callers can audit/report it.
 pub fn configure_client(id: &str, spec: &ServerSpec) -> Result<PathBuf, CoreError> {
     let client = find_client(id)?;
-    let path = resolve_writable_path(&client)?;
-    merge_entry_into(&path, client.shape, spec)?;
-    Ok(path)
+    let paths = writable_paths(&client)?;
+    for path in &paths {
+        merge_entry_into(path, client.shape, spec)?;
+    }
+    Ok(paths
+        .into_iter()
+        .next()
+        .expect("writable_paths is never empty"))
 }
 
 /// Removes only our server entry from `id`'s config, leaving every other
@@ -657,12 +715,13 @@ pub fn configure_client(id: &str, spec: &ServerSpec) -> Result<PathBuf, CoreErro
 /// a file was rewritten, `None` when there was nothing to remove.
 pub fn unregister_client(id: &str) -> Result<Option<PathBuf>, CoreError> {
     let client = find_client(id)?;
-    let path = resolve_writable_path(&client)?;
-    if remove_entry_from(&path, client.shape)? {
-        Ok(Some(path))
-    } else {
-        Ok(None)
+    let mut first_rewritten = None;
+    for path in writable_paths(&client)? {
+        if remove_entry_from(&path, client.shape)? && first_rewritten.is_none() {
+            first_rewritten = Some(path);
+        }
     }
+    Ok(first_rewritten)
 }
 
 #[cfg(test)]

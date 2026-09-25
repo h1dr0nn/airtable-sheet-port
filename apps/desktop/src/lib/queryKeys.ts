@@ -7,8 +7,6 @@ export const queryKeys = {
   tablePage: (sourceId: string, tableId: string, page: number) =>
     ["table-page", sourceId, tableId, page] as const,
   permissionRules: ["permission-rules"] as const,
-  changesRoot: ["changes"] as const,
-  changes: (status: string | null) => ["changes", status ?? "all"] as const,
   auditEvents: ["audit-events"] as const,
   auditEventsPaged: (pageSize: number) => ["audit-events", pageSize] as const,
   tokenStatus: ["token-status"] as const,

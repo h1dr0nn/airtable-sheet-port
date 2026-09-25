@@ -171,13 +171,7 @@ fn registry_ids_are_unique_and_detect_covers_them_all() {
     sorted.dedup();
     assert_eq!(sorted.len(), ids.len(), "client ids must be unique");
     // The known confident clients are present.
-    for expected in [
-        "claude-desktop",
-        "claude-code",
-        "cursor",
-        "windsurf",
-        "cline",
-    ] {
+    for expected in ["claude", "cursor", "windsurf", "cline"] {
         assert!(ids.contains(&expected), "missing client {expected}");
     }
 }
@@ -431,4 +425,14 @@ fn toml_malformed_config_is_rejected_not_clobbered() {
         bad,
         "malformed file left untouched"
     );
+}
+
+#[test]
+fn legacy_claude_ids_resolve_to_the_combined_client() {
+    for legacy in ["claude-desktop", "claude-code", "claude"] {
+        let client = find_client(legacy).expect("known client");
+        assert_eq!(client.id, "claude");
+        assert!(client.extra_path.is_some(), "writes both Claude configs");
+    }
+    assert!(!detect_clients().iter().any(|c| c.id == "claude-code"));
 }

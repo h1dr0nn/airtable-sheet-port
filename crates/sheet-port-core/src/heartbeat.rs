@@ -79,14 +79,6 @@ pub fn app_status(
         .optional()
         .map_err(|error| db_error("Could not read MCP heartbeat", error))?;
 
-    let pending_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pending_changes WHERE status = 'pending'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| db_error("Could not count pending changes", error))?;
-
     let freshness_floor = iso_before(HEARTBEAT_STALE_MS);
     let (mcp_pid, mcp_last_seen, mcp_running) = match newest {
         Some((pid, last_seen)) => {
@@ -102,7 +94,6 @@ pub fn app_status(
         mcp_running,
         mcp_pid,
         mcp_last_seen,
-        pending_count,
     })
 }
 

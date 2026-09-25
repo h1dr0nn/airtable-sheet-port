@@ -27,14 +27,19 @@ const ITEM_CLASS = [
   "data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
 ].join(" ");
 
+/** Minimum gap (px) every menu keeps from the window edges, so a menu opened
+ * from a trigger at the edge (e.g. the titlebar menu) never sits flush. */
+const EDGE_PADDING = 8;
+
 export const DropdownMenuContent = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.Content>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, style, ...props }, ref) => (
+>(({ className, sideOffset = 4, collisionPadding = EDGE_PADDING, style, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
+      collisionPadding={collisionPadding}
       style={{ ...PANEL_Z_INDEX, ...style }}
       className={cn(PANEL_CLASS, className)}
       {...props}
@@ -69,11 +74,12 @@ DropdownMenuSubTrigger.displayName = "DropdownMenuSubTrigger";
 export const DropdownMenuSubContent = forwardRef<
   ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, sideOffset = 6, style, ...props }, ref) => (
+>(({ className, sideOffset = 6, collisionPadding = EDGE_PADDING, style, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.SubContent
       ref={ref}
       sideOffset={sideOffset}
+      collisionPadding={collisionPadding}
       style={{ ...PANEL_Z_INDEX, ...style }}
       className={cn(PANEL_CLASS, className)}
       {...props}

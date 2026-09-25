@@ -19,13 +19,12 @@ use sheet_port_core::db::McpTransport;
 use sheet_port_core::mcp_clients::{DetectedClient, ServerSpec};
 use sheet_port_core::rusqlite::Connection;
 use sheet_port_core::types::{
-    AppStatus, AuditActor, AuditEvent, DataSource, GridData, GridRow, PendingChange,
-    PermissionRuleRow, ReadOptions, SavePermissionRule, SheetTab, TablePage, TableRef, TableSchema,
-    TokenStatus,
+    AppStatus, AuditActor, AuditEvent, DataSource, GridData, GridRow, PermissionRuleRow,
+    ReadOptions, SavePermissionRule, SheetTab, TablePage, TableRef, TableSchema, TokenStatus,
 };
 use sheet_port_core::workbench::{self, WorkbenchFolder, WorkbenchItem, WorkbenchTree};
 use sheet_port_core::{
-    audit, changes, db, google, heartbeat, mcp_clients, permissions, sources, vault, CoreError,
+    audit, db, google, heartbeat, mcp_clients, permissions, sources, vault, CoreError,
 };
 use tauri::{Manager, State};
 
@@ -176,20 +175,6 @@ pub fn save_permission_rule(
 pub fn delete_permission_rule(state: Db<'_>, id: i64) -> Result<(), String> {
     let conn = lock_conn(&state)?;
     permissions::delete_rule(&conn, id).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub fn list_changes(state: Db<'_>, status: Option<String>) -> Result<Vec<PendingChange>, String> {
-    let conn = lock_conn(&state)?;
-    changes::list_changes(&conn, status.as_deref()).map_err(|error| error.to_string())
-}
-
-/// Discards a staged (dry-run) change that is still pending.
-#[tauri::command]
-pub fn reject_change(state: Db<'_>, change_id: String) -> Result<PendingChange, String> {
-    let conn = lock_conn(&state)?;
-    changes::decide_change(&conn, &change_id, changes::ChangeDecision::Reject)
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

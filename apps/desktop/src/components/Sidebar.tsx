@@ -9,7 +9,6 @@ import {
 import {
   ArrowUpCircle,
   Database,
-  GitPullRequest,
   LayoutDashboard,
   Settings as SettingsIcon,
   Table2,
@@ -32,7 +31,6 @@ const NAV_ICONS: Record<ScreenId, LucideIcon> = {
   dashboard: LayoutDashboard,
   sources: Database,
   tables: Table2,
-  changes: GitPullRequest,
   settings: SettingsIcon,
 };
 
@@ -74,7 +72,6 @@ export function Sidebar({
 }: SidebarProps) {
   const { data: status } = useAppStatus();
   const { t } = useTranslation();
-  const pendingCount = status?.pendingCount ?? 0;
   const mcpRunning = status?.mcpRunning ?? false;
 
   return (
@@ -152,70 +149,26 @@ export function Sidebar({
       <div
         className={cn("border-t border-edge py-3", collapsed ? "px-2" : "px-3")}
       >
-        <StatusCluster
-          pendingCount={pendingCount}
-          mcpRunning={mcpRunning}
-          onNavigate={onNavigate}
-          collapsed={collapsed}
-          t={t}
-        />
+        <StatusCluster mcpRunning={mcpRunning} collapsed={collapsed} t={t} />
       </div>
     </aside>
   );
 }
 
 type StatusClusterProps = {
-  pendingCount: number;
   mcpRunning: boolean;
-  onNavigate: (screen: ScreenId) => void;
   collapsed: boolean;
   t: TFunction;
 };
 
-/** Default bottom cluster: pending approvals shortcut + MCP heartbeat status.
- * Collapsed condenses both into icon+dot rail controls with tooltips. */
-function StatusCluster({
-  pendingCount,
-  mcpRunning,
-  onNavigate,
-  collapsed,
-  t,
-}: StatusClusterProps) {
+/** Default bottom cluster: MCP heartbeat status. Collapsed condenses it into
+ * an icon-sized status dot with a tooltip. */
+function StatusCluster({ mcpRunning, collapsed, t }: StatusClusterProps) {
   const mcpStatusLabel = mcpRunning ? t("common.running") : t("common.offline");
   if (collapsed) {
     const mcpLabel = `${t("dashboard.mcpServer")}: ${mcpStatusLabel}`;
-    const pendingLabel =
-      pendingCount > 0
-        ? `${t("dashboard.pendingApprovals")}: ${pendingCount}`
-        : t("dashboard.nothingWaiting");
     return (
       <div className="flex flex-col items-center gap-1">
-        <RailTooltip collapsed label={pendingLabel}>
-          <button
-            type="button"
-            aria-label={pendingLabel}
-            onClick={() => onNavigate("changes")}
-            className={cn(
-              "relative flex h-9 w-9 items-center justify-center rounded-lg",
-              "text-ink-muted transition-colors hover:bg-surface hover:text-ink",
-              FOCUS_RING,
-            )}
-          >
-            <GitPullRequest
-              size={15}
-              strokeWidth={NAV_ICON_STROKE}
-              aria-hidden
-            />
-            {pendingCount > 0 ? (
-              <span
-                aria-hidden
-                className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/15 px-1 text-[10px] font-semibold tabular-nums text-warning"
-              >
-                {pendingCount}
-              </span>
-            ) : null}
-          </button>
-        </RailTooltip>
         <RailTooltip collapsed label={mcpLabel}>
           <div
             className="flex h-9 w-9 items-center justify-center rounded-lg"
@@ -230,42 +183,18 @@ function StatusCluster({
   }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => onNavigate("changes")}
+    <div className="flex items-center gap-2 px-3 py-1 text-[12px]">
+      <StatusDot status={mcpRunning ? "live" : "idle"} />
+      <span className="text-ink-muted">{t("dashboard.mcpServer")}</span>
+      <span
         className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left",
-          "text-[13px] font-medium text-ink-muted transition-colors hover:bg-surface hover:text-ink",
-          FOCUS_RING,
+          "ml-auto font-medium",
+          mcpRunning ? "text-success" : "text-ink-muted",
         )}
       >
-        {t("dashboard.pendingApprovals")}
-        <span
-          className={cn(
-            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5",
-            "text-[11px] font-semibold tabular-nums",
-            pendingCount > 0
-              ? "bg-warning/15 text-warning"
-              : "bg-edge/60 text-ink-muted",
-          )}
-        >
-          {pendingCount}
-        </span>
-      </button>
-      <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[12px]">
-        <StatusDot status={mcpRunning ? "live" : "idle"} />
-        <span className="text-ink-muted">{t("dashboard.mcpServer")}</span>
-        <span
-          className={cn(
-            "ml-auto font-medium",
-            mcpRunning ? "text-success" : "text-ink-muted",
-          )}
-        >
-          {mcpStatusLabel}
-        </span>
-      </div>
-    </>
+        {mcpStatusLabel}
+      </span>
+    </div>
   );
 }
 

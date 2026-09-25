@@ -410,7 +410,6 @@ pub struct AppStatus {
     pub mcp_running: bool,
     pub mcp_pid: Option<i64>,
     pub mcp_last_seen: Option<String>,
-    pub pending_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -60,8 +60,6 @@ pub fn run() {
             commands::list_permission_rules,
             commands::save_permission_rule,
             commands::delete_permission_rule,
-            commands::list_changes,
-            commands::reject_change,
             commands::list_audit_events,
             commands::clear_audit_log,
             commands::token_status,

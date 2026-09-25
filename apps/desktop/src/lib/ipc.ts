@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AuditEvent,
   DataSource,
-  PendingChange,
   TableRecord,
   TableRef,
   TableSchema
@@ -17,7 +16,6 @@ export type AppStatus = {
   mcpRunning: boolean;      // any mcp_heartbeat row with last_seen within 30s
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
-  pendingCount: number;     // pending_changes WHERE status = 'pending'
 };
 
 export type TablePage = {
@@ -185,9 +183,6 @@ export interface IpcApi {
   listPermissionRules(): Promise<PermissionRuleRow[]>;
   savePermissionRule(rule: SavePermissionRule): Promise<PermissionRuleRow>;
   deletePermissionRule(id: number): Promise<void>;
-  listChanges(status: string | null): Promise<PendingChange[]>;
-  /** Discards a staged (dry-run) change that is still pending. */
-  rejectChange(changeId: string): Promise<PendingChange>;
   listAuditEvents(limit: number | null, offset: number | null): Promise<AuditEvent[]>;
   /** Wipes the audit log, then records a single `audit_cleared` trace event. */
   clearAuditLog(): Promise<void>;
@@ -291,8 +286,6 @@ const tauriIpc: IpcApi = {
   listPermissionRules: () => invoke<PermissionRuleRow[]>("list_permission_rules"),
   savePermissionRule: (rule) => invoke<PermissionRuleRow>("save_permission_rule", { rule }),
   deletePermissionRule: (id) => invoke<void>("delete_permission_rule", { id }),
-  listChanges: (status) => invoke<PendingChange[]>("list_changes", { status }),
-  rejectChange: (changeId) => invoke<PendingChange>("reject_change", { changeId }),
   listAuditEvents: (limit, offset) =>
     invoke<AuditEvent[]>("list_audit_events", { limit, offset }),
   clearAuditLog: () => invoke<void>("clear_audit_log"),

@@ -7,7 +7,6 @@ import {
   CardHeader,
   CardTitle,
   cn,
-  FOCUS_RING,
   Skeleton,
   StatusDot,
   Tooltip,
@@ -15,14 +14,12 @@ import {
   TooltipTrigger,
   type BadgeVariant
 } from "@sheet-port/ui";
-import type { ChangeStatus } from "@sheet-port/shared";
 import { useAppStatus } from "../hooks/useAppStatus.js";
 import { useAuditEvents } from "../hooks/useAuditEvents.js";
-import { useChanges } from "../hooks/useChanges.js";
 import { useSources } from "../hooks/useSources.js";
 import { useTokenStatus } from "../hooks/useTokenStatus.js";
 import { useTranslation } from "../i18n/useTranslation.js";
-import { DASHBOARD_AUDIT_COUNT, DASHBOARD_CHANGES_COUNT } from "../lib/constants.js";
+import { DASHBOARD_AUDIT_COUNT } from "../lib/constants.js";
 import type { ScreenId } from "../lib/nav.js";
 import { CopyButton } from "../components/CopyButton.js";
 import { RelativeTime } from "../components/RelativeTime.js";
@@ -34,22 +31,21 @@ const ACTOR_VARIANTS: Record<"agent" | "user" | "system", BadgeVariant> = {
   system: "muted"
 };
 
-const CHANGE_STATUS_VARIANTS: Record<ChangeStatus, BadgeVariant> = {
-  pending: "warning",
-  approved: "default",
-  committed: "success",
-  rejected: "danger"
-};
-
 type StatCardProps = {
   label: string;
   action?: ReactNode;
+  className?: string;
   children: ReactNode;
 };
 
-function StatCard({ label, action, children }: StatCardProps) {
+function StatCard({ label, action, className, children }: StatCardProps) {
   return (
-    <section className="flex flex-col rounded-card border border-edge bg-raised p-5 shadow-card">
+    <section
+      className={cn(
+        "flex flex-col rounded-card border border-edge bg-raised p-5 shadow-card",
+        className
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <p className="overline-label">{label}</p>
         {action}
@@ -59,13 +55,17 @@ function StatCard({ label, action, children }: StatCardProps) {
   );
 }
 
+// The sidecar card spans the first row of the 2-column md grid so the three
+// stat cards leave no gap; at xl all three sit side by side.
+const MCP_CARD_SPAN = "md:col-span-2 xl:col-span-1";
+
 function McpStatCard() {
   const { data: status, isPending } = useAppStatus();
   const { t } = useTranslation();
 
   if (isPending || !status) {
     return (
-      <StatCard label={t("dashboard.mcpServer")}>
+      <StatCard label={t("dashboard.mcpServer")} className={MCP_CARD_SPAN}>
         <Skeleton className="h-16" />
       </StatCard>
     );
@@ -74,7 +74,7 @@ function McpStatCard() {
   const statusLabel = status.mcpRunning ? t("common.running") : t("common.offline");
 
   return (
-    <StatCard label={t("dashboard.mcpServer")}>
+    <StatCard label={t("dashboard.mcpServer")} className={MCP_CARD_SPAN}>
       <div className="flex items-center gap-2">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -100,41 +100,6 @@ function McpStatCard() {
         <p className="mt-2 text-[12.5px] leading-5 text-ink-muted">
           {t("dashboard.mcpOfflineHint")}
         </p>
-      )}
-    </StatCard>
-  );
-}
-
-function PendingStatCard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
-  const { data: status, isPending } = useAppStatus();
-  const { t } = useTranslation();
-  const count = status?.pendingCount ?? 0;
-
-  return (
-    <StatCard label={t("dashboard.pendingApprovals")}>
-      {isPending || !status ? (
-        <Skeleton className="h-16" />
-      ) : (
-        <>
-          <p
-            className={cn(
-              "text-[28px] font-semibold leading-none tabular-nums",
-              count > 0 ? "text-warning" : "text-ink"
-            )}
-          >
-            {count}
-          </p>
-          <p className="mt-1.5 text-[12.5px] text-ink-muted">
-            {count === 0
-              ? t("dashboard.nothingWaiting")
-              : count === 1
-                ? t("dashboard.oneChangeAwaiting")
-                : t("dashboard.changesAwaiting")}
-          </p>
-          <Button variant="secondary" size="sm" className="mt-3" onClick={() => onNavigate("changes")}>
-            {t("dashboard.reviewChanges")}
-          </Button>
-        </>
       )}
     </StatCard>
   );
@@ -257,52 +222,6 @@ function RecentActivityCard() {
   );
 }
 
-function RecentChangesCard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
-  const { data: changes, isPending } = useChanges(null);
-  const { t } = useTranslation();
-  const recent = (changes ?? []).slice(0, DASHBOARD_CHANGES_COUNT);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("dashboard.recentChanges")}</CardTitle>
-        <button
-          type="button"
-          onClick={() => onNavigate("changes")}
-          className={cn(
-            "rounded text-[12px] font-medium text-accent transition-colors hover:text-accent-hover",
-            FOCUS_RING
-          )}
-        >
-          {t("dashboard.viewAll")}
-        </button>
-      </CardHeader>
-      <CardContent className="py-1">
-        {isPending ? (
-          <Skeleton className="my-3 h-40" />
-        ) : recent.length === 0 ? (
-          <ListEmpty message={t("dashboard.recentChangesEmpty")} />
-        ) : (
-          <ol className="divide-y divide-edge">
-            {recent.map((change) => (
-              <li key={change.id} className="flex h-9 items-center gap-2.5">
-                <Badge variant={CHANGE_STATUS_VARIANTS[change.status]}>{change.status}</Badge>
-                <span className="truncate text-[13px] text-ink-muted">
-                  {change.type}{" "}
-                  <span className="font-mono text-[12px]">
-                    {change.sourceId}/{change.tableId}
-                  </span>
-                </span>
-                <RelativeTime iso={change.createdAt} className="ml-auto font-mono text-[11px] text-ink-muted" />
-              </li>
-            ))}
-          </ol>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 export function Dashboard({ onNavigate }: { onNavigate: (screen: ScreenId) => void }) {
   const { t } = useTranslation();
   return (
@@ -312,15 +231,13 @@ export function Dashboard({ onNavigate }: { onNavigate: (screen: ScreenId) => vo
         description={t("screen.dashboard.description")}
       />
       <ConnectSourceCallout onNavigate={onNavigate} />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <McpStatCard />
-        <PendingStatCard onNavigate={onNavigate} />
         <DatabaseStatCard />
         <TokenVaultStatCard />
       </div>
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+      <div className="mt-4">
         <RecentActivityCard />
-        <RecentChangesCard onNavigate={onNavigate} />
       </div>
     </>
   );

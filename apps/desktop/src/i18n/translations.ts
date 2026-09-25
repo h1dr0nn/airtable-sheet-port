@@ -32,9 +32,6 @@ export const en = {
     "Connect table providers here; agents only ever see what permission rules allow",
   "screen.tables.title": "Tables",
   "screen.tables.description": "Browse records through the same read path agents use",
-  "screen.changes.title": "Changes",
-  "screen.changes.description":
-    "History of agent writes. Staged dry runs wait here until the agent commits or you discard them",
   "screen.settings.title": "Settings",
   "screen.settings.description":
     "Appearance, connections, permissions, and application details",
@@ -43,7 +40,6 @@ export const en = {
   "nav.dashboard": "Dashboard",
   "nav.sources": "Data Sources",
   "nav.tables": "Tables",
-  "nav.changes": "Changes",
   "nav.settings": "Settings",
 
   // Titlebar
@@ -114,11 +110,6 @@ export const en = {
   "dashboard.mcpServer": "MCP Server",
   "dashboard.mcpOfflineHint":
     "Register Sheet Port with your MCP client from Settings, then restart the client.",
-  "dashboard.pendingApprovals": "Pending Changes",
-  "dashboard.nothingWaiting": "No staged changes",
-  "dashboard.oneChangeAwaiting": "Staged change not committed yet",
-  "dashboard.changesAwaiting": "Staged changes not committed yet",
-  "dashboard.reviewChanges": "View Changes",
   "dashboard.database": "Database",
   "dashboard.copyDatabasePath": "Copy database path",
   "dashboard.sharedSqlite": "Shared SQLite",
@@ -134,9 +125,6 @@ export const en = {
   "dashboard.connectDataSource": "Connect a Data Source",
   "dashboard.recentActivity": "Recent Activity",
   "dashboard.recentActivityEmpty": "Agent activity shows up here as it happens.",
-  "dashboard.recentChanges": "Recent Changes",
-  "dashboard.viewAll": "View All",
-  "dashboard.recentChangesEmpty": "Agent writes show up here as they happen.",
 
   // Data Sources
   "sources.statusConnected": "Connected",
@@ -190,34 +178,6 @@ export const en = {
   "workbench.selectPromptDescription":
     "Choose a spreadsheet from the left, or add one to get started.",
   "workbench.sheetLoadError": "This sheet could not be loaded.",
-
-  // Changes
-  "changes.filterAll": "All",
-  "changes.filterPending": "Pending",
-  "changes.filterApproved": "Approved",
-  "changes.filterCommitted": "Committed",
-  "changes.filterRejected": "Discarded",
-  "changes.filterAria": "Filter changes by status",
-  "changes.emptyAll": "No Changes Yet",
-  "changes.emptyFiltered": "No {filter} Changes",
-  "changes.emptyDescription": "Agent writes are recorded here with a diff of what changed",
-  "changes.stagedDryRun": "Staged dry run · not committed yet",
-  "changes.discard": "Discard",
-  "changes.discarding": "Discarding...",
-  "changes.statusPending": "Pending",
-  "changes.statusApproved": "Approved",
-  "changes.statusCommitted": "Committed",
-  "changes.statusRejected": "Discarded",
-  "changes.committedBy": "Committed {time} by {who}",
-  "changes.committed": "Committed {time}",
-  "changes.rejected": "Discarded {time}",
-  "changes.approvedWaiting": "Approved {time} · waiting for the agent to commit",
-  "changes.recordLabel": "Record {id}",
-  "changes.formatCellsHeading": "Cell formatting",
-  "changes.formatLayoutHeading": "Sheet layout",
-  "changes.formatFreezeRows": "Freeze first {count} row(s)",
-  "changes.formatFreezeColumns": "Freeze first {count} column(s)",
-  "changes.formatColumnWidth": "Column {column}: {pixels}px",
 
   // Records table
   "records.record": "Record",
@@ -339,7 +299,7 @@ export const en = {
   "settings.permissions.title": "Permissions",
   "settings.permissions.connectFirst": "Connect a data source first",
   "settings.permissions.hint":
-    "Pick an access preset per source. Allowed agent writes apply directly and are recorded in Changes.",
+    "Pick an access preset per source. Allowed agent writes apply directly and are recorded in the Activity log.",
   "settings.permissions.presetAria": "Permission preset for {name}",
   "settings.permissions.custom": "Custom",
   "settings.permissions.customHint":
@@ -462,10 +422,6 @@ export const en = {
   "toast.serverStopped": "MCP server stopped",
   "toast.clientsConfigError": "Clients not configured",
   "toast.clientsConfigured": "Detected MCP clients configured",
-  "toast.changeDiscarded": "Change discarded",
-  "toast.changeDiscardError": "Change not discarded",
-
-  // Toasts - Changes
 
   // Toasts - Workbench
   "toast.folderCreated": "Folder created",
@@ -514,9 +470,6 @@ const vi: Dictionary = {
   "screen.tables.title": "Bảng",
   "screen.tables.description":
     "Duyệt bản ghi qua cùng luồng đọc mà agent sử dụng",
-  "screen.changes.title": "Thay đổi",
-  "screen.changes.description":
-    "Lịch sử thao tác ghi của agent. Bản chạy thử được lưu tại đây cho đến khi agent commit hoặc bạn hủy bỏ",
   "screen.settings.title": "Cài đặt",
   "screen.settings.description":
     "Giao diện, kết nối, quyền và thông tin ứng dụng",
@@ -525,7 +478,6 @@ const vi: Dictionary = {
   "nav.dashboard": "Tổng quan",
   "nav.sources": "Nguồn dữ liệu",
   "nav.tables": "Bảng",
-  "nav.changes": "Thay đổi",
   "nav.settings": "Cài đặt",
 
   // Titlebar
@@ -596,11 +548,6 @@ const vi: Dictionary = {
   "dashboard.mcpServer": "Máy chủ MCP",
   "dashboard.mcpOfflineHint":
     "Đăng ký Sheet Port với client MCP của bạn từ Cài đặt, sau đó khởi động lại client.",
-  "dashboard.pendingApprovals": "Thay đổi đang chờ",
-  "dashboard.nothingWaiting": "Không có bản chạy thử nào",
-  "dashboard.oneChangeAwaiting": "Bản chạy thử chưa được commit",
-  "dashboard.changesAwaiting": "Bản chạy thử chưa được commit",
-  "dashboard.reviewChanges": "Xem thay đổi",
   "dashboard.database": "Cơ sở dữ liệu",
   "dashboard.copyDatabasePath": "Sao chép đường dẫn cơ sở dữ liệu",
   "dashboard.sharedSqlite": "SQLite dùng chung",
@@ -616,9 +563,6 @@ const vi: Dictionary = {
   "dashboard.connectDataSource": "Kết nối nguồn dữ liệu",
   "dashboard.recentActivity": "Hoạt động gần đây",
   "dashboard.recentActivityEmpty": "Hoạt động của agent hiển thị tại đây khi xảy ra.",
-  "dashboard.recentChanges": "Thay đổi gần đây",
-  "dashboard.viewAll": "Xem tất cả",
-  "dashboard.recentChangesEmpty": "Thao tác ghi của agent xuất hiện tại đây ngay khi diễn ra.",
 
   // Data Sources
   "sources.statusConnected": "Đã kết nối",
@@ -671,34 +615,6 @@ const vi: Dictionary = {
   "workbench.selectPromptDescription":
     "Chọn một bảng tính ở bên trái, hoặc thêm một bảng tính để bắt đầu.",
   "workbench.sheetLoadError": "Không thể tải trang tính này.",
-
-  // Changes
-  "changes.filterAll": "Tất cả",
-  "changes.filterPending": "Đang chờ",
-  "changes.filterApproved": "Đã duyệt",
-  "changes.filterCommitted": "Đã commit",
-  "changes.filterRejected": "Đã hủy bỏ",
-  "changes.filterAria": "Lọc thay đổi theo trạng thái",
-  "changes.emptyAll": "Chưa có thay đổi",
-  "changes.emptyFiltered": "Không có thay đổi {filter}",
-  "changes.emptyDescription": "Thao tác ghi của agent được lưu tại đây kèm phần khác biệt đã thay đổi",
-  "changes.stagedDryRun": "Bản chạy thử · chưa được commit",
-  "changes.discard": "Hủy bỏ",
-  "changes.discarding": "Đang hủy bỏ...",
-  "changes.statusPending": "Đang chờ",
-  "changes.statusApproved": "Đã duyệt",
-  "changes.statusCommitted": "Đã commit",
-  "changes.statusRejected": "Đã hủy bỏ",
-  "changes.committedBy": "Đã commit {time} bởi {who}",
-  "changes.committed": "Đã commit {time}",
-  "changes.rejected": "Đã hủy bỏ {time}",
-  "changes.approvedWaiting": "Đã duyệt {time} · đang chờ agent commit",
-  "changes.recordLabel": "Bản ghi {id}",
-  "changes.formatCellsHeading": "Định dạng ô",
-  "changes.formatLayoutHeading": "Bố cục sheet",
-  "changes.formatFreezeRows": "Cố định {count} hàng đầu",
-  "changes.formatFreezeColumns": "Cố định {count} cột đầu",
-  "changes.formatColumnWidth": "Cột {column}: {pixels}px",
 
   // Records table
   "records.record": "Bản ghi",
@@ -820,7 +736,7 @@ const vi: Dictionary = {
   "settings.permissions.title": "Quyền",
   "settings.permissions.connectFirst": "Kết nối một nguồn dữ liệu trước",
   "settings.permissions.hint":
-    "Chọn một preset quyền truy cập cho mỗi nguồn. Thao tác ghi được phép của agent áp dụng ngay và được lưu trong Thay đổi.",
+    "Chọn một preset quyền truy cập cho mỗi nguồn. Thao tác ghi được phép của agent áp dụng ngay và được ghi vào nhật ký Hoạt động.",
   "settings.permissions.presetAria": "Preset quyền cho {name}",
   "settings.permissions.custom": "Tùy chỉnh",
   "settings.permissions.customHint":
@@ -943,10 +859,6 @@ const vi: Dictionary = {
   "toast.serverStopped": "Đã dừng máy chủ MCP",
   "toast.clientsConfigError": "Không cấu hình được các client",
   "toast.clientsConfigured": "Đã cấu hình các client MCP đã phát hiện",
-  "toast.changeDiscarded": "Đã hủy bỏ thay đổi",
-  "toast.changeDiscardError": "Chưa hủy bỏ được thay đổi",
-
-  // Toasts - Changes
 
   // Toasts - Workbench
   "toast.folderCreated": "Đã tạo thư mục",

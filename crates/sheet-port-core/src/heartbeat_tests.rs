@@ -75,23 +75,12 @@ fn app_status_flags_fresh_and_stale_heartbeats() {
 
     let empty = app_status(&conn, "0.0.0".into(), "test.db".into()).expect("status");
     assert!(!empty.mcp_running, "no heartbeat row means not running");
-    assert_eq!(empty.pending_count, 0);
 
     upsert_own(&conn, 4242).expect("upsert");
-    conn.execute(
-        "INSERT INTO pending_changes
-             (id, source_id, table_id, change_type, created_at, status,
-              requires_confirmation, diff, payload)
-         VALUES ('chg_status', 'mock-source', 'customers', 'update', ?1, 'pending', 1,
-                 '[]', '{\"type\":\"update\",\"patches\":[]}')",
-        [now_iso()],
-    )
-    .expect("insert pending change");
 
     let fresh = app_status(&conn, "0.0.0".into(), "test.db".into()).expect("status");
     assert!(fresh.mcp_running);
     assert_eq!(fresh.mcp_pid, Some(4242));
-    assert_eq!(fresh.pending_count, 1);
 
     conn.execute(
         "UPDATE mcp_heartbeat SET last_seen = '2020-01-01T00:00:00.000Z' WHERE pid = 4242",

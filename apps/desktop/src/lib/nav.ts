@@ -2,7 +2,6 @@ export type ScreenId =
   | "dashboard"
   | "sources"
   | "tables"
-  | "changes"
   | "settings";
 
 import type { TranslationKey } from "../i18n/translations.js";
@@ -19,6 +18,5 @@ export const NAV: readonly NavItem[] = [
   { id: "dashboard", labelKey: "nav.dashboard", screen: "dashboard" },
   { id: "sources", labelKey: "nav.sources", screen: "sources" },
   { id: "tables", labelKey: "nav.tables", screen: "tables" },
-  { id: "changes", labelKey: "nav.changes", screen: "changes" },
   { id: "settings", labelKey: "nav.settings", screen: "settings" }
 ] as const;

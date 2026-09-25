@@ -26,7 +26,6 @@ type AppStatus = {
   mcpRunning: boolean;      // any mcp_heartbeat row with last_seen within 30s
   mcpPid: number | null;
   mcpLastSeen: string | null; // ISO timestamp
-  pendingCount: number;     // pending_changes WHERE status = 'pending' (staged dry runs)
 };
 ```
 
@@ -95,23 +94,12 @@ Upsert honoring `UNIQUE(source_id, table_id)`. Writes an audit event
 
 Writes audit event `permission_rule_deleted`.
 
-### `list_changes(status: string | null) -> PendingChange[]`
+### Changes
 
-`PendingChange` from `@sheet-port/shared` (diff = parsed JSON; `payload` is NEVER
-returned). `status = null` -> all, newest first, limit 200.
-
-The Changes screen is a history view of these rows. Most agent writes are staged
-and committed in one call, so they appear already `committed`; only changes an
-agent staged with `dryRun: true` stay `pending`.
-
-### `reject_change(changeId: string) -> PendingChange`
-
-Discards a staged change: transition `pending -> rejected` only (else `Err`).
-Sets `decided_at` (now, ISO), `decided_by='user'`. Audit event `change_rejected`
-(actor user). `commit_change` refuses a rejected change afterwards.
-
-There is no approve command: the desktop cannot commit and does not gate
-commits. Committing stays agent-side (`commit_change` MCP tool).
+The desktop exposes no change commands: there is no list, approve or discard.
+Change rows stay in `pending_changes` for the sidecar; staging and committing
+(`commit_change` MCP tool) are agent-side only. Agent activity is visible in the
+audit log (`list_audit_events`, the titlebar Activity dropdown).
 
 ### `list_audit_events(limit: number | null, offset: number | null) -> AuditEvent[]`
 
@@ -410,8 +398,9 @@ id; absent columns write empty cells), and returns its new 0-based row index
    `commit_change`.
 3. `commit_change` refuses `rejected` and `committed` rows; there is no approval
    state to wait for.
-4. Desktop `reject_change` discards a `pending` row; the sidecar reads fresh state
-   from SQLite on every call, so no IPC between the processes is needed.
+4. Each step writes audit events, which the desktop shows in its audit log; the
+   sidecar reads fresh state from SQLite on every call, so no IPC between the
+   processes is needed.
 
 ## Window / capabilities
 

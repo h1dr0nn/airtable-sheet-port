@@ -25,13 +25,12 @@ describe("demo IPC google bridge flow", () => {
 
     expect(await settle(ipc.listSources())).toEqual([]);
     expect(await settle(ipc.listPermissionRules())).toEqual([]);
-    expect(await settle(ipc.listChanges(null))).toEqual([]);
     expect(await settle(ipc.listAuditEvents(null, null))).toEqual([]);
     expect(await settle(ipc.tokenStatus())).toEqual({ googleSheets: false });
     expect(await settle(ipc.googleListAccounts())).toEqual([]);
   });
 
-  it("adding a bridge links an account with tables and a seeded staged change", async () => {
+  it("adding a bridge links an account with tables", async () => {
     const ipc = createDemoIpc();
 
     const account = await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
@@ -58,10 +57,6 @@ describe("demo IPC google bridge flow", () => {
     }
     const page = await settle(ipc.readTable(firstTable.sourceId, firstTable.tableId, null, null));
     expect(page.total).toBeGreaterThan(0);
-
-    const changes = await settle(ipc.listChanges("pending"));
-    expect(changes).toHaveLength(1);
-    expect(changes[0]?.sourceId).toBe(account.sourceId);
 
     const auditActions = (await settle(ipc.listAuditEvents(null, null))).map(
       (event) => event.action
@@ -125,20 +120,6 @@ describe("demo IPC google bridge flow", () => {
     expect(auditActions).toContain("google_bridge_tested");
 
     await expect(ipc.googleTestBridge("google-sheets:missing")).rejects.toThrow("No bridge");
-  });
-
-  it("discarding a pending change marks it rejected by the user", async () => {
-    const ipc = createDemoIpc();
-    await settle(ipc.googleAddBridge(BRIDGE_URL, BRIDGE_SECRET));
-    const [pending] = await settle(ipc.listChanges("pending"));
-    if (!pending) {
-      throw new Error("expected a seeded pending change");
-    }
-
-    const discarded = await settle(ipc.rejectChange(pending.id));
-    expect(discarded.status).toBe("rejected");
-    expect(discarded.decidedBy).toBe("user");
-    expect(await settle(ipc.listChanges("pending"))).toEqual([]);
   });
 
   it("font preferences default, persist, and reset with settings", async () => {

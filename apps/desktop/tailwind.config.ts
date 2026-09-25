@@ -61,9 +61,14 @@ export default {
           from: { opacity: "0" },
           to: { opacity: "1" }
         },
+        // Animates the standalone `scale` property, NOT `transform`: centered
+        // panels (Dialog, Command) position themselves with
+        // transform: translate(-50%, -50%), and a transform keyframe would
+        // replace that translate for the whole animation, so the panel would
+        // open offset toward the bottom-right and then snap to the center.
         "scale-in": {
-          from: { opacity: "0", transform: "scale(0.98)" },
-          to: { opacity: "1", transform: "scale(1)" }
+          from: { opacity: "0", scale: "0.98" },
+          to: { opacity: "1", scale: "1" }
         },
         "dot-pulse": {
           "0%, 100%": { opacity: "1" },

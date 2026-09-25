@@ -1,7 +1,6 @@
 import type {
   AuditEvent,
   DataSource,
-  PendingChange,
   TableRecord,
   TableRef,
   TableSchema
@@ -39,7 +38,6 @@ const DEFAULT_READ_LIMIT = 100;
 const MAX_READ_LIMIT = 500;
 const DEFAULT_AUDIT_LIMIT = 100;
 const MAX_AUDIT_LIMIT = 500;
-const CHANGES_LIST_LIMIT = 200;
 const DEMO_MCP_PID = 48213;
 const HEARTBEAT_AGE_MS = 4_000;
 
@@ -52,8 +50,8 @@ const DEFAULT_MCP_PORT = 4319;
 type DemoClientSeed = { id: string; name: string; state: McpClientState; configPath: string | null };
 const DEMO_MCP_CLIENTS: readonly DemoClientSeed[] = [
   {
-    id: "claude-desktop",
-    name: "Claude Desktop",
+    id: "claude",
+    name: "Claude",
     state: "unconfigured",
     configPath: "C:\\Users\\demo\\AppData\\Roaming\\Claude\\claude_desktop_config.json"
   },
@@ -120,27 +118,6 @@ const SHEET_RECORDS: readonly TableRecord[] = [
   { id: "row_5", fields: { Name: "Drift Systems", Email: "hello@drift.example", Stage: "new", Value: 7_250 } }
 ];
 
-// One pending preview appears alongside the connected source so the Changes
-// and Dashboard screens stay clickable; it references only demo-real rows.
-function buildSeededChange(): PendingChange {
-  const before = SHEET_RECORDS[1];
-  return {
-    id: "chg_demo_google_update",
-    sourceId: GOOGLE_SOURCE_ID,
-    tableId: SHEET_TABLE.tableId,
-    type: "update",
-    createdAt: nowIso(),
-    status: "pending",
-    diff: [
-      {
-        recordId: before?.id ?? "row_3",
-        before: { ...before?.fields },
-        after: { ...before?.fields, Stage: "qualified", Value: 9_000 }
-      }
-    ]
-  };
-}
-
 /** Parses a bridge web app URL into its deployment id, like core::google. */
 function parseDeploymentId(url: string): string {
   const match = BRIDGE_URL_PATTERN.exec(url.trim());
@@ -195,7 +172,6 @@ export function createDemoIpc(): IpcApi {
   let sources: DataSource[] = [];
   let permissionRules: PermissionRuleRow[] = [];
   let nextRuleId = 1;
-  let changes: PendingChange[] = [];
   let auditEvents: AuditEvent[] = [];
   let auditCounter = 0;
 
@@ -209,37 +185,10 @@ export function createDemoIpc(): IpcApi {
   };
 
   const isGoogleConnected = () => googleAccounts.length > 0;
-  // The first connected account owns the demo tables/records so the Tables and
-  // Changes screens stay explorable regardless of which account was added.
+  // The first connected account owns the demo tables/records so the Tables
+  // screen stays explorable regardless of which account was added.
   const primarySourceId = () => googleAccounts[0]?.sourceId ?? null;
 
-  const discardChange = (changeId: string): PendingChange => {
-    const existing = changes.find((change) => change.id === changeId);
-    if (!existing) {
-      throw new Error(`Unknown change ${changeId}`);
-    }
-    if (existing.status !== "pending") {
-      throw new Error(`Change ${changeId} is already ${existing.status}`);
-    }
-    const decided: PendingChange = {
-      ...existing,
-      status: "rejected",
-      decidedAt: nowIso(),
-      decidedBy: "user"
-    };
-    changes = changes.map((change) => (change.id === changeId ? decided : change));
-    pushAudit({
-      actor: "user",
-      action: "change_rejected",
-      sourceId: decided.sourceId,
-      tableId: decided.tableId,
-      metadata: { changeId }
-    });
-    return decided;
-  };
-
-  const newestChangeFirst = (a: PendingChange, b: PendingChange) =>
-    b.createdAt.localeCompare(a.createdAt);
   const newestEventFirst = (a: AuditEvent, b: AuditEvent) => b.timestamp.localeCompare(a.timestamp);
 
   // Curated Workbench tree lives in its own module to keep this file focused.
@@ -253,8 +202,7 @@ export function createDemoIpc(): IpcApi {
         dbPath: "C:\\Users\\demo\\AppData\\Roaming\\sheet-port\\sheet-port.db",
         mcpRunning: true,
         mcpPid: DEMO_MCP_PID,
-        mcpLastSeen: new Date(Date.now() - HEARTBEAT_AGE_MS).toISOString(),
-        pendingCount: changes.filter((change) => change.status === "pending").length
+        mcpLastSeen: new Date(Date.now() - HEARTBEAT_AGE_MS).toISOString()
       };
     },
     async listSources(): Promise<DataSource[]> {
@@ -337,15 +285,6 @@ export function createDemoIpc(): IpcApi {
         metadata: { id }
       });
     },
-    async listChanges(status: string | null): Promise<PendingChange[]> {
-      await delay();
-      const filtered = status === null ? changes : changes.filter((change) => change.status === status);
-      return [...filtered].sort(newestChangeFirst).slice(0, CHANGES_LIST_LIMIT);
-    },
-    async rejectChange(changeId: string): Promise<PendingChange> {
-      await delay();
-      return discardChange(changeId);
-    },
     async listAuditEvents(limit, offset): Promise<AuditEvent[]> {
       await delay();
       const effectiveLimit = Math.min(limit ?? DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT);
@@ -390,7 +329,7 @@ export function createDemoIpc(): IpcApi {
         );
       } else {
         // The first account owns the demo tables under the bare source id so
-        // the Tables and Changes screens stay explorable; later accounts get a
+        // the Tables screen stays explorable; later accounts get a
         // distinct email + id.
         const email = wasConnected
           ? `demo.user+${demoBridgeCount + 1}@gmail.com`
@@ -415,17 +354,6 @@ export function createDemoIpc(): IpcApi {
         sourceId: account.sourceId,
         metadata: { email: account.email, deploymentId }
       });
-      if (!wasConnected && !changes.some((change) => change.sourceId === GOOGLE_SOURCE_ID)) {
-        const seeded = buildSeededChange();
-        changes = [...changes, seeded];
-        pushAudit({
-          actor: "agent",
-          action: "preview_update_records",
-          sourceId: seeded.sourceId,
-          tableId: seeded.tableId,
-          metadata: { changeId: seeded.id, records: 1 }
-        });
-      }
       return { ...account };
     },
     async googleRemoveBridge(sourceId: string): Promise<void> {

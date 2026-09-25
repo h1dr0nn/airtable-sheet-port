@@ -17,7 +17,10 @@ import assert from "node:assert/strict";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const binaryName = process.platform === "win32" ? "sheet-port-mcp.exe" : "sheet-port-mcp";
-const serverBinary = join(scriptDir, "..", "target", "debug", binaryName);
+// SHEET_PORT_MCP_BIN overrides the binary, e.g. a build in a separate target
+// dir while a running app keeps target/debug locked.
+const serverBinary =
+  process.env.SHEET_PORT_MCP_BIN ?? join(scriptDir, "..", "target", "debug", binaryName);
 if (!existsSync(serverBinary)) {
   process.stderr.write(
     `e2e-smoke: missing sidecar binary at ${serverBinary}\n` +

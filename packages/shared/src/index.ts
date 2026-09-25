@@ -111,21 +111,6 @@ export type PermissionRule = {
   deleteRecords: boolean;
 };
 
-export type ChangeStatus = "pending" | "approved" | "committed" | "rejected";
-
-export type PendingChange = {
-  id: string;
-  sourceId: string;
-  tableId: string;
-  type: ChangeType;
-  createdAt: string;
-  status: ChangeStatus;
-  diff: unknown;
-  decidedAt?: string;
-  decidedBy?: "user" | "policy";
-  committedAt?: string;
-};
-
 export type AuditEvent = {
   id: string;
   timestamp: string;

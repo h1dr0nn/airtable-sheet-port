@@ -6,7 +6,7 @@ Airtable - Sheet Port runs as two local Rust processes that share one SQLite dat
 the OS keychain, and one core crate:
 
 - The Tauri desktop app (`apps/desktop`): a thin Rust shell (`src-tauri`) plus a React
-  frontend. It manages Google bridges, permission rules, the change history, the audit
+  frontend. It manages Google bridges, permission rules, the audit
   log, the spreadsheet workbench, MCP client registration, and app settings.
 - The Rust MCP sidecar (`crates/sheet-port-mcp`): an MCP server exposing 18 typed tools
   to agents. It enforces permissions and runs the staged-change pipeline. It serves
@@ -212,10 +212,9 @@ broker logic of its own.
 
 ### React frontend (`apps/desktop/src`)
 
-- Screens: Dashboard, Data Sources (the Google bridge pool: add, test, remove), Tables (the spreadsheet workbench), Changes (change
-  history with discard for staged dry runs), and Settings (permissions,
+- Screens: Dashboard, Data Sources (the Google bridge pool: add, test, remove), Tables (the spreadsheet workbench), and Settings (permissions,
   MCP server, MCP clients, appearance, updates). The audit log opens from the header
-  dropdown.
+  dropdown and is where agent activity (staged and committed changes) is visible.
 - `lib/ipc.ts` types every Tauri command from `docs/ipc.md`. In-memory demo fixtures are
   used only in Vite dev mode without Tauri; production builds always talk to the Rust
   backend.
@@ -257,7 +256,6 @@ sequenceDiagram
   participant M as MCP sidecar (Rust)
   participant DB as SQLite (shared)
   participant G as Google Sheets API
-  participant U as User (desktop UI)
 
   A->>M: update_records(patches)
   M->>DB: find_rule (fresh) - read gate + write policy
@@ -276,9 +274,6 @@ sequenceDiagram
       A->>M: commit_change(changeId)
       M->>G: write (after re-check)
       M-->>A: CommitOutcome
-    end
-    opt user discards
-      U->>DB: reject_change (pending -> rejected)
     end
   end
 ```

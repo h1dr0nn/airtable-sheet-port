@@ -14,7 +14,6 @@ import { useUpdate } from "./hooks/useUpdate.js";
 import { useUpdateRestartNotice } from "./hooks/useUpdateRestartNotice.js";
 import { isTauri } from "./lib/ipc.js";
 import type { ScreenId } from "./lib/nav.js";
-import { Changes } from "./screens/Changes.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { DataSources } from "./screens/DataSources.js";
 import { Settings } from "./screens/Settings.js";
@@ -28,7 +27,6 @@ const SCREENS: Record<ScreenId, ComponentType<ScreenProps>> = {
   dashboard: Dashboard,
   sources: DataSources,
   tables: Tables,
-  changes: Changes,
   settings: Settings
 };
 

@@ -27,7 +27,7 @@ a token.
 - Let an agent update records, write cells, append rows, format tabs, and create or
   delete tabs, receiving the diff of what it changed.
 - Let an agent stage a change with `dryRun` and commit it later.
-- Keep a persistent audit trail and change history of agent reads and writes.
+- Keep a persistent audit trail of agent reads and writes, visible in the desktop audit log.
 
 ## Non-Goals
 
@@ -42,8 +42,7 @@ a token.
 
 ## Current Status (2.0.0)
 
-- Desktop app: Dashboard, Data Sources (Google bridges), Tables (workbench), Changes (history), and
-  Settings (Google bridges, permissions, MCP server and clients, appearance, updates),
+- Desktop app: Dashboard, Data Sources (Google bridges), Tables (workbench), and Settings (Google bridges, permissions, MCP server and clients, appearance, updates),
   live-wired to the Rust backend via typed Tauri IPC (`docs/ipc.md`).
 - Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 18 tools over stdio or loopback
   HTTP. `sourceId` is optional and routed automatically.

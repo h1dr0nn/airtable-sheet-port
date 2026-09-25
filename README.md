@@ -9,7 +9,7 @@ deploy on your own account, so there is no Cloud Console project and no OAuth cl
 set up. Every write goes through a staged change with a diff and lands in the audit log.
 
 - **Desktop app:** manage Google bridges, permission rules (read / write / delete per
-  source or spreadsheet), change history, audit log, a spreadsheet workbench, MCP
+  source or spreadsheet), the audit log of agent activity, a spreadsheet workbench, MCP
   client registration, and the optional loopback HTTP transport.
 - **MCP sidecar:** stdio (default) or `127.0.0.1` HTTP. It reads the OS keychain and the
   shared SQLite database directly, so agents keep working when the desktop app is closed.
