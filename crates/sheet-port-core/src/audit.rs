@@ -4,7 +4,7 @@
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
-use crate::constants::{AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX};
+use crate::constants::{AUDIT_CLEARED_ACTION, AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX};
 use crate::db::now_iso;
 use crate::error::{db_error, parse_json, CoreError};
 use crate::types::{AuditActor, AuditEvent};
@@ -58,7 +58,8 @@ pub fn record(
 
 /// Deletes every audit event, returning the number of rows removed. Used by
 /// the desktop "Clear" action; the caller may record a fresh "audit_cleared"
-/// event afterwards so the wipe itself leaves a trace.
+/// event afterwards so the wipe itself leaves a trace (hidden from
+/// [`list_activity`]).
 pub fn clear(conn: &Connection) -> Result<usize, CoreError> {
     conn.execute("DELETE FROM audit_events", [])
         .map_err(|error| db_error("Could not clear audit events", error))
@@ -72,6 +73,27 @@ pub fn list(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<AuditEvent>, CoreError> {
+    list_filtered(conn, limit, offset, None)
+}
+
+/// The desktop activity feed: like [`list`], but without the
+/// `audit_cleared` bookkeeping rows. Clearing the feed must leave it empty, so
+/// the event that records the clear is kept in the trail but not shown here.
+/// Filtering happens in SQL so paging (limit/offset) stays exact.
+pub fn list_activity(
+    conn: &Connection,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<AuditEvent>, CoreError> {
+    list_filtered(conn, limit, offset, Some(AUDIT_CLEARED_ACTION))
+}
+
+fn list_filtered(
+    conn: &Connection,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    excluded_action: Option<&str>,
+) -> Result<Vec<AuditEvent>, CoreError> {
     let limit = limit
         .unwrap_or(AUDIT_LIMIT_DEFAULT)
         .clamp(AUDIT_LIMIT_MIN, AUDIT_LIMIT_MAX);
@@ -80,11 +102,12 @@ pub fn list(
     let mut stmt = conn
         .prepare(
             "SELECT id, timestamp, actor, action, source_id, table_id, metadata
-             FROM audit_events ORDER BY timestamp DESC, rowid DESC LIMIT ?1 OFFSET ?2",
+             FROM audit_events WHERE (?3 IS NULL OR action <> ?3)
+             ORDER BY timestamp DESC, rowid DESC LIMIT ?1 OFFSET ?2",
         )
         .map_err(|error| db_error("Could not list audit events", error))?;
     let rows = stmt
-        .query_map(params![limit, offset], |row| {
+        .query_map(params![limit, offset, excluded_action], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

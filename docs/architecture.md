@@ -204,7 +204,7 @@ run the same heartbeat - only the wire differs. See `docs/security.md` for the r
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Binary entry point; delegates to `lib.rs`. |
-| `lib.rs` | Tauri builder, plugins (updater, window state, single instance, autostart, tray), DB state setup, command registration. |
+| `lib.rs` | Tauri builder, plugins (updater, window state, single instance, autostart), DB state setup, command registration. |
 | `commands.rs` | Thin `#[tauri::command]` wrappers matching `docs/ipc.md`; each delegates to `sheet-port-core`. |
 
 All SQL, models, and business rules live in the core crate; the shell contains no

@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::json;
 use sheet_port_core::connectors::ConnectorRegistry;
 use sheet_port_core::constants::{
-    HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO, META_CLOSE_BEHAVIOR,
+    AUDIT_CLEARED_ACTION, HEARTBEAT_STALE_MS, MCP_TRANSPORT_HTTP, MCP_TRANSPORT_STDIO,
     META_CONFIGURED_MCP_CLIENTS, META_MCP_PORT, META_MCP_TRANSPORT, META_UI_FONT_FAMILY,
     META_UI_FONT_SCALE, META_UI_LANGUAGE, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN,
 };
@@ -184,14 +184,14 @@ pub fn list_audit_events(
     offset: Option<i64>,
 ) -> Result<Vec<AuditEvent>, String> {
     let conn = lock_conn(&state)?;
-    audit::list(&conn, limit, offset).map_err(|error| error.to_string())
+    // The activity feed hides the `audit_cleared` trace, so a clear leaves
+    // the feed empty instead of showing the clear as its newest entry.
+    audit::list_activity(&conn, limit, offset).map_err(|error| error.to_string())
 }
 
-const AUDIT_CLEARED_ACTION: &str = "audit_cleared";
-
 /// Clears the entire audit log, then records a single `audit_cleared` event so
-/// the wipe itself leaves a trace. The trace is written AFTER the delete, so a
-/// freshly cleared log holds exactly this one event.
+/// the wipe itself leaves a trace in the audit trail. The activity feed
+/// (`list_audit_events`) does not show that event, so it reads as empty.
 #[tauri::command]
 pub fn clear_audit_log(state: Db<'_>) -> Result<(), String> {
     let conn = lock_conn(&state)?;
@@ -228,11 +228,9 @@ pub struct AppSettings {
     /// UI font family: "classic" | "modern" | "system" (default "modern").
     pub font_family: String,
     /// UI language: "en" | "vi" (default "en").
-    pub language: String,
-    /// Window close behavior: "ask" | "tray" | "quit" (default "ask").
     /// Autostart is intentionally NOT here; it lives in the OS launcher, so the
     /// UI reads it via `get_autostart_enabled`.
-    pub close_behavior: String,
+    pub language: String,
 }
 
 const SETTINGS_UPDATED_ACTION: &str = "settings_updated";
@@ -244,12 +242,10 @@ pub fn get_settings(state: Db<'_>) -> Result<AppSettings, String> {
     let font_scale = db::get_ui_font_scale(&conn).map_err(|error| error.to_string())?;
     let font_family = db::get_ui_font_family(&conn).map_err(|error| error.to_string())?;
     let language = db::get_language(&conn).map_err(|error| error.to_string())?;
-    let close_behavior = db::get_close_behavior(&conn).map_err(|error| error.to_string())?;
     Ok(AppSettings {
         font_scale,
         font_family,
         language,
-        close_behavior,
     })
 }
 
@@ -302,24 +298,6 @@ pub fn set_font_family(state: Db<'_>, family: String) -> Result<(), String> {
         None,
         None,
         Some(&json!({ "key": META_UI_FONT_FAMILY, "value": family })),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-/// Sets the window close behavior ("ask" | "tray" | "quit"); rejects any other
-/// value. Audit event `settings_updated` with the persisted value.
-#[tauri::command]
-pub fn set_close_behavior(state: Db<'_>, behavior: String) -> Result<(), String> {
-    let conn = lock_conn(&state)?;
-    db::set_close_behavior(&conn, &behavior).map_err(|error| error.to_string())?;
-    audit::record(
-        &conn,
-        AuditActor::User,
-        SETTINGS_UPDATED_ACTION,
-        None,
-        None,
-        Some(&json!({ "key": META_CLOSE_BEHAVIOR, "value": behavior })),
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -1033,17 +1011,16 @@ pub async fn google_test_bridge(
 }
 
 // ---------------------------------------------------------------------------
-// Window / tray / background behavior (docs/development.md "Run in
-// background"). The close-behavior modal on the frontend applies the user's
-// choice through these commands; the tray keeps the app resident when hidden.
+// Window + launch at login. Closing the window quits the app (no tray or
+// background mode); MCP clients spawn their own stdio sidecar, so they keep
+// working after the app exits.
 // ---------------------------------------------------------------------------
 
-/// The main window label, matching `tauri.conf.json` app.windows[0]. Tray
-/// actions and the close-behavior commands resolve the window by this label.
+/// The main window label, matching `tauri.conf.json` app.windows[0].
 pub const MAIN_WINDOW_LABEL: &str = "main";
 
-/// Brings the main window back into view and gives it focus. Used by the tray
-/// "Show Window" item, tray left-click, and single-instance re-launch.
+/// Brings the main window back into view and gives it focus. Used by the
+/// single-instance handler when the app is launched a second time.
 pub fn show_main_window(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -1051,27 +1028,6 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
-}
-
-/// Hides the main window so the app keeps running in the tray. Called by the
-/// frontend when the user picks "Minimize to tray" in the close-behavior modal.
-#[tauri::command]
-pub fn window_hide_to_tray(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        window
-            .hide()
-            .map_err(|error| format!("Could not hide the window: {error}"))?;
-    }
-    Ok(())
-}
-
-/// Exits the app. Called by the frontend when the user picks "Quit" in the
-/// close-behavior modal. The managed sidecar child is killed by the window
-/// Destroyed handler as the process tears down.
-#[tauri::command]
-pub fn window_quit(app: tauri::AppHandle) {
-    app.exit(0);
 }
 
 /// Whether the app is registered to launch at login.

@@ -12,11 +12,7 @@ import {
   TooltipTrigger
 } from "@sheet-port/ui";
 import { useAppStatus } from "../hooks/useAppStatus.js";
-import {
-  useAutostartEnabled,
-  useSetAutostartEnabled,
-  useSetCloseBehavior
-} from "../hooks/useCloseBehavior.js";
+import { useAutostartEnabled, useSetAutostartEnabled } from "../hooks/useAutostart.js";
 import { usePermissionRules } from "../hooks/usePermissions.js";
 import {
   useResetSettings,
@@ -30,7 +26,7 @@ import { useTheme } from "../hooks/useTheme.js";
 import { useTranslation } from "../i18n/useTranslation.js";
 import type { TranslationKey } from "../i18n/translations.js";
 import { APP_AUTHOR, APP_NAME } from "../lib/constants.js";
-import { isTauri, type CloseBehavior, type FontFamily, type FontScale, type Language } from "../lib/ipc.js";
+import { isTauri, type FontFamily, type FontScale, type Language } from "../lib/ipc.js";
 import type { ThemeSetting } from "../lib/theme.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { CheckForUpdatesButton } from "../components/settings/CheckForUpdatesButton.js";
@@ -62,12 +58,6 @@ const FONT_FAMILY_OPTIONS: ReadonlyArray<{ value: FontFamily; labelKey: Translat
 const LANGUAGE_OPTIONS: ReadonlyArray<{ value: Language; labelKey: TranslationKey }> = [
   { value: "en", labelKey: "settings.appearance.languageEnglish" },
   { value: "vi", labelKey: "settings.appearance.languageVietnamese" }
-];
-
-const CLOSE_BEHAVIOR_OPTIONS: ReadonlyArray<{ value: CloseBehavior; labelKey: TranslationKey }> = [
-  { value: "ask", labelKey: "settings.general.closeAsk" },
-  { value: "tray", labelKey: "settings.general.closeTray" },
-  { value: "quit", labelKey: "settings.general.closeQuit" }
 ];
 
 /** Builds SegmentedControl options by resolving each labelKey through t(). */
@@ -281,17 +271,12 @@ function AboutCard() {
   );
 }
 
-/** Window-behavior preferences: what closing the window does, and whether the
- * app launches at login. Launch at Login needs OS integration, so it is only
- * shown under Tauri; the browser preview hides it. */
+/** Launch at Login. It needs OS integration, so the card is only rendered
+ * under Tauri; the browser preview hides it. Closing the window always quits. */
 function GeneralCard() {
-  const { data: settings } = useSettings();
   const { t } = useTranslation();
-  const setCloseBehavior = useSetCloseBehavior();
   const { data: autostartEnabled } = useAutostartEnabled();
   const setAutostart = useSetAutostartEnabled();
-
-  const closeBehavior = settings?.closeBehavior ?? "ask";
 
   return (
     <Card>
@@ -299,38 +284,18 @@ function GeneralCard() {
         <CardTitle>{t("settings.general.title")}</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="divide-y divide-edge">
-          <div className="pb-4 first:pt-0">
-            <AppearanceRow
-              title={t("settings.general.whenClosing")}
-              description={t("settings.general.whenClosingDescription")}
-              control={
-                <SegmentedControl
-                  options={toOptions(CLOSE_BEHAVIOR_OPTIONS, t)}
-                  value={closeBehavior}
-                  onChange={(next) => setCloseBehavior.mutate(next)}
-                  ariaLabel={t("settings.general.whenClosing")}
-                />
-              }
+        <AppearanceRow
+          title={t("settings.general.launchAtLogin")}
+          description={t("settings.general.launchAtLoginDescription")}
+          control={
+            <Switch
+              checked={autostartEnabled ?? false}
+              onCheckedChange={(checked) => setAutostart.mutate(checked)}
+              disabled={setAutostart.isPending}
+              aria-label={t("settings.general.launchAtLogin")}
             />
-          </div>
-          {isTauri ? (
-            <div className="pt-4 last:pb-0">
-              <AppearanceRow
-                title={t("settings.general.launchAtLogin")}
-                description={t("settings.general.launchAtLoginDescription")}
-                control={
-                  <Switch
-                    checked={autostartEnabled ?? false}
-                    onCheckedChange={(checked) => setAutostart.mutate(checked)}
-                    disabled={setAutostart.isPending}
-                    aria-label={t("settings.general.launchAtLogin")}
-                  />
-                }
-              />
-            </div>
-          ) : null}
-        </div>
+          }
+        />
       </CardContent>
     </Card>
   );
@@ -389,7 +354,7 @@ export function Settings() {
         <McpServerCard />
         <McpClientsCard />
         <PermissionsCard />
-        <GeneralCard />
+        {isTauri ? <GeneralCard /> : null}
         <AboutCard />
         <ResetCard />
       </div>

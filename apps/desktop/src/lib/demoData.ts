@@ -8,7 +8,6 @@ import type {
 import type {
   AppSettings,
   AppStatus,
-  CloseBehavior,
   FontFamily,
   FontScale,
   GoogleAccount,
@@ -78,15 +77,15 @@ const DEMO_GOOGLE_EMAIL = "demo.user@gmail.com";
 const BRIDGE_URL_PATTERN =
   /^https:\/\/script\.google\.com\/(?:a\/macros\/[^/]+|macros)\/s\/([A-Za-z0-9_-]+)\/exec\/?$/;
 
+// Audit action for the clear trace; mirrors core constants::AUDIT_CLEARED_ACTION.
+const AUDIT_CLEARED_ACTION = "audit_cleared";
+
 // Default UI font preferences; mirror core::db defaults (normal + modern).
 const DEFAULT_FONT_SCALE: FontScale = "normal";
 const DEFAULT_FONT_FAMILY: FontFamily = "modern";
 
 // Default UI language; mirrors core::db default ("en").
 const DEFAULT_LANGUAGE: Language = "en";
-
-// Default window close behavior; mirrors core::db default ("ask").
-const DEFAULT_CLOSE_BEHAVIOR: CloseBehavior = "ask";
 
 /** Builds the "google-sheets:{accountKey}" source id from an email address. */
 function sourceIdForEmail(email: string): string {
@@ -142,8 +141,6 @@ export function createDemoIpc(): IpcApi {
   let fontFamily: FontFamily = DEFAULT_FONT_FAMILY;
   // UI language; mirrors the backend default, cleared on reset.
   let language: Language = DEFAULT_LANGUAGE;
-  // Window close behavior; mirrors the backend default, cleared on reset.
-  let closeBehavior: CloseBehavior = DEFAULT_CLOSE_BEHAVIOR;
   // Launch-at-login mirror; off by default in the preview.
   let autostartEnabled = false;
 
@@ -289,16 +286,19 @@ export function createDemoIpc(): IpcApi {
       await delay();
       const effectiveLimit = Math.min(limit ?? DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT);
       const effectiveOffset = offset ?? 0;
-      return [...auditEvents]
+      // Mirrors core audit::list_activity: the clear trace stays in the log
+      // but the activity feed hides it, so a clear leaves the feed empty.
+      return auditEvents
+        .filter((event) => event.action !== AUDIT_CLEARED_ACTION)
         .sort(newestEventFirst)
         .slice(effectiveOffset, effectiveOffset + effectiveLimit);
     },
     async clearAuditLog(): Promise<void> {
       await delay();
       // Mirrors clear_audit_log: wipe first, then record a single trace event
-      // AFTER, so a freshly cleared log holds exactly this one entry.
+      // AFTER. listAuditEvents hides it, so the feed reads as empty.
       auditEvents = [];
-      pushAudit({ actor: "user", action: "audit_cleared" });
+      pushAudit({ actor: "user", action: AUDIT_CLEARED_ACTION });
     },
     async tokenStatus(): Promise<TokenStatus> {
       await delay();
@@ -380,7 +380,7 @@ export function createDemoIpc(): IpcApi {
     },
     async getSettings(): Promise<AppSettings> {
       await delay();
-      return { fontScale, fontFamily, language, closeBehavior };
+      return { fontScale, fontFamily, language };
     },
     async setFontScale(scale: FontScale): Promise<void> {
       await delay();
@@ -409,25 +409,6 @@ export function createDemoIpc(): IpcApi {
         metadata: { key: "ui_language", value: next }
       });
     },
-    async setCloseBehavior(behavior: CloseBehavior): Promise<void> {
-      await delay();
-      closeBehavior = behavior;
-      pushAudit({
-        actor: "user",
-        action: "settings_updated",
-        metadata: { key: "close_behavior", behavior }
-      });
-    },
-    async windowHideToTray(): Promise<void> {
-      await delay();
-      // No real window in the browser preview; record the intent for parity.
-      pushAudit({ actor: "user", action: "window_hidden_to_tray" });
-    },
-    async windowQuit(): Promise<void> {
-      await delay();
-      // No-op in the browser preview; the real backend exits the process.
-      pushAudit({ actor: "user", action: "window_quit" });
-    },
     async getAutostartEnabled(): Promise<boolean> {
       await delay();
       return autostartEnabled;
@@ -447,7 +428,6 @@ export function createDemoIpc(): IpcApi {
       fontScale = DEFAULT_FONT_SCALE;
       fontFamily = DEFAULT_FONT_FAMILY;
       language = DEFAULT_LANGUAGE;
-      closeBehavior = DEFAULT_CLOSE_BEHAVIOR;
       pushAudit({ actor: "user", action: "settings_reset" });
     },
     async getMcpConfig(): Promise<McpConfigView> {

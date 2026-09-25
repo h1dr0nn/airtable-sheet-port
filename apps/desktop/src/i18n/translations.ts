@@ -385,12 +385,6 @@ export const en = {
 
   // Settings - General
   "settings.general.title": "General",
-  "settings.general.whenClosing": "When Closing the Window",
-  "settings.general.whenClosingDescription":
-    "Ask each time, keep running in the tray, or quit the app.",
-  "settings.general.closeAsk": "Ask",
-  "settings.general.closeTray": "Run in Background",
-  "settings.general.closeQuit": "Quit",
   "settings.general.launchAtLogin": "Launch at Login",
   "settings.general.launchAtLoginDescription":
     "Start the app automatically when you sign in.",
@@ -403,15 +397,6 @@ export const en = {
   "settings.reset.confirmTitle": "Reset to Default?",
   "settings.reset.confirmDescription":
     "Theme, font, and language return to their defaults. This does NOT remove your Google bridges, permission rules, or data.",
-
-  // Close behavior dialog
-  "closeDialog.title": "Run in Background?",
-  "closeDialog.description": "Keep the app running in the system tray, or quit it entirely.",
-  "closeDialog.rememberChoice": "Remember My Choice",
-  "closeDialog.quit": "Quit",
-  "closeDialog.quitting": "Quitting...",
-  "closeDialog.runInBackground": "Run in Background",
-  "closeDialog.minimizing": "Minimizing...",
 
   // Sidebar update card
   "sidebar.updateAvailable": "Update Available",
@@ -434,8 +419,8 @@ export const en = {
   "toast.languageUpdated": "Language updated",
   "toast.resetFailed": "Reset failed",
   "toast.settingsReset": "Settings reset to default",
-  "toast.closeBehaviorError": "Close behavior not updated",
   "toast.launchAtLoginError": "Launch at login not updated",
+  "toast.activityClearError": "Activity not cleared",
   "toast.launchAtLoginEnabled": "Launch at login enabled",
   "toast.launchAtLoginDisabled": "Launch at login disabled",
   "toast.bridgeAdded": "Google bridge added",
@@ -865,12 +850,6 @@ const vi: Dictionary = {
 
   // Settings - General
   "settings.general.title": "Chung",
-  "settings.general.whenClosing": "Khi đóng cửa sổ",
-  "settings.general.whenClosingDescription":
-    "Hỏi mỗi lần, tiếp tục chạy trong khay hệ thống, hoặc thoát ứng dụng.",
-  "settings.general.closeAsk": "Hỏi",
-  "settings.general.closeTray": "Chạy nền",
-  "settings.general.closeQuit": "Thoát",
   "settings.general.launchAtLogin": "Khởi động khi đăng nhập",
   "settings.general.launchAtLoginDescription":
     "Tự động khởi động ứng dụng khi bạn đăng nhập.",
@@ -883,15 +862,6 @@ const vi: Dictionary = {
   "settings.reset.confirmTitle": "Đặt lại mặc định?",
   "settings.reset.confirmDescription":
     "Giao diện, phông chữ và ngôn ngữ trở về mặc định. Thao tác này KHÔNG xóa cầu nối Google, quy tắc quyền hoặc dữ liệu của bạn.",
-
-  // Close behavior dialog
-  "closeDialog.title": "Chạy nền?",
-  "closeDialog.description": "Tiếp tục chạy ứng dụng trong khay hệ thống, hoặc thoát hẳn.",
-  "closeDialog.rememberChoice": "Ghi nhớ lựa chọn của tôi",
-  "closeDialog.quit": "Thoát",
-  "closeDialog.quitting": "Đang thoát...",
-  "closeDialog.runInBackground": "Chạy nền",
-  "closeDialog.minimizing": "Đang thu nhỏ...",
 
   // Sidebar update card
   "sidebar.updateAvailable": "Có bản cập nhật",
@@ -914,8 +884,8 @@ const vi: Dictionary = {
   "toast.languageUpdated": "Đã cập nhật ngôn ngữ",
   "toast.resetFailed": "Đặt lại thất bại",
   "toast.settingsReset": "Đã đặt lại cài đặt về mặc định",
-  "toast.closeBehaviorError": "Không cập nhật được hành vi đóng",
   "toast.launchAtLoginError": "Không cập nhật được khởi động khi đăng nhập",
+  "toast.activityClearError": "Không xóa được hoạt động",
   "toast.launchAtLoginEnabled": "Đã bật khởi động khi đăng nhập",
   "toast.launchAtLoginDisabled": "Đã tắt khởi động khi đăng nhập",
   "toast.bridgeAdded": "Đã thêm cầu nối Google",

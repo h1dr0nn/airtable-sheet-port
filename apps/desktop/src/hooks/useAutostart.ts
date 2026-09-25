@@ -2,27 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import { getErrorMessage } from "../lib/errors.js";
 import { useTranslation } from "../i18n/useTranslation.js";
-import { ipc, isTauri, type CloseBehavior } from "../lib/ipc.js";
+import { ipc, isTauri } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
-
-/**
- * Persists the window close behavior ("ask" | "tray" | "quit"). Shared by the
- * Settings General card and the close dialog's "Remember My Choice" path.
- */
-export function useSetCloseBehavior() {
-  const queryClient = useQueryClient();
-  const { t } = useTranslation();
-
-  return useMutation({
-    mutationFn: (behavior: CloseBehavior) => ipc.setCloseBehavior(behavior),
-    onError: (error: unknown) => {
-      toast.error(t("toast.closeBehaviorError"), { description: getErrorMessage(error) });
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
-    }
-  });
-}
 
 /**
  * Whether launch-at-login (autostart) is enabled. Only queried under Tauri;

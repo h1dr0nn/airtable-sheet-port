@@ -263,3 +263,32 @@ describe("demo IPC mcp flow", () => {
     await assertion;
   });
 });
+
+describe("demo IPC activity clear", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("leaves the activity feed empty after a clear", async () => {
+    const ipc = createDemoIpc();
+    await settle(ipc.setLanguage("vi"));
+    expect(await settle(ipc.listAuditEvents(null, null))).not.toEqual([]);
+
+    await settle(ipc.clearAuditLog());
+
+    expect(await settle(ipc.listAuditEvents(null, null))).toEqual([]);
+  });
+
+  it("shows new activity after a clear without the clear trace", async () => {
+    const ipc = createDemoIpc();
+    await settle(ipc.clearAuditLog());
+    await settle(ipc.setLanguage("vi"));
+
+    const actions = (await settle(ipc.listAuditEvents(null, null))).map((event) => event.action);
+    expect(actions).toEqual(["settings_updated"]);
+  });
+});

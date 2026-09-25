@@ -103,14 +103,17 @@ audit log (`list_audit_events`, the titlebar Activity dropdown).
 
 ### `list_audit_events(limit: number | null, offset: number | null) -> AuditEvent[]`
 
-Newest first. Default limit 100, max 500.
+Newest first. Default limit 100, max 500. This is the activity feed, so it
+omits `audit_cleared` events (core `audit::list_activity`, filtered in SQL so
+paging stays exact). The MCP `get_audit_log` tool still returns them.
 
 ### `clear_audit_log() -> void`
 
 Deletes every row in `audit_events`, then records a single `audit_cleared`
 event (`actor='user'`, no source/table/metadata) AFTER the wipe so the clear
-itself leaves a trace. A freshly cleared log therefore holds exactly this one
-event.
+itself leaves a trace in the audit trail. `list_audit_events` hides that event,
+so the activity feed is empty right after a clear. The desktop shows no success
+toast either; the empty state is the feedback.
 
 ### `token_status() -> TokenStatus`
 
@@ -146,6 +149,11 @@ type AppSettings = {
 `fontScale` / `fontFamily` / `language` are appearance preferences the frontend
 applies to the UI. Absent (or out-of-contract) meta values read back as their
 defaults.
+
+Removed: `set_close_behavior`, `window_hide_to_tray`, `window_quit` and the
+`closeBehavior` field. Closing the window always quits the app; there is no
+tray or background mode. A leftover `close_behavior` meta row in an older
+database is ignored.
 
 ### `set_font_scale(scale: "small" | "normal" | "large") -> void`
 

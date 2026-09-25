@@ -268,9 +268,9 @@ before the first release; the workflow overwrites its `version`, `pub_date`, and
 `platforms` (six keys: `windows-x86_64` + `-nsis`, `linux-x86_64` + `-appimage`,
 `darwin-x86_64`, `darwin-aarch64`) on every release.
 
-## Run in Background, Tray, and Window Behavior
+## Window Behavior
 
-The desktop shell uses four native Tauri features, wired in
+The desktop shell uses three native Tauri features, wired in
 `apps/desktop/src-tauri/src/lib.rs`:
 
 - **Window state** (`tauri-plugin-window-state`): the main window's position, size, and
@@ -281,23 +281,14 @@ The desktop shell uses four native Tauri features, wired in
 - **Autostart** (`tauri-plugin-autostart`, `LaunchAgent` on macOS): launch-at-login is
   toggled from Settings through `get_autostart_enabled` / `set_autostart_enabled`
   (backed by `app.autolaunch()`). Capabilities:
-  `autostart:allow-enable|disable|is-enabled`.
-- **System tray** (`tauri::tray::TrayIconBuilder`, app icon): a menu with "Show Window"
-  and "Quit". Tray left-click and "Show Window" restore + focus the window; "Quit" exits.
+  `autostart:allow-enable|disable|is-enabled`. It opens the main window at login.
 
-### Close behavior
+### Closing the window
 
-The `close_behavior` meta key (core `db::get/set_close_behavior`, validated against
-`ask` | `tray` | `quit`, default `ask`) drives `WindowEvent::CloseRequested`:
-
-- `quit` - allow the close (the app exits).
-- `tray` - `prevent_close()` + hide the window; the app stays resident in the tray.
-- `ask` - `prevent_close()` + emit the `close-requested` event so the frontend shows the
-  choice modal, which then calls `window_hide_to_tray` or `window_quit`.
-
-`close_behavior` is included in `get_settings` (`AppSettings.closeBehavior`); autostart is
-read separately via `get_autostart_enabled`. The desktop-managed sidecar child is killed
-on `WindowEvent::Destroyed`, so a real quit (including the tray/frontend Quit paths) never
+Closing the main window quits the app. There is no tray icon, background mode, or
+close prompt. MCP clients on the stdio transport spawn their own `sheet-port-mcp`
+sidecar, so Claude and other clients keep working after the app exits. The
+desktop-managed sidecar child is killed on `WindowEvent::Destroyed`, so quitting never
 leaves an orphan MCP server.
 
 ### Managed sidecar transport
@@ -307,6 +298,11 @@ leaves an orphan MCP server.
 `SHEET_PORT_MCP_PORT`. Because the child keeps the `mcp_heartbeat` row fresh on both
 transports, the "running" status works for stdio as well as http (a single-child guard,
 missing-binary error, and kill-on-exit still apply).
+
+The managed sidecar is a child of the desktop app and lives only while the app runs.
+On the **http** transport MCP clients connect to that child, so they lose the server
+when the window is closed; use **stdio** (the default) for access without the app
+open.
 
 ## Current Limitations
 

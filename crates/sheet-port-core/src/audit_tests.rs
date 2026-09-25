@@ -135,3 +135,47 @@ fn limit_clamps_low_values_and_offset_floors_at_zero() {
     let defaulted = list(&conn, None, None).expect("list");
     assert_eq!(defaulted.len(), 2, "default limit covers all rows");
 }
+
+#[test]
+fn activity_feed_hides_the_clear_trace_but_the_trail_keeps_it() {
+    let conn = open_temp_db();
+    record(&conn, AuditActor::Agent, "read_table", None, None, None).expect("record");
+    clear(&conn).expect("clear");
+    record(
+        &conn,
+        AuditActor::User,
+        AUDIT_CLEARED_ACTION,
+        None,
+        None,
+        None,
+    )
+    .expect("trace");
+
+    // The feed the user just cleared is empty...
+    assert!(list_activity(&conn, None, None)
+        .expect("activity")
+        .is_empty());
+    // ...while the full trail still records that the clear happened.
+    let trail = list(&conn, None, None).expect("trail");
+    assert_eq!(trail.len(), 1);
+    assert_eq!(trail[0].action, AUDIT_CLEARED_ACTION);
+}
+
+#[test]
+fn activity_feed_pages_over_visible_events_only() {
+    let conn = open_temp_db();
+    insert_raw(&conn, "evt_1", "2026-01-01T00:00:01.000Z");
+    conn.execute(
+        "INSERT INTO audit_events (id, timestamp, actor, action) VALUES ('evt_c', '2026-01-01T00:00:02.000Z', 'user', ?1)",
+        params![AUDIT_CLEARED_ACTION],
+    )
+    .expect("insert clear trace");
+    insert_raw(&conn, "evt_2", "2026-01-01T00:00:03.000Z");
+
+    let first = list_activity(&conn, Some(1), Some(0)).expect("page 1");
+    let second = list_activity(&conn, Some(1), Some(1)).expect("page 2");
+    let third = list_activity(&conn, Some(1), Some(2)).expect("page 3");
+    assert_eq!(first[0].id, "evt_2");
+    assert_eq!(second[0].id, "evt_1");
+    assert!(third.is_empty());
+}

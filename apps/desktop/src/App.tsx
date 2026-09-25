@@ -1,7 +1,5 @@
 import { useEffect, useState, type ComponentType } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { AnimatedScreen, ToastViewport } from "@sheet-port/ui";
-import { CloseBehaviorDialog } from "./components/CloseBehaviorDialog.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -12,7 +10,6 @@ import { useSidebarCollapsed } from "./hooks/useSidebarCollapsed.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useUpdate } from "./hooks/useUpdate.js";
 import { useUpdateRestartNotice } from "./hooks/useUpdateRestartNotice.js";
-import { isTauri } from "./lib/ipc.js";
 import type { ScreenId } from "./lib/nav.js";
 import { Dashboard } from "./screens/Dashboard.js";
 import { DataSources } from "./screens/DataSources.js";
@@ -47,25 +44,11 @@ export function App() {
   useFonts();
   const [screen, setScreen] = useState<ScreenId>("dashboard");
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [isCloseDialogOpen, setIsCloseDialogOpen] = useState(false);
   const { collapsed, toggle: toggleSidebar } = useSidebarCollapsed();
   const Screen = SCREENS[screen];
   // The Workbench (Tables) fills the whole content area edge to edge; every
   // other screen keeps the centered, padded reading column.
   const isFullBleed = screen === "tables";
-
-  // The backend emits "close-requested" when the window close button is hit
-  // while close_behavior is "ask"; open the tray/quit prompt in response. Never
-  // fires in a plain browser, so the listener is Tauri-only.
-  useEffect(() => {
-    if (!isTauri) {
-      return;
-    }
-    const unlisten = listen("close-requested", () => setIsCloseDialogOpen(true));
-    return () => {
-      void unlisten.then((off) => off());
-    };
-  }, []);
 
   // Silent launch check: no toast, no dialog. When a newer version is found the
   // Sidebar bottom cluster morphs into an update prompt (see update.available).
@@ -108,7 +91,6 @@ export function App() {
           )}
         </div>
         <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} onNavigate={setScreen} />
-        <CloseBehaviorDialog open={isCloseDialogOpen} onOpenChange={setIsCloseDialogOpen} />
         <UpdateRestartNotice />
         <ToastViewport />
       </div>

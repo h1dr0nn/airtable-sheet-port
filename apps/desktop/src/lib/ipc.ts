@@ -104,17 +104,10 @@ export type FontScale = "small" | "normal" | "large";
 export type FontFamily = "classic" | "modern" | "system";
 export type Language = "en" | "vi";
 
-/** What happens when the user clicks the window close button. */
-export type CloseBehavior =
-  | "ask"   // meta key 'close_behavior', default: prompt via the close dialog
-  | "tray"  // minimize to the system tray, keep running in the background
-  | "quit"; // exit the app
-
 export type AppSettings = {
   fontScale: FontScale;       // meta key 'ui_font_scale', 'normal' by default
   fontFamily: FontFamily;     // meta key 'ui_font_family', 'modern' by default
   language: Language;         // meta key 'ui_language', 'en' by default
-  closeBehavior: CloseBehavior; // meta key 'close_behavior', 'ask' by default
 };
 
 /** Managed-sidecar status returned by mcp_server_start / mcp_server_stop. */
@@ -184,7 +177,8 @@ export interface IpcApi {
   savePermissionRule(rule: SavePermissionRule): Promise<PermissionRuleRow>;
   deletePermissionRule(id: number): Promise<void>;
   listAuditEvents(limit: number | null, offset: number | null): Promise<AuditEvent[]>;
-  /** Wipes the audit log, then records a single `audit_cleared` trace event. */
+  /** Wipes the audit log, then records a single `audit_cleared` trace event.
+   * `listAuditEvents` never returns that event, so the feed reads as empty. */
   clearAuditLog(): Promise<void>;
   tokenStatus(): Promise<TokenStatus>;
   /** Every connected Google account (one per bridge), ordered by source id. */
@@ -202,12 +196,6 @@ export interface IpcApi {
   setFontFamily(family: FontFamily): Promise<void>;
   /** Persists the UI language preference ("en" | "vi"). */
   setLanguage(language: Language): Promise<void>;
-  /** Persists the window close behavior; "ask" restores the close dialog. */
-  setCloseBehavior(behavior: CloseBehavior): Promise<void>;
-  /** Hides the main window to the system tray, keeping the app running. */
-  windowHideToTray(): Promise<void>;
-  /** Quits the application. */
-  windowQuit(): Promise<void>;
   /** Whether launch-at-login (autostart) is currently enabled. */
   getAutostartEnabled(): Promise<boolean>;
   /** Enables or disables launch-at-login (autostart). */
@@ -298,9 +286,6 @@ const tauriIpc: IpcApi = {
   setFontScale: (scale) => invoke<void>("set_font_scale", { scale }),
   setFontFamily: (family) => invoke<void>("set_font_family", { family }),
   setLanguage: (language) => invoke<void>("set_language", { language }),
-  setCloseBehavior: (behavior) => invoke<void>("set_close_behavior", { behavior }),
-  windowHideToTray: () => invoke<void>("window_hide_to_tray"),
-  windowQuit: () => invoke<void>("window_quit"),
   getAutostartEnabled: () => invoke<boolean>("get_autostart_enabled"),
   setAutostartEnabled: (enabled) => invoke<void>("set_autostart_enabled", { enabled }),
   resetSettings: () => invoke<void>("reset_settings"),

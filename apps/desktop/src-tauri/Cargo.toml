@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = [] }
 # Self-update: checks updater.json on GitHub and installs signed release bundles.
 tauri-plugin-updater = "2"
 # Relaunch after an update installs; the updater plugin does not restart on its own.

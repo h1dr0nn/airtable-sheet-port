@@ -56,6 +56,11 @@ pub const CHANGE_LIST_LIMIT: i64 = 200;
 pub const AUDIT_LIMIT_DEFAULT: i64 = 100;
 pub const AUDIT_LIMIT_MAX: i64 = 500;
 
+/// Audit action recorded when the user clears the log from the desktop. The
+/// row stays in the audit trail (the MCP `get_audit_log` tool still returns
+/// it) but the desktop activity feed hides it, so a clear leaves the feed empty.
+pub const AUDIT_CLEARED_ACTION: &str = "audit_cleared";
+
 /// Meta key holding the JSON array of MCP client ids the user has configured
 /// from this app. Remembered so every launch re-registers those clients: that
 /// heals a stale sidecar path after an app update AND our entry getting
@@ -136,21 +141,6 @@ pub const MCP_PORT_MAX: u16 = 65535;
 /// client overwrites our own entry and never touches the user's other
 /// servers, and so `unregister_client` can find exactly what to remove.
 pub const MCP_CLIENT_SERVER_NAME: &str = "airtable-sheet-port";
-
-/// Meta key selecting what happens when the user closes the main window.
-/// Absent means the default ("ask"). See docs/development.md "Run in
-/// background".
-pub const META_CLOSE_BEHAVIOR: &str = "close_behavior";
-
-/// Allowed `close_behavior` values; the first is the default when the key is
-/// absent or invalid. "ask" prompts each time, "tray" hides to the system
-/// tray, "quit" exits the app.
-pub const CLOSE_BEHAVIOR_ASK: &str = "ask";
-pub const CLOSE_BEHAVIOR_TRAY: &str = "tray";
-pub const CLOSE_BEHAVIOR_QUIT: &str = "quit";
-pub const CLOSE_BEHAVIOR_VALUES: [&str; 3] =
-    [CLOSE_BEHAVIOR_ASK, CLOSE_BEHAVIOR_TRAY, CLOSE_BEHAVIOR_QUIT];
-pub const CLOSE_BEHAVIOR_DEFAULT: &str = CLOSE_BEHAVIOR_ASK;
 
 /// The single MCP endpoint path the HTTP transport serves (mirrors
 /// `sheet-port-mcp` http::MCP_HTTP_PATH). Used to build the advertised

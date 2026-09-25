@@ -1,7 +1,13 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+  type QueryClient
+} from "@tanstack/react-query";
 import { toast } from "@sheet-port/ui";
 import { AUDIT_PAGE_SIZE } from "../lib/constants.js";
 import { getErrorMessage } from "../lib/errors.js";
+import { useTranslation, type TFunction } from "../i18n/useTranslation.js";
 import { ipc } from "../lib/ipc.js";
 import { queryKeys } from "../lib/queryKeys.js";
 
@@ -18,22 +24,26 @@ export function useAuditEvents(pageSize: number = AUDIT_PAGE_SIZE) {
   });
 }
 
-/** Wipes the audit log, then refreshes every audit query. Invalidating the
- * `["audit-events"]` prefix covers both the paged dropdown key and the
- * dashboard key so all activity surfaces reflect the cleared log. */
-export function useClearAuditEvents() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
+/** Clear-activity mutation. Success is deliberately silent: announcing the
+ * clear with a toast (or a new audit row) would add an entry right after the
+ * user emptied the list. The panel's empty state is the feedback. Invalidating
+ * the `["audit-events"]` prefix refreshes both the paged dropdown key and the
+ * dashboard key so every activity surface reflects the cleared log. */
+export function clearAuditMutationOptions(queryClient: QueryClient, t: TFunction) {
+  return {
     mutationFn: () => ipc.clearAuditLog(),
     onError: (error: unknown) => {
-      toast.error("Activity not cleared", { description: getErrorMessage(error) });
-    },
-    onSuccess: () => {
-      toast.success("Activity cleared");
+      toast.error(t("toast.activityClearError"), { description: getErrorMessage(error) });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents });
     }
-  });
+  };
+}
+
+/** Wipes the audit log, then refreshes every audit query. */
+export function useClearAuditEvents() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  return useMutation(clearAuditMutationOptions(queryClient, t));
 }
