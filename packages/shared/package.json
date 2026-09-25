@@ -1,6 +1,7 @@
 {
   "name": "@sheet-port/shared",
   "version": "2.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./src/index.ts",

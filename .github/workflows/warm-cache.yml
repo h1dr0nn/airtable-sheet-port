@@ -1,0 +1,91 @@
+name: Warm Rust Cache
+
+# Release builds run on tags, and a tag run cannot read caches saved on other
+# tags, only those saved on the default branch. This workflow compiles the exact
+# release build (without bundling or signing) on main and saves the Rust cache
+# under the same per-target key build-release.yml restores. Releases then start
+# warm instead of rebuilding every dependency. The weekly run keeps the cache
+# alive: GitHub evicts caches unused for 7 days.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "apps/desktop/src-tauri/**"
+      - ".github/workflows/warm-cache.yml"
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: warm-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    name: Warm - ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            platform: macos
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            platform: macos
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          # Must match build-release.yml so tag runs restore these entries.
+          shared-key: ${{ matrix.target }}
+
+      - name: Install Dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev
+
+      - name: Install Frontend Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Workspace Packages
+        run: pnpm -r build
+
+      # Same compile as the release job (sidecar + app, release profile, same
+      # features), minus bundling, so it needs no signing key.
+      - name: Build Tauri App (no bundle)
+        run: pnpm --filter @sheet-port/desktop tauri:build --target ${{ matrix.target }} --no-bundle

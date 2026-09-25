@@ -2,6 +2,7 @@
   "name": "airtable-sheet-port",
   "private": true,
   "version": "2.1.0",
+  "license": "MIT",
   "description": "Airtable - Sheet Port - Safe local port for AI agents to access tables and spreadsheets.",
   "type": "module",
   "packageManager": "pnpm@9.15.4",

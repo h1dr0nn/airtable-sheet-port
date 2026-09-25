@@ -4,6 +4,7 @@ version = "2.1.0"
 description = "Airtable - Sheet Port broker core: shared SQLite state, permission rules, pending changes, audit log, and table connectors."
 authors = ["Airtable - Sheet Port"]
 edition = "2021"
+license = "MIT"
 
 [features]
 # Compiles the SQLite-backed MockConnector and its mock_data store, and

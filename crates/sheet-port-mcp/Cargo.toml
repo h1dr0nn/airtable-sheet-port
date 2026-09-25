@@ -4,6 +4,7 @@ version = "2.1.0"
 description = "Airtable - Sheet Port MCP sidecar: stdio server exposing the broker tools to AI agents."
 authors = ["Airtable - Sheet Port"]
 edition = "2021"
+license = "MIT"
 
 [[bin]]
 name = "sheet-port-mcp"

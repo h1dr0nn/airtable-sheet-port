@@ -1,6 +1,7 @@
 {
   "name": "@sheet-port/ui",
   "version": "2.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./src/index.tsx",

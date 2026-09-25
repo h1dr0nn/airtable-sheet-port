@@ -35,8 +35,9 @@ jobs:
             platform: linux
             arch: x64
             target: x86_64-unknown-linux-gnu
-          # macOS - Intel (x64)
-          - os: macos-15-intel
+          # macOS - Intel (x64), cross-compiled on an Apple Silicon runner: the
+          # Intel runners are much slower and were the longest leg of the matrix.
+          - os: macos-latest
             platform: macos
             arch: x64
             target: x86_64-apple-darwin
@@ -111,7 +112,11 @@ jobs:
         with:
           # Cargo workspace is rooted at the repo root, not apps/desktop/src-tauri.
           workspaces: .
-          cache-on-failure: true
+          # Tag runs cannot read caches saved on other tags, only those saved on
+          # the default branch. warm-cache.yml fills these keys from main, so
+          # releases restore them and never spend time saving their own.
+          shared-key: ${{ matrix.target }}
+          save-if: false
 
       - name: Install Dependencies (Linux)
         if: matrix.platform == 'linux'

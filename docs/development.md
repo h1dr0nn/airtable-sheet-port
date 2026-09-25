@@ -208,6 +208,13 @@ stable VS Code build only (not Insiders / VSCodium / other forks).
 
 ## Releases and Auto-Update
 
+**Build cache.** Release builds run on tags, and a tag run cannot read Rust caches saved
+on other tags. `.github/workflows/warm-cache.yml` compiles the release build (no bundle)
+on `main`, when Rust code changes, weekly, or on demand, and saves one cache per target.
+`build-release.yml` only restores that cache (`save-if: false`). If a release starts cold
+("No cache found"), run **Warm Rust Cache** from the Actions tab first. macOS x64 is
+cross-compiled on an Apple Silicon runner, which is much faster than the Intel runner.
+
 The desktop app self-updates through `tauri-plugin-updater`. On launch it silently
 checks a static manifest on GitHub; when a newer signed version exists, the sidebar
 bottom cluster morphs into an "Update Available" prompt, and Settings gains a manual

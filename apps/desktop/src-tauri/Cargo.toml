@@ -4,6 +4,7 @@ version = "2.1.0"
 description = "Airtable - Sheet Port: Safe local port for AI agents to access tables and spreadsheets."
 authors = ["Airtable - Sheet Port"]
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "sheet_port_lib"
