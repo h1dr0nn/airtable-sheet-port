@@ -46,7 +46,7 @@ Writing: update_records, append_records, update_cells, format_table, create_spre
 
 Locale: call list_sheets to learn the spreadsheet's locale before writing formulas or decimals. In comma-decimal locales (e.g. vi_VN, de_DE, fr_FR, pt_BR, es_ES, it_IT, ru_RU, id_ID, tr_TR) separate formula arguments with ; (=COUNTIF(D2:D9;\"Done\")) and write decimals with a comma (0,65); percentages like 65% and plain integers are safe everywhere. Values are written exactly as given, never rewritten.
 
-Style: call get_table_style first when a sheet already has data or formatting, and match it. For a fresh sheet, freeze the header row, make it bold with a light neutral fill (such as #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat, right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained: one or two muted accents, no full gridlines, no loud fills. Use validations for dropdowns (type list with values) and checkboxes, and conditionalFormats for color rules such as a status fill; a new rule replaces existing rules on exactly the same range and keeps the rest (replaceIntersecting: true clears every overlapping rule). Pass format fields to append_records to write and style new data in one call.";
+Style: call get_table_style first when a sheet already has data or formatting, and match it. For a fresh sheet, freeze the header row, make it bold with a light neutral fill (such as #f3f4f6) and a thin bottom border, give numeric and date columns a consistent numberFormat, right-align numbers, and set columnWidths so nothing is clipped. Keep it restrained: one or two muted accents, no full gridlines, no loud fills. Use validations for dropdowns (type list with values) and checkboxes, and conditionalFormats for color rules such as a status fill; a new rule replaces existing rules on exactly the same range and keeps the rest (replaceIntersecting: true clears every overlapping rule). Fonts: set fontFamily to any Google Sheets font (e.g. Lexend, Inter, Roboto Mono); merges and rowHeights shape document-style layouts, so never fall back to a file export for styling. In document-style sheets (GDD one-pagers, dashboards) merge title and banner rows across the content width instead of relying on text overflow; merging keeps only the top-left value. Pass format fields to append_records to write and style new data in one call.";
 
 /// The input schema of a tool's argument type with every subschema inlined:
 /// no `$defs`/`$ref`, so array items such as `formats`, `validations`, and
@@ -198,7 +198,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "read_formats",
-        description = "Read cell formatting of a whole tab or an A1 range in one call: fields picks background (default), fontColor, bold, italic, strikethrough, and value (the formatted text). Omitting range reads the whole tab, trimmed to the last row and column where a requested field is not default. source effective (default) is what the user sees, including conditional-formatting colors; userEntered is only the format set on each cell. Output (compact JSON): {sheetTitle, range, startRow, startColumn, rows, columns, source, <field>...}. Each format field is {palette, counts, grid}: palette[0] is the default (null = no fill or default color, false for bold/italic/strikethrough), colors are \"#rrggbb\", counts[i] is how many cells use palette[i]. grid has one string per row (grid[r] is sheet row startRow + r); it is comma-separated runs, \"i*n\" meaning n cells of palette[i] and a bare \"i\" one cell, left to right from startColumn. A row stops early when the rest is palette[0], so pad it to columns with 0; \"\" is an all-default row. Example: \"0*12,3*4,0,2\" = 12 default cells, 4 of palette[3], 1 default, 1 of palette[2], then defaults. value is {grid: [[string]]}, one array per row with trailing empty cells trimmed. In effective mode a cell that has any format but no fill reports #ffffff (and default text #000000) rather than null. Up to 250000 cells per call; with saveTo up to 2000000, written to a file.",
+        description = "Read cell formatting of a whole tab or an A1 range in one call: fields picks background (default), fontColor, bold, italic, strikethrough, underline, fontFamily, fontSize, verticalAlignment, and value (the formatted text). Omitting range reads the whole tab, trimmed to the last row and column where a requested field is not default. source effective (default) is what the user sees, including conditional-formatting colors; userEntered is only the format set on each cell. Output (compact JSON): {sheetTitle, range, startRow, startColumn, rows, columns, source, <field>...}. Each format field is {palette, counts, grid}: palette[0] is the default (null = no fill, default color, or no font/size/alignment set; false for bold/italic/strikethrough/underline), colors are \"#rrggbb\", fontFamily is a font name, fontSize a number of points, verticalAlignment TOP, MIDDLE, or BOTTOM, counts[i] is how many cells use palette[i]. grid has one string per row (grid[r] is sheet row startRow + r); it is comma-separated runs, \"i*n\" meaning n cells of palette[i] and a bare \"i\" one cell, left to right from startColumn. A row stops early when the rest is palette[0], so pad it to columns with 0; \"\" is an all-default row. Example: \"0*12,3*4,0,2\" = 12 default cells, 4 of palette[3], 1 default, 1 of palette[2], then defaults. value is {grid: [[string]]}, one array per row with trailing empty cells trimmed. In effective mode a cell that has any format but no fill reports #ffffff (and default text #000000) rather than null. Up to 250000 cells per call; with saveTo up to 2000000, written to a file.",
         annotations(read_only_hint = true),
         input_schema = inline_input_schema::<ReadFormatsArgs>()
     )]
@@ -209,7 +209,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "get_table_style",
-        description = "Read a tab's existing look: header-row and next-row cell styles, frozen rows/columns, and column widths. The header is row 1 unless headerRow says otherwise (e.g. 9 on a document-style sheet). Call before format_table on a sheet that already has styling.",
+        description = "Read a tab's existing look: header-row and next-row cell styles (font family and size, bold, italic, underline, strikethrough, colors, alignment, number format, wrap), frozen rows/columns, and column widths. The header is row 1 unless headerRow says otherwise (e.g. 9 on a document-style sheet). Call before format_table on a sheet that already has styling.",
         input_schema = inline_input_schema::<GetTableStyleArgs>(),
         annotations(read_only_hint = true)
     )]
@@ -236,7 +236,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "append_records",
-        description = "Append records as rows; on an empty tab the field names become the header row. Accepts the format_table fields (formats, freezes, columnWidths, validations for dropdowns and checkboxes, conditionalFormats for color rules), applied in the same write.",
+        description = "Append records as rows; on an empty tab the field names become the header row. Accepts the format_table fields (formats incl. fontFamily, merges, freezes, columnWidths, rowHeights, validations for dropdowns and checkboxes, conditionalFormats for color rules), applied in the same write.",
         input_schema = inline_input_schema::<AppendRecordsArgs>()
     )]
     async fn append_records(
@@ -259,7 +259,7 @@ impl SheetPortServer {
 
     #[tool(
         name = "format_table",
-        description = "Format a tab: per-range styles in formats (bold, colors, alignment, numberFormat, wrap, border), freezeRows/freezeColumns, columnWidths, validations (dropdowns and checkboxes) and conditionalFormats (color rules; each replaces existing rules on the same range). Only what you set changes.",
+        description = "Format a tab: per-range styles in formats (fontFamily such as Lexend, bold, italic, underline, strikethrough, fontSize, colors, horizontal/verticalAlignment, numberFormat, wrap, border), merges/unmerges (merging keeps the top-left value), freezeRows/freezeColumns, columnWidths, rowHeights, validations (dropdowns and checkboxes) and conditionalFormats (color rules; each replaces existing rules on the same range). Only what you set changes.",
         input_schema = inline_input_schema::<FormatTableArgs>()
     )]
     async fn format_table(&self, Parameters(args): Parameters<FormatTableArgs>) -> CallToolResult {

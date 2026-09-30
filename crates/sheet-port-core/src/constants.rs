@@ -52,6 +52,19 @@ pub const FONT_SIZE_MAX: i64 = 400;
 pub const COLUMN_WIDTH_MIN: i64 = 2;
 pub const COLUMN_WIDTH_MAX: i64 = 2000;
 
+/// Allowed row-height range (pixels) for a row-height override.
+pub const ROW_HEIGHT_MIN: i64 = 2;
+pub const ROW_HEIGHT_MAX: i64 = 2000;
+
+/// Maximum row-height entries per formatting change.
+pub const ROW_HEIGHTS_MAX: usize = 100;
+
+/// Maximum merges (and, separately, unmerges) per formatting change.
+pub const MERGES_MAX: usize = 100;
+
+/// Maximum characters of a font name in a cell-format operation.
+pub const FONT_FAMILY_MAX_LEN: usize = 100;
+
 /// Maximum rows or columns a formatting change may freeze.
 pub const FREEZE_MAX: i64 = 100;
 

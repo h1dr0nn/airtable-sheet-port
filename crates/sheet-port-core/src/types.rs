@@ -480,8 +480,8 @@ pub struct TokenStatus {
 
 // ---------------------------------------------------------------------------
 // Cell formatting (docs/mcp-tools.md "Formatting"). A FormatPlan is the whole
-// staged formatting change: any subset of per-range cell formats, a header
-// freeze, and column widths. It is both the internal change payload and the
+// staged formatting change: any subset of per-range cell formats, merges, a
+// header freeze, column widths, and row heights. It is both the internal change payload and the
 // agent-visible diff, so every field is a plain, non-sensitive value.
 // ---------------------------------------------------------------------------
 
@@ -591,6 +591,93 @@ impl HorizontalAlignment {
     }
 }
 
+/// Vertical text alignment for a range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum VerticalAlignment {
+    Top,
+    Middle,
+    Bottom,
+}
+
+impl VerticalAlignment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "TOP",
+            Self::Middle => "MIDDLE",
+            Self::Bottom => "BOTTOM",
+        }
+    }
+
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "TOP" => Some(Self::Top),
+            "MIDDLE" => Some(Self::Middle),
+            "BOTTOM" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+}
+
+/// How a merge combines a range (Google's `MergeType`): one block, one merge
+/// per row, or one merge per column.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeKind {
+    #[default]
+    All,
+    Rows,
+    Columns,
+}
+
+impl MergeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Rows => "rows",
+            Self::Columns => "columns",
+        }
+    }
+
+    /// The Sheets API `mergeType` value.
+    pub fn api_type(self) -> &'static str {
+        match self {
+            Self::All => "MERGE_ALL",
+            Self::Rows => "MERGE_ROWS",
+            Self::Columns => "MERGE_COLUMNS",
+        }
+    }
+
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "all" => Some(Self::All),
+            "rows" => Some(Self::Rows),
+            "columns" => Some(Self::Columns),
+            _ => None,
+        }
+    }
+}
+
+/// A merge over an A1 range within the resolved tab. Merging cells that
+/// already hold values keeps only the top-left value (Sheets drops the rest).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeRange {
+    pub range: String,
+    #[serde(rename = "type", default)]
+    pub kind: MergeKind,
+}
+
+/// A row-height override (pixels) over the 1-based, inclusive sheet rows
+/// `start_row..=end_row` (a single row when they are equal).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowHeight {
+    pub start_row: i64,
+    pub end_row: i64,
+    pub pixels: i64,
+}
+
 /// One cell-format operation over an A1 range within the resolved tab. Every
 /// optional field left unset is preserved on the sheet (partial formatting):
 /// only the properties present here are written.
@@ -604,6 +691,13 @@ pub struct CellFormat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub italic: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strikethrough: Option<bool>,
+    /// Google Sheets font name, e.g. `Lexend` or `Roboto Mono`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<i64>,
     /// `#rrggbb` text color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -613,6 +707,8 @@ pub struct CellFormat {
     pub background_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub horizontal_alignment: Option<HorizontalAlignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<VerticalAlignment>,
     /// Google Sheets number-format pattern, e.g. `#,##0` or `yyyy-mm-dd`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number_format: Option<String>,
@@ -736,8 +832,9 @@ pub struct ConditionalFormat {
     pub bold: Option<bool>,
 }
 
-/// A staged formatting change: any mix of per-range cell formats, a header
-/// freeze, column widths, data validations, and conditional formats.
+/// A staged formatting change: any mix of per-range cell formats, merges and
+/// unmerges, a header freeze, column widths, row heights, data validations,
+/// and conditional formats.
 /// Serialized verbatim as the agent-visible diff.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -752,6 +849,14 @@ pub struct FormatPlan {
     pub freeze_columns: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub column_widths: Vec<ColumnWidth>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_heights: Vec<RowHeight>,
+    /// Ranges to unmerge; applied before `merges`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmerges: Vec<String>,
+    /// Ranges to merge; applied after `unmerges` and before the cell formats.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges: Vec<MergeRange>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validations: Vec<DataValidation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -770,6 +875,9 @@ impl FormatPlan {
             && self.freeze_rows.is_none()
             && self.freeze_columns.is_none()
             && self.column_widths.is_empty()
+            && self.row_heights.is_empty()
+            && self.unmerges.is_empty()
+            && self.merges.is_empty()
             && self.validations.is_empty()
             && self.conditional_formats.is_empty()
     }
@@ -786,6 +894,12 @@ pub struct CellStyle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub italic: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strikethrough: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_color: Option<String>,
@@ -793,6 +907,8 @@ pub struct CellStyle {
     pub background_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub horizontal_alignment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub number_format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

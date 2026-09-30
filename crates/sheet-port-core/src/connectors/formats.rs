@@ -22,13 +22,25 @@ pub struct FormatFields {
     pub bold: bool,
     pub italic: bool,
     pub strikethrough: bool,
+    pub underline: bool,
+    pub font_family: bool,
+    pub font_size: bool,
+    pub vertical_alignment: bool,
     pub value: bool,
 }
 
 impl FormatFields {
     /// True when any format property (not just the value) is requested.
     pub fn any_format(&self) -> bool {
-        self.background || self.font_color || self.bold || self.italic || self.strikethrough
+        self.background
+            || self.font_color
+            || self.bold
+            || self.italic
+            || self.strikethrough
+            || self.underline
+            || self.font_family
+            || self.font_size
+            || self.vertical_alignment
     }
 
     /// True when a color property is requested.
@@ -44,6 +56,10 @@ impl FormatFields {
             (self.bold, "bold"),
             (self.italic, "italic"),
             (self.strikethrough, "strikethrough"),
+            (self.underline, "underline"),
+            (self.font_family, "fontFamily"),
+            (self.font_size, "fontSize"),
+            (self.vertical_alignment, "verticalAlignment"),
             (self.value, "value"),
         ]
         .into_iter()
@@ -94,6 +110,13 @@ pub struct CellSample {
     pub bold: bool,
     pub italic: bool,
     pub strikethrough: bool,
+    pub underline: bool,
+    /// Font name, or `None` when the format carries none.
+    pub font_family: Option<String>,
+    /// Font size in points, or `None` when the format carries none.
+    pub font_size: Option<i64>,
+    /// `TOP`, `MIDDLE`, or `BOTTOM`, or `None` when the format carries none.
+    pub vertical_alignment: Option<String>,
     /// The formatted value as shown to the user.
     pub value: String,
 }
@@ -107,6 +130,12 @@ impl CellSample {
             bold: self.bold && fields.bold,
             italic: self.italic && fields.italic,
             strikethrough: self.strikethrough && fields.strikethrough,
+            underline: self.underline && fields.underline,
+            font_family: self.font_family.filter(|_| fields.font_family),
+            font_size: self.font_size.filter(|_| fields.font_size),
+            vertical_alignment: self
+                .vertical_alignment
+                .filter(|_| fields.vertical_alignment),
             value: if fields.value {
                 self.value
             } else {
@@ -122,6 +151,10 @@ impl CellSample {
             || (fields.bold && self.bold)
             || (fields.italic && self.italic)
             || (fields.strikethrough && self.strikethrough)
+            || (fields.underline && self.underline)
+            || (fields.font_family && self.font_family.is_some())
+            || (fields.font_size && self.font_size.is_some())
+            || (fields.vertical_alignment && self.vertical_alignment.is_some())
             || (fields.value && !self.value.is_empty()))
     }
 }
@@ -307,6 +340,14 @@ pub struct FormatsOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strikethrough: Option<PaletteLayer<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline: Option<PaletteLayer<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<PaletteLayer<Option<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<PaletteLayer<Option<i64>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<PaletteLayer<Option<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<ValueLayer>,
 }
 
@@ -351,6 +392,18 @@ pub fn encode_formats(
         strikethrough: fields
             .strikethrough
             .then(|| encode_layer(grid, false, |cell| cell.strikethrough)),
+        underline: fields
+            .underline
+            .then(|| encode_layer(grid, false, |cell| cell.underline)),
+        font_family: fields
+            .font_family
+            .then(|| encode_layer(grid, None, |cell| cell.font_family.clone())),
+        font_size: fields
+            .font_size
+            .then(|| encode_layer(grid, None, |cell| cell.font_size)),
+        vertical_alignment: fields
+            .vertical_alignment
+            .then(|| encode_layer(grid, None, |cell| cell.vertical_alignment.clone())),
         value: fields.value.then(|| ValueLayer {
             grid: (0..grid.rows)
                 .map(|row| {

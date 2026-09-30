@@ -11,13 +11,15 @@ use sheet_port_core::connectors::{
 };
 use sheet_port_core::constants::{
     AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN,
-    CONDITIONAL_FORMATS_MAX, FIND_QUERY_MAX_LEN, FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX,
-    FREEZE_MAX, READ_FORMATS_MAX_CELLS, READ_FORMATS_MAX_CELLS_SAVED, READ_LIMIT_DEFAULT,
-    READ_LIMIT_MAX, READ_LIMIT_MIN, VALIDATIONS_MAX, VALIDATION_LIST_VALUES_MAX, WRITE_BATCH_MAX,
+    CONDITIONAL_FORMATS_MAX, FIND_QUERY_MAX_LEN, FONT_FAMILY_MAX_LEN, FONT_SIZE_MAX, FONT_SIZE_MIN,
+    FORMAT_OPS_MAX, FREEZE_MAX, MERGES_MAX, READ_FORMATS_MAX_CELLS, READ_FORMATS_MAX_CELLS_SAVED,
+    READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN, ROW_HEIGHTS_MAX, ROW_HEIGHT_MAX,
+    ROW_HEIGHT_MIN, VALIDATIONS_MAX, VALIDATION_LIST_VALUES_MAX, WRITE_BATCH_MAX,
 };
 use sheet_port_core::types::{
     BorderStyle, CellFormat, CellWrite, ColumnWidth, ConditionWhen, ConditionalFormat,
-    DataValidation, FormatPlan, HorizontalAlignment, JsonMap, NumberFormatType, ValidationKind,
+    DataValidation, FormatPlan, HorizontalAlignment, JsonMap, MergeKind, MergeRange,
+    NumberFormatType, RowHeight, ValidationKind, VerticalAlignment,
 };
 use sheet_port_core::{exports, CoreError};
 
@@ -193,6 +195,13 @@ pub enum FormatFieldArg {
     Bold,
     Italic,
     Strikethrough,
+    Underline,
+    /// Font name, e.g. "Lexend".
+    FontFamily,
+    /// Font size in points.
+    FontSize,
+    /// TOP, MIDDLE, or BOTTOM.
+    VerticalAlignment,
     /// The formatted value as shown in the sheet.
     Value,
 }
@@ -219,7 +228,7 @@ pub struct ReadFormatsArgs {
     /// Optional A1 window within the tab, like "A1:OA95", "A:C", or "5:9" (no sheet name). Omit to read the whole tab, trimmed to its used cells.
     #[serde(default)]
     pub range: Option<String>,
-    /// Properties to return (default ["background"]): background, fontColor, bold, italic, strikethrough, value.
+    /// Properties to return (default ["background"]): background, fontColor, bold, italic, strikethrough, underline, fontFamily, fontSize, verticalAlignment, value.
     #[serde(default)]
     pub fields: Option<Vec<FormatFieldArg>>,
     /// "effective" (default: what the user sees, including conditional formatting) or "userEntered" (only the format set on the cell).
@@ -250,7 +259,8 @@ impl ReadFormatsArgs {
             None => fields.background = true,
             Some(list) if list.is_empty() => {
                 return Err(invalid(
-                    "fields must list at least one of background, fontColor, bold, italic, strikethrough, value"
+                    "fields must list at least one of background, fontColor, bold, italic, \
+                     strikethrough, underline, fontFamily, fontSize, verticalAlignment, value"
                         .to_string(),
                 ))
             }
@@ -262,6 +272,10 @@ impl ReadFormatsArgs {
                         FormatFieldArg::Bold => fields.bold = true,
                         FormatFieldArg::Italic => fields.italic = true,
                         FormatFieldArg::Strikethrough => fields.strikethrough = true,
+                        FormatFieldArg::Underline => fields.underline = true,
+                        FormatFieldArg::FontFamily => fields.font_family = true,
+                        FormatFieldArg::FontSize => fields.font_size = true,
+                        FormatFieldArg::VerticalAlignment => fields.vertical_alignment = true,
                         FormatFieldArg::Value => fields.value = true,
                     }
                 }
@@ -421,6 +435,13 @@ pub struct CellFormatArg {
     pub bold: Option<bool>,
     #[serde(default)]
     pub italic: Option<bool>,
+    #[serde(default)]
+    pub underline: Option<bool>,
+    #[serde(default)]
+    pub strikethrough: Option<bool>,
+    /// Any Google Sheets font name, e.g. "Lexend", "Inter", "Roboto Mono" (1-100 characters).
+    #[serde(default)]
+    pub font_family: Option<String>,
     /// Font size in points.
     #[serde(default)]
     pub font_size: Option<i64>,
@@ -433,6 +454,9 @@ pub struct CellFormatArg {
     /// LEFT, CENTER, or RIGHT.
     #[serde(default)]
     pub horizontal_alignment: Option<String>,
+    /// TOP, MIDDLE, or BOTTOM.
+    #[serde(default)]
+    pub vertical_alignment: Option<String>,
     /// Number-format pattern, e.g. "#,##0.00", "0%", "yyyy-mm-dd".
     #[serde(default)]
     pub number_format: Option<String>,
@@ -454,6 +478,31 @@ pub struct ColumnWidthArg {
     pub column: String,
     /// Width in pixels.
     pub pixels: i64,
+}
+
+/// A row-height override: set exactly one of `row` or `rows`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RowHeightArg {
+    /// One 1-based sheet row, e.g. 1.
+    #[serde(default)]
+    pub row: Option<i64>,
+    /// An inclusive span of 1-based rows, e.g. "5:9".
+    #[serde(default)]
+    pub rows: Option<String>,
+    /// Height in pixels (2-2000).
+    pub pixels: i64,
+}
+
+/// A merge of an A1 range into one cell (or one per row/column).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeArg {
+    /// A1 range within the tab, e.g. "A1:F1". Only the top-left value is kept.
+    pub range: String,
+    /// "all" (default: one merged block), "rows" (one merge per row), or "columns" (one per column).
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
 }
 
 /// A native data-validation rule: a dropdown (`list`) or a checkbox.
@@ -545,6 +594,15 @@ pub struct FormatSpec {
     /// Column widths in pixels.
     #[serde(default)]
     pub column_widths: Vec<ColumnWidthArg>,
+    /// Row heights in pixels, for one row or a span like "5:9".
+    #[serde(default)]
+    pub row_heights: Vec<RowHeightArg>,
+    /// Merge ranges (e.g. a title banner across A1:F1); applied before formats.
+    #[serde(default)]
+    pub merges: Vec<MergeArg>,
+    /// A1 ranges to unmerge; applied before merges.
+    #[serde(default)]
+    pub unmerges: Vec<String>,
     /// Native data validation: a dropdown (type "list" with values) or a
     /// checkbox on a range. Replaces any validation already on those cells.
     #[serde(default)]
@@ -567,6 +625,9 @@ impl FormatSpec {
             || self.freeze_rows.is_some()
             || self.freeze_columns.is_some()
             || !self.column_widths.is_empty()
+            || !self.row_heights.is_empty()
+            || !self.merges.is_empty()
+            || !self.unmerges.is_empty()
             || !self.validations.is_empty()
             || !self.conditional_formats.is_empty()
     }
@@ -582,6 +643,21 @@ impl FormatSpec {
         if self.column_widths.len() > FORMAT_OPS_MAX {
             return Err(invalid(format!(
                 "columnWidths must contain at most {FORMAT_OPS_MAX} items"
+            )));
+        }
+        if self.row_heights.len() > ROW_HEIGHTS_MAX {
+            return Err(invalid(format!(
+                "rowHeights must contain at most {ROW_HEIGHTS_MAX} items"
+            )));
+        }
+        if self.merges.len() > MERGES_MAX {
+            return Err(invalid(format!(
+                "merges must contain at most {MERGES_MAX} items"
+            )));
+        }
+        if self.unmerges.len() > MERGES_MAX {
+            return Err(invalid(format!(
+                "unmerges must contain at most {MERGES_MAX} items"
             )));
         }
         if self.validations.len() > VALIDATIONS_MAX {
@@ -609,6 +685,30 @@ impl FormatSpec {
             .enumerate()
             .map(|(index, width)| convert_column_width(index, width))
             .collect::<Result<Vec<_>, _>>()?;
+        let row_heights = self
+            .row_heights
+            .iter()
+            .enumerate()
+            .map(|(index, height)| convert_row_height(index, height))
+            .collect::<Result<Vec<_>, _>>()?;
+        let merges = self
+            .merges
+            .iter()
+            .enumerate()
+            .map(|(index, merge)| convert_merge(index, merge))
+            .collect::<Result<Vec<_>, _>>()?;
+        let unmerges = self
+            .unmerges
+            .iter()
+            .enumerate()
+            .map(|(index, range)| {
+                let field = format!("unmerges[{index}]");
+                require_non_empty(range, &field)?;
+                parse_cells_range(range)
+                    .map_err(|error| invalid(format!("{field}: {}", error_text(&error))))?;
+                Ok(range.clone())
+            })
+            .collect::<Result<Vec<_>, CoreError>>()?;
         let validations = self
             .validations
             .iter()
@@ -627,6 +727,9 @@ impl FormatSpec {
             freeze_rows: self.freeze_rows,
             freeze_columns: self.freeze_columns,
             column_widths,
+            row_heights,
+            unmerges,
+            merges,
             validations,
             conditional_formats,
             replace_intersecting: self.replace_intersecting,
@@ -634,7 +737,8 @@ impl FormatSpec {
         if plan.is_empty() {
             return Err(invalid(
                 "a formatting change must set at least one of formats, freezeRows, \
-                 freezeColumns, columnWidths, validations, or conditionalFormats"
+                 freezeColumns, columnWidths, rowHeights, merges, unmerges, validations, \
+                 or conditionalFormats"
                     .to_string(),
             ));
         }
@@ -710,10 +814,26 @@ fn convert_cell_format(index: usize, arg: &CellFormatArg) -> Result<CellFormat, 
         .as_deref()
         .map(|color| require_hex_color(color, &field("backgroundColor")))
         .transpose()?;
+    if let Some(family) = &arg.font_family {
+        let length = family.trim().chars().count();
+        if !(1..=FONT_FAMILY_MAX_LEN).contains(&length)
+            || family.chars().count() > FONT_FAMILY_MAX_LEN
+        {
+            return Err(invalid(format!(
+                "{} must be 1 to {FONT_FAMILY_MAX_LEN} characters",
+                field("fontFamily")
+            )));
+        }
+    }
     let horizontal_alignment = arg
         .horizontal_alignment
         .as_deref()
         .map(|value| parse_alignment(value, &field("horizontalAlignment")))
+        .transpose()?;
+    let vertical_alignment = arg
+        .vertical_alignment
+        .as_deref()
+        .map(|value| parse_vertical_alignment(value, &field("verticalAlignment")))
         .transpose()?;
     let number_format_type = arg
         .number_format_type
@@ -730,10 +850,17 @@ fn convert_cell_format(index: usize, arg: &CellFormatArg) -> Result<CellFormat, 
         range: arg.range.clone(),
         bold: arg.bold,
         italic: arg.italic,
+        underline: arg.underline,
+        strikethrough: arg.strikethrough,
+        font_family: arg
+            .font_family
+            .as_deref()
+            .map(|family| family.trim().to_string()),
         font_size: arg.font_size,
         font_color,
         background_color,
         horizontal_alignment,
+        vertical_alignment,
         number_format: arg.number_format.clone(),
         number_format_type,
         wrap: arg.wrap,
@@ -754,6 +881,86 @@ fn convert_column_width(index: usize, arg: &ColumnWidthArg) -> Result<ColumnWidt
         column: arg.column.clone(),
         pixels: arg.pixels,
     })
+}
+
+fn convert_row_height(index: usize, arg: &RowHeightArg) -> Result<RowHeight, CoreError> {
+    let field = |name: &str| format!("rowHeights[{index}].{name}");
+    let (start_row, end_row) = match (arg.row, arg.rows.as_deref()) {
+        (Some(row), None) => {
+            if row < 1 {
+                return Err(invalid(format!(
+                    "{} must be a 1-based row number (1 or more)",
+                    field("row")
+                )));
+            }
+            (row, row)
+        }
+        (None, Some(rows)) => {
+            require_non_empty(rows, &field("rows"))?;
+            let bad = || {
+                invalid(format!(
+                    "{} must be a span of 1-based rows like \"5:9\"",
+                    field("rows")
+                ))
+            };
+            let range = parse_cells_range(rows).map_err(|_| bad())?;
+            match (
+                range.start_row,
+                range.end_row,
+                range.start_col,
+                range.end_col,
+            ) {
+                (Some(start), Some(end), None, None) if end > start => {
+                    (start as i64 + 1, end as i64)
+                }
+                _ => return Err(bad()),
+            }
+        }
+        _ => {
+            return Err(invalid(format!(
+                "rowHeights[{index}] must set exactly one of row or rows"
+            )))
+        }
+    };
+    if !(ROW_HEIGHT_MIN..=ROW_HEIGHT_MAX).contains(&arg.pixels) {
+        return Err(invalid(format!(
+            "{} must be between {ROW_HEIGHT_MIN} and {ROW_HEIGHT_MAX}",
+            field("pixels")
+        )));
+    }
+    Ok(RowHeight {
+        start_row,
+        end_row,
+        pixels: arg.pixels,
+    })
+}
+
+fn convert_merge(index: usize, arg: &MergeArg) -> Result<MergeRange, CoreError> {
+    let field = |name: &str| format!("merges[{index}].{name}");
+    require_non_empty(&arg.range, &field("range"))?;
+    parse_cells_range(&arg.range)
+        .map_err(|error| invalid(format!("{}: {}", field("range"), error_text(&error))))?;
+    let kind = match arg.kind.as_deref() {
+        None => MergeKind::All,
+        Some(raw) => MergeKind::from_wire(&raw.to_ascii_lowercase()).ok_or_else(|| {
+            invalid(format!(
+                "{} must be one of all, rows, columns",
+                field("type")
+            ))
+        })?,
+    };
+    Ok(MergeRange {
+        range: arg.range.clone(),
+        kind,
+    })
+}
+
+/// The message of an InvalidInput (or any error), without a variant prefix.
+fn error_text(error: &CoreError) -> String {
+    match error {
+        CoreError::InvalidInput(message) => message.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn convert_validation(index: usize, arg: &ValidationArg) -> Result<DataValidation, CoreError> {
@@ -912,6 +1119,11 @@ fn require_hex_color(value: &str, field: &str) -> Result<String, CoreError> {
 fn parse_alignment(value: &str, field: &str) -> Result<HorizontalAlignment, CoreError> {
     HorizontalAlignment::from_wire(&value.to_ascii_uppercase())
         .ok_or_else(|| invalid(format!("{field} must be one of LEFT, CENTER, RIGHT")))
+}
+
+fn parse_vertical_alignment(value: &str, field: &str) -> Result<VerticalAlignment, CoreError> {
+    VerticalAlignment::from_wire(&value.to_ascii_uppercase())
+        .ok_or_else(|| invalid(format!("{field} must be one of TOP, MIDDLE, BOTTOM")))
 }
 
 fn parse_number_format_type(value: &str, field: &str) -> Result<NumberFormatType, CoreError> {

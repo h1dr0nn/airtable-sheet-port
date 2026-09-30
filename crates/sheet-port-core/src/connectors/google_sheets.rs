@@ -25,7 +25,7 @@ use crate::sources;
 use crate::types::{
     BorderStyle, CellFormat, CellStyle, CellWrite, ColumnWidth, ConditionWhen, ConditionalFormat,
     CreatedResource, DataSource, DataValidation, FieldSchema, FormatPlan, GridColumn, GridData,
-    GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch, SheetTab, SourceKind,
+    GridRow, JsonMap, NumberFormatType, ReadOptions, RecordPatch, RowHeight, SheetTab, SourceKind,
     SpreadsheetInfo, TableRecord, TableRef, TableSchema, TableStyle, ValidationKind,
 };
 
@@ -1423,7 +1423,7 @@ const DEFAULT_BORDER_COLOR: &str = "#bfbfbf";
 /// Field mask for a style read: the two sample rows plus sheet freeze counts
 /// and per-column pixel widths. Bounds the response to exactly what
 /// [`TableStyle`] reports.
-const STYLE_FIELDS_MASK: &str = "sheets(properties(sheetId,title,gridProperties(frozenRowCount,frozenColumnCount)),data(rowData(values(formattedValue,dataValidation(condition(type)),effectiveFormat(backgroundColor,horizontalAlignment,wrapStrategy,numberFormat,textFormat(bold,italic,fontSize,foregroundColor)))),columnMetadata(pixelSize)))";
+const STYLE_FIELDS_MASK: &str = "sheets(properties(sheetId,title,gridProperties(frozenRowCount,frozenColumnCount)),data(rowData(values(formattedValue,dataValidation(condition(type)),effectiveFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,numberFormat,textFormat(bold,italic,underline,strikethrough,fontFamily,fontSize,foregroundColor)))),columnMetadata(pixelSize)))";
 
 /// Field mask for the conditional-format read that precedes adding rules: the
 /// tab ids and every existing rule (for the replace step).
@@ -1464,12 +1464,13 @@ fn apply_format_plan(
     Ok(())
 }
 
-/// Turns a plan into ordered `spreadsheets.batchUpdate` requests: per-range cell
-/// formats and borders, data validations, conditional formats (deletes of the
+/// Turns a plan into ordered `spreadsheets.batchUpdate` requests: unmerges,
+/// then merges (so a format over a merged range lands on its top-left cell),
+/// per-range cell formats and borders, data validations, conditional formats (deletes of the
 /// existing rules on exactly the new ranges, or every intersecting rule when
 /// the plan sets `replace_intersecting`, highest index first, then the new
 /// rules in plan order at the top of the list), then the header freeze,
-/// then column widths. `existing_rules` holds the ranges of each current rule
+/// then column widths and row heights. `existing_rules` holds the ranges of each current rule
 /// on the tab, by rule index. Pure so the request shape can be unit-tested
 /// without a network call.
 fn build_format_requests(
@@ -1479,6 +1480,21 @@ fn build_format_requests(
     decimal_comma: bool,
 ) -> Result<Vec<Value>, CoreError> {
     let mut requests = Vec::new();
+    for range in &plan.unmerges {
+        let range = parse_a1_range(range)?;
+        requests.push(json!({
+            "unmergeCells": { "range": grid_range_json(sheet_id, &range) }
+        }));
+    }
+    for merge in &plan.merges {
+        let range = parse_a1_range(&merge.range)?;
+        requests.push(json!({
+            "mergeCells": {
+                "range": grid_range_json(sheet_id, &range),
+                "mergeType": merge.kind.api_type(),
+            }
+        }));
+    }
     for format in &plan.formats {
         if let Some(request) = repeat_cell_request(sheet_id, format)? {
             requests.push(request);
@@ -1515,6 +1531,7 @@ fn build_format_requests(
         requests.push(request);
     }
     requests.extend(column_width_requests(sheet_id, &plan.column_widths)?);
+    requests.extend(row_height_requests(sheet_id, &plan.row_heights)?);
     Ok(requests)
 }
 
@@ -1534,6 +1551,18 @@ fn repeat_cell_request(sheet_id: i64, format: &CellFormat) -> Result<Option<Valu
         text_format.insert("italic".to_string(), json!(italic));
         fields.push("userEnteredFormat.textFormat.italic");
     }
+    if let Some(underline) = format.underline {
+        text_format.insert("underline".to_string(), json!(underline));
+        fields.push("userEnteredFormat.textFormat.underline");
+    }
+    if let Some(strikethrough) = format.strikethrough {
+        text_format.insert("strikethrough".to_string(), json!(strikethrough));
+        fields.push("userEnteredFormat.textFormat.strikethrough");
+    }
+    if let Some(family) = &format.font_family {
+        text_format.insert("fontFamily".to_string(), json!(family));
+        fields.push("userEnteredFormat.textFormat.fontFamily");
+    }
     if let Some(size) = format.font_size {
         text_format.insert("fontSize".to_string(), json!(size));
         fields.push("userEnteredFormat.textFormat.fontSize");
@@ -1552,6 +1581,10 @@ fn repeat_cell_request(sheet_id: i64, format: &CellFormat) -> Result<Option<Valu
     if let Some(align) = format.horizontal_alignment {
         user_format.insert("horizontalAlignment".to_string(), json!(align.as_str()));
         fields.push("userEnteredFormat.horizontalAlignment");
+    }
+    if let Some(align) = format.vertical_alignment {
+        user_format.insert("verticalAlignment".to_string(), json!(align.as_str()));
+        fields.push("userEnteredFormat.verticalAlignment");
     }
     if let Some(pattern) = &format.number_format {
         let format_type = number_format_type_str(pattern, format.number_format_type);
@@ -1677,6 +1710,34 @@ fn column_width_requests(sheet_id: i64, widths: &[ColumnWidth]) -> Result<Vec<Va
                         "endIndex": index + 1,
                     },
                     "properties": { "pixelSize": width.pixels },
+                    "fields": "pixelSize",
+                }
+            }))
+        })
+        .collect()
+}
+
+/// One `updateDimensionProperties` request per row-height override, over the
+/// 1-based inclusive rows mapped to a zero-based, end-exclusive ROWS range.
+fn row_height_requests(sheet_id: i64, heights: &[RowHeight]) -> Result<Vec<Value>, CoreError> {
+    heights
+        .iter()
+        .map(|height| {
+            if height.start_row < 1 || height.end_row < height.start_row {
+                return Err(CoreError::InvalidInput(format!(
+                    "Invalid row span {}:{}",
+                    height.start_row, height.end_row
+                )));
+            }
+            Ok(json!({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": height.start_row - 1,
+                        "endIndex": height.end_row,
+                    },
+                    "properties": { "pixelSize": height.pixels },
                     "fields": "pixelSize",
                 }
             }))
@@ -2113,10 +2174,19 @@ fn parse_cell_style(column: &str, effective_format: &Value) -> CellStyle {
         column: column.to_string(),
         bold: text["bold"].as_bool().filter(|bold| *bold),
         italic: text["italic"].as_bool().filter(|italic| *italic),
+        underline: text["underline"].as_bool().filter(|underline| *underline),
+        strikethrough: text["strikethrough"].as_bool().filter(|strike| *strike),
+        font_family: text["fontFamily"]
+            .as_str()
+            .filter(|family| !family.is_empty())
+            .map(str::to_string),
         font_size: text["fontSize"].as_i64(),
         font_color: google_color_to_hex(&text["foregroundColor"]),
         background_color: google_color_to_hex(&effective_format["backgroundColor"]),
         horizontal_alignment: effective_format["horizontalAlignment"]
+            .as_str()
+            .map(str::to_string),
+        vertical_alignment: effective_format["verticalAlignment"]
             .as_str()
             .map(str::to_string),
         number_format: effective_format["numberFormat"]["pattern"]
@@ -2187,6 +2257,9 @@ fn formats_fields_mask(fields: &FormatFields, source: FormatSource) -> String {
         (fields.bold, "bold"),
         (fields.italic, "italic"),
         (fields.strikethrough, "strikethrough"),
+        (fields.underline, "underline"),
+        (fields.font_family, "fontFamily"),
+        (fields.font_size, "fontSize"),
     ] {
         if set {
             text_parts.push(name);
@@ -2195,6 +2268,9 @@ fn formats_fields_mask(fields: &FormatFields, source: FormatSource) -> String {
     let mut format_parts = Vec::new();
     if fields.background {
         format_parts.push("backgroundColor,backgroundColorStyle".to_string());
+    }
+    if fields.vertical_alignment {
+        format_parts.push("verticalAlignment".to_string());
     }
     if !text_parts.is_empty() {
         format_parts.push(format!("textFormat({})", text_parts.join(",")));
@@ -2285,6 +2361,16 @@ fn cell_sample(cell: &Value, format_key: &str, theme: &HashMap<String, String>) 
         bold: flag("bold"),
         italic: flag("italic"),
         strikethrough: flag("strikethrough"),
+        underline: flag("underline"),
+        font_family: text["fontFamily"]
+            .as_str()
+            .filter(|family| !family.is_empty())
+            .map(str::to_string),
+        font_size: text["fontSize"].as_i64(),
+        vertical_alignment: format["verticalAlignment"]
+            .as_str()
+            .filter(|align| !align.is_empty())
+            .map(str::to_string),
         value: cell["formattedValue"]
             .as_str()
             .unwrap_or_default()
@@ -2348,7 +2434,7 @@ fn style_column_widths(column_metadata: &Value, used: usize) -> Vec<ColumnWidth>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::HorizontalAlignment;
+    use crate::types::{HorizontalAlignment, MergeKind, MergeRange, VerticalAlignment};
     use serde_json::json;
 
     fn header(names: &[&str]) -> Vec<String> {
@@ -2837,10 +2923,14 @@ mod tests {
             range: range.to_string(),
             bold: None,
             italic: None,
+            underline: None,
+            strikethrough: None,
+            font_family: None,
             font_size: None,
             font_color: None,
             background_color: None,
             horizontal_alignment: None,
+            vertical_alignment: None,
             number_format: None,
             number_format_type: None,
             wrap: None,
@@ -3002,6 +3092,139 @@ mod tests {
 
         let empty = build_format_requests(0, &FormatPlan::default(), &[], false).expect("requests");
         assert!(empty.is_empty(), "an empty plan produces no requests");
+    }
+
+    #[test]
+    fn repeat_cell_request_writes_font_family_decoration_and_vertical_alignment() {
+        let format = CellFormat {
+            font_family: Some("Lexend".to_string()),
+            underline: Some(true),
+            strikethrough: Some(false),
+            vertical_alignment: Some(VerticalAlignment::Middle),
+            ..cell_format("A1:B1")
+        };
+        let request = repeat_cell_request(0, &format)
+            .expect("request")
+            .expect("some");
+        let repeat = &request["repeatCell"];
+        let text = &repeat["cell"]["userEnteredFormat"]["textFormat"];
+        assert_eq!(text["fontFamily"], "Lexend");
+        assert_eq!(text["underline"], true);
+        assert_eq!(text["strikethrough"], false);
+        assert_eq!(
+            repeat["cell"]["userEnteredFormat"]["verticalAlignment"],
+            "MIDDLE"
+        );
+        assert_eq!(
+            repeat["fields"],
+            "userEnteredFormat.textFormat.underline,userEnteredFormat.textFormat.strikethrough,\
+             userEnteredFormat.textFormat.fontFamily,userEnteredFormat.verticalAlignment"
+        );
+
+        let font_only = CellFormat {
+            font_family: Some("Roboto Mono".to_string()),
+            ..cell_format("A1")
+        };
+        let request = repeat_cell_request(0, &font_only)
+            .expect("request")
+            .expect("some");
+        assert_eq!(
+            request["repeatCell"]["fields"], "userEnteredFormat.textFormat.fontFamily",
+            "a font change leaves bold, size and color untouched"
+        );
+    }
+
+    #[test]
+    fn merges_map_their_type_and_run_after_unmerges_before_formats() {
+        let plan = FormatPlan {
+            formats: vec![CellFormat {
+                bold: Some(true),
+                ..cell_format("A1:F1")
+            }],
+            unmerges: vec!["A1:F3".to_string()],
+            merges: vec![
+                MergeRange {
+                    range: "A1:F1".to_string(),
+                    kind: MergeKind::All,
+                },
+                MergeRange {
+                    range: "A2:C3".to_string(),
+                    kind: MergeKind::Rows,
+                },
+                MergeRange {
+                    range: "E2:F3".to_string(),
+                    kind: MergeKind::Columns,
+                },
+            ],
+            row_heights: vec![
+                RowHeight {
+                    start_row: 1,
+                    end_row: 1,
+                    pixels: 48,
+                },
+                RowHeight {
+                    start_row: 5,
+                    end_row: 9,
+                    pixels: 24,
+                },
+            ],
+            column_widths: vec![ColumnWidth {
+                column: "A".to_string(),
+                pixels: 200,
+            }],
+            ..FormatPlan::default()
+        };
+        let requests = build_format_requests(4, &plan, &[], false).expect("requests");
+        let kinds: Vec<&str> = requests
+            .iter()
+            .map(|request| {
+                request
+                    .as_object()
+                    .and_then(|object| object.keys().next())
+                    .map(String::as_str)
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "unmergeCells",
+                "mergeCells",
+                "mergeCells",
+                "mergeCells",
+                "repeatCell",
+                "updateDimensionProperties",
+                "updateDimensionProperties",
+                "updateDimensionProperties",
+            ]
+        );
+        assert_eq!(
+            requests[0]["unmergeCells"]["range"],
+            json!({ "sheetId": 4, "startRowIndex": 0, "endRowIndex": 3, "startColumnIndex": 0, "endColumnIndex": 6 })
+        );
+        assert_eq!(requests[1]["mergeCells"]["mergeType"], "MERGE_ALL");
+        assert_eq!(
+            requests[1]["mergeCells"]["range"],
+            json!({ "sheetId": 4, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 6 })
+        );
+        assert_eq!(requests[2]["mergeCells"]["mergeType"], "MERGE_ROWS");
+        assert_eq!(requests[3]["mergeCells"]["mergeType"], "MERGE_COLUMNS");
+        assert_eq!(
+            requests[5]["updateDimensionProperties"]["range"]["dimension"],
+            "COLUMNS"
+        );
+        assert_eq!(
+            requests[6]["updateDimensionProperties"],
+            json!({
+                "range": { "sheetId": 4, "dimension": "ROWS", "startIndex": 0, "endIndex": 1 },
+                "properties": { "pixelSize": 48 },
+                "fields": "pixelSize",
+            })
+        );
+        assert_eq!(
+            requests[7]["updateDimensionProperties"]["range"],
+            json!({ "sheetId": 4, "dimension": "ROWS", "startIndex": 4, "endIndex": 9 })
+        );
     }
 
     fn list_validation(range: &str, values: &[&str]) -> DataValidation {
@@ -3391,6 +3614,41 @@ mod tests {
         let empty = parse_cell_style("A", &Value::Null);
         assert_eq!(empty.bold, None);
         assert_eq!(empty.background_color, None);
+        assert_eq!(empty.font_family, None);
+        assert_eq!(empty.vertical_alignment, None);
+    }
+
+    #[test]
+    fn parse_cell_style_reads_font_decoration_and_vertical_alignment() {
+        let effective = json!({
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+                "fontFamily": "Lexend",
+                "underline": true,
+                "strikethrough": false
+            }
+        });
+        let style = parse_cell_style("C", &effective);
+        assert_eq!(style.font_family.as_deref(), Some("Lexend"));
+        assert_eq!(style.underline, Some(true));
+        assert_eq!(style.strikethrough, None, "strikethrough false is omitted");
+        assert_eq!(style.vertical_alignment.as_deref(), Some("MIDDLE"));
+        let json = serde_json::to_value(&style).expect("serialize");
+        assert_eq!(json["fontFamily"], "Lexend");
+        assert_eq!(json["verticalAlignment"], "MIDDLE");
+        assert!(json.get("strikethrough").is_none());
+    }
+
+    #[test]
+    fn style_fields_mask_reads_the_new_style_properties() {
+        for key in [
+            "verticalAlignment",
+            "underline",
+            "strikethrough",
+            "fontFamily",
+        ] {
+            assert!(STYLE_FIELDS_MASK.contains(key), "{key} in the style mask");
+        }
     }
 
     #[test]
@@ -3515,11 +3773,24 @@ mod tests {
             bold: true,
             italic: true,
             strikethrough: true,
+            underline: true,
+            font_family: true,
+            font_size: true,
+            vertical_alignment: true,
             value: true,
         };
         assert_eq!(
             formats_fields_mask(&all, FormatSource::Effective),
-            "properties.spreadsheetTheme.themeColors,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(effectiveFormat(backgroundColor,backgroundColorStyle,textFormat(foregroundColor,foregroundColorStyle,bold,italic,strikethrough)),formattedValue))))"
+            "properties.spreadsheetTheme.themeColors,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(effectiveFormat(backgroundColor,backgroundColorStyle,verticalAlignment,textFormat(foregroundColor,foregroundColorStyle,bold,italic,strikethrough,underline,fontFamily,fontSize)),formattedValue))))"
+        );
+        let font = FormatFields {
+            font_family: true,
+            ..FormatFields::default()
+        };
+        assert_eq!(
+            formats_fields_mask(&font, FormatSource::UserEntered),
+            "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredFormat(textFormat(fontFamily))))))",
+            "a font read needs no theme"
         );
         let value_only = FormatFields {
             value: true,
@@ -3538,6 +3809,59 @@ mod tests {
         assert_eq!(formats_range_a1("Bob's", Some(&window)), "'Bob''s'!A1:OA95");
         let rows = parse_a1_range("5:9").unwrap();
         assert_eq!(formats_range_a1("T", Some(&rows)), "'T'!A5:ZZ9");
+    }
+
+    #[test]
+    fn format_samples_read_font_family_size_underline_and_vertical_alignment() {
+        let fields = FormatFields {
+            font_family: true,
+            font_size: true,
+            underline: true,
+            vertical_alignment: true,
+            ..FormatFields::default()
+        };
+        let body = json!({ "sheets": [{ "data": [{ "rowData": [
+            { "values": [
+                { "effectiveFormat": {
+                    "verticalAlignment": "TOP",
+                    "textFormat": { "fontFamily": "Lexend", "fontSize": 14, "underline": true, "bold": true }
+                } },
+                { "effectiveFormat": { "textFormat": { "fontFamily": "Arial", "fontSize": 10 } } },
+                {}
+            ] }
+        ] }] }] });
+        let cells = format_samples_from_body(&body, &formats_request(None, fields));
+        assert_eq!(cells[0][0].font_family.as_deref(), Some("Lexend"));
+        assert_eq!(cells[0][0].font_size, Some(14));
+        assert!(cells[0][0].underline);
+        assert!(!cells[0][0].bold, "unrequested bold is masked");
+        assert_eq!(cells[0][0].vertical_alignment.as_deref(), Some("TOP"));
+        assert_eq!(cells[0][1].font_family.as_deref(), Some("Arial"));
+        assert_eq!(cells[0][2], CellSample::default());
+
+        let grid = shape_format_grid(
+            "T".to_string(),
+            &formats_request(None, fields),
+            None,
+            None,
+            cells,
+        )
+        .expect("shape");
+        let output = super::super::formats::encode_formats(&grid, &fields, FormatSource::Effective);
+        let family = output.font_family.expect("fontFamily layer");
+        assert_eq!(
+            family.palette,
+            vec![None, Some("Lexend".to_string()), Some("Arial".to_string())]
+        );
+        assert_eq!(family.grid, vec!["1,2".to_string()]);
+        let size = output.font_size.expect("fontSize layer");
+        assert_eq!(size.palette, vec![None, Some(14), Some(10)]);
+        let underline = output.underline.expect("underline layer");
+        assert_eq!(underline.palette, vec![false, true]);
+        assert_eq!(underline.grid, vec!["1".to_string()]);
+        let vertical = output.vertical_alignment.expect("verticalAlignment layer");
+        assert_eq!(vertical.palette, vec![None, Some("TOP".to_string())]);
+        assert!(output.background.is_none(), "unrequested layers are absent");
     }
 
     #[test]

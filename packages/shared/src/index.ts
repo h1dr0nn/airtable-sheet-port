@@ -65,6 +65,8 @@ export type WriteAction =
 
 export type HorizontalAlignment = "LEFT" | "CENTER" | "RIGHT";
 
+export type VerticalAlignment = "TOP" | "MIDDLE" | "BOTTOM";
+
 export type NumberFormatType =
   | "TEXT"
   | "NUMBER"
@@ -82,10 +84,15 @@ export type CellFormat = {
   range: string;
   bold?: boolean;
   italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /** Any Google Sheets font name, e.g. "Lexend". */
+  fontFamily?: string;
   fontSize?: number;
   fontColor?: string;
   backgroundColor?: string;
   horizontalAlignment?: HorizontalAlignment;
+  verticalAlignment?: VerticalAlignment;
   numberFormat?: string;
   numberFormatType?: NumberFormatType;
   wrap?: boolean;
@@ -94,12 +101,21 @@ export type CellFormat = {
 
 export type ColumnWidth = { column: string; pixels: number };
 
+/** Row-height override over the 1-based inclusive rows startRow..endRow. */
+export type RowHeight = { startRow: number; endRow: number; pixels: number };
+
+/** A merge of an A1 range; only the top-left value is kept. */
+export type MergeRange = { range: string; type: "all" | "rows" | "columns" };
+
 /** A staged formatting change; also the agent-visible diff of a format change. */
 export type FormatPlan = {
   formats?: CellFormat[];
   freezeRows?: number;
   freezeColumns?: number;
   columnWidths?: ColumnWidth[];
+  rowHeights?: RowHeight[];
+  unmerges?: string[];
+  merges?: MergeRange[];
 };
 
 /** Update previews touching more than this many records are treated as bulk_update. */

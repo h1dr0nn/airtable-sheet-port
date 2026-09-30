@@ -269,6 +269,10 @@ fn masked_samples_keep_only_requested_properties() {
         bold: true,
         italic: true,
         strikethrough: true,
+        underline: true,
+        font_family: Some("Lexend".to_string()),
+        font_size: Some(12),
+        vertical_alignment: Some("MIDDLE".to_string()),
         value: "v".to_string(),
     };
     let masked = full.clone().masked(&FormatFields {
@@ -281,6 +285,30 @@ fn masked_samples_keep_only_requested_properties() {
             italic: true,
             ..CellSample::default()
         }
+    );
+    let font = full.clone().masked(&FormatFields {
+        font_family: true,
+        vertical_alignment: true,
+        ..FormatFields::default()
+    });
+    assert_eq!(
+        font,
+        CellSample {
+            font_family: Some("Lexend".to_string()),
+            vertical_alignment: Some("MIDDLE".to_string()),
+            ..CellSample::default()
+        }
+    );
+    assert_eq!(
+        FormatFields {
+            underline: true,
+            font_family: true,
+            font_size: true,
+            vertical_alignment: true,
+            ..FormatFields::default()
+        }
+        .names(),
+        vec!["underline", "fontFamily", "fontSize", "verticalAlignment"]
     );
     assert_eq!(
         FormatFields {

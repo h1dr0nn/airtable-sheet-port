@@ -305,10 +305,14 @@ fn cell_format_arg(range: &str) -> CellFormatArg {
         range: range.to_string(),
         bold: None,
         italic: None,
+        underline: None,
+        strikethrough: None,
+        font_family: None,
         font_size: None,
         font_color: None,
         background_color: None,
         horizontal_alignment: None,
+        vertical_alignment: None,
         number_format: None,
         number_format_type: None,
         wrap: None,
@@ -451,6 +455,176 @@ fn format_spec_enforces_numeric_bounds() {
         ..empty_spec()
     };
     assert!(ok_width.to_plan().is_ok());
+}
+
+fn spec_error(spec: FormatSpec) -> String {
+    spec.to_plan().expect_err("invalid spec").to_string()
+}
+
+#[test]
+fn format_spec_validates_font_family_and_vertical_alignment() {
+    let bad_vertical = spec_error(FormatSpec {
+        formats: vec![CellFormatArg {
+            vertical_alignment: Some("CENTER".to_string()),
+            ..cell_format_arg("A1")
+        }],
+        ..empty_spec()
+    });
+    assert!(
+        bad_vertical.contains("formats[0].verticalAlignment must be one of TOP, MIDDLE, BOTTOM"),
+        "{bad_vertical}"
+    );
+
+    for family in [String::new(), "   ".to_string(), "x".repeat(101)] {
+        let error = spec_error(FormatSpec {
+            formats: vec![CellFormatArg {
+                font_family: Some(family.clone()),
+                ..cell_format_arg("A1")
+            }],
+            ..empty_spec()
+        });
+        assert!(
+            error.contains("formats[0].fontFamily must be 1 to 100 characters"),
+            "{family:?}: {error}"
+        );
+    }
+
+    let plan = FormatSpec {
+        formats: vec![CellFormatArg {
+            font_family: Some("Lexend".to_string()),
+            underline: Some(true),
+            strikethrough: Some(false),
+            vertical_alignment: Some("middle".to_string()),
+            ..cell_format_arg("A1:B1")
+        }],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect("valid");
+    let format = &plan.formats[0];
+    assert_eq!(format.font_family.as_deref(), Some("Lexend"));
+    assert_eq!(format.underline, Some(true));
+    assert_eq!(format.strikethrough, Some(false));
+    assert_eq!(
+        format.vertical_alignment,
+        Some(sheet_port_core::types::VerticalAlignment::Middle)
+    );
+    let diff = serde_json::to_value(&plan).expect("serialize");
+    assert_eq!(diff["formats"][0]["fontFamily"], "Lexend");
+    assert_eq!(diff["formats"][0]["verticalAlignment"], "MIDDLE");
+}
+
+fn merge_arg(range: &str, kind: Option<&str>) -> MergeArg {
+    MergeArg {
+        range: range.to_string(),
+        kind: kind.map(str::to_string),
+    }
+}
+
+#[test]
+fn format_spec_validates_merges_and_unmerges() {
+    let bad_type = spec_error(FormatSpec {
+        merges: vec![merge_arg("A1:F1", Some("diagonal"))],
+        ..empty_spec()
+    });
+    assert!(
+        bad_type.contains("merges[0].type must be one of all, rows, columns"),
+        "{bad_type}"
+    );
+    let bad_range = spec_error(FormatSpec {
+        merges: vec![merge_arg("A1:??", None)],
+        ..empty_spec()
+    });
+    assert!(bad_range.contains("merges[0].range"), "{bad_range}");
+    let bad_unmerge = spec_error(FormatSpec {
+        unmerges: vec!["Tab!A1:B2".to_string()],
+        ..empty_spec()
+    });
+    assert!(bad_unmerge.contains("unmerges[0]"), "{bad_unmerge}");
+    let too_many = spec_error(FormatSpec {
+        merges: (0..101).map(|_| merge_arg("A1:B1", None)).collect(),
+        ..empty_spec()
+    });
+    assert!(too_many.contains("at most 100"), "{too_many}");
+
+    let plan = FormatSpec {
+        merges: vec![merge_arg("A1:F1", None), merge_arg("A2:C4", Some("ROWS"))],
+        unmerges: vec!["H1:J2".to_string()],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect("merges alone are a plan");
+    assert_eq!(plan.merges[0].kind, MergeKind::All, "type defaults to all");
+    assert_eq!(plan.merges[1].kind, MergeKind::Rows);
+    let diff = serde_json::to_value(&plan).expect("serialize");
+    assert_eq!(
+        diff["merges"][0],
+        serde_json::json!({ "range": "A1:F1", "type": "all" })
+    );
+    assert_eq!(diff["unmerges"], serde_json::json!(["H1:J2"]));
+}
+
+fn row_height_arg(row: Option<i64>, rows: Option<&str>, pixels: i64) -> RowHeightArg {
+    RowHeightArg {
+        row,
+        rows: rows.map(str::to_string),
+        pixels,
+    }
+}
+
+#[test]
+fn format_spec_validates_row_heights() {
+    let zero = spec_error(FormatSpec {
+        row_heights: vec![row_height_arg(Some(0), None, 40)],
+        ..empty_spec()
+    });
+    assert!(
+        zero.contains("rowHeights[0].row must be a 1-based row"),
+        "{zero}"
+    );
+    let both = spec_error(FormatSpec {
+        row_heights: vec![row_height_arg(Some(1), Some("2:3"), 40)],
+        ..empty_spec()
+    });
+    assert!(both.contains("exactly one of row or rows"), "{both}");
+    let neither = spec_error(FormatSpec {
+        row_heights: vec![row_height_arg(None, None, 40)],
+        ..empty_spec()
+    });
+    assert!(neither.contains("exactly one of row or rows"), "{neither}");
+    for rows in ["A1:B2", "B:C", "x"] {
+        let error = spec_error(FormatSpec {
+            row_heights: vec![row_height_arg(None, Some(rows), 40)],
+            ..empty_spec()
+        });
+        assert!(error.contains("rowHeights[0].rows"), "{rows}: {error}");
+    }
+    let tall = spec_error(FormatSpec {
+        row_heights: vec![row_height_arg(Some(1), None, 2001)],
+        ..empty_spec()
+    });
+    assert!(
+        tall.contains("rowHeights[0].pixels must be between 2 and 2000"),
+        "{tall}"
+    );
+
+    let plan = FormatSpec {
+        row_heights: vec![
+            row_height_arg(Some(1), None, 48),
+            row_height_arg(None, Some("5:9"), 24),
+        ],
+        ..empty_spec()
+    }
+    .to_plan()
+    .expect("row heights alone are a plan");
+    assert_eq!(
+        (plan.row_heights[0].start_row, plan.row_heights[0].end_row),
+        (1, 1)
+    );
+    assert_eq!(
+        (plan.row_heights[1].start_row, plan.row_heights[1].end_row),
+        (5, 9)
+    );
 }
 
 fn list_arg(range: &str, values: Option<Vec<&str>>) -> ValidationArg {

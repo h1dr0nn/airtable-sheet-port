@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Fonts, merges and row heights in `format_table` and `append_records`. Each `formats`
+  entry takes `fontFamily` (any Google Sheets font, such as "Lexend", "Inter" or
+  "Roboto Mono"), `underline`, `strikethrough` and `verticalAlignment`
+  (`TOP`/`MIDDLE`/`BOTTOM`); only the properties you set change. New top-level
+  `merges` (`[{ range, type?: "all" | "rows" | "columns" }]`), `unmerges` (`[range]`) and
+  `rowHeights` (`[{ row } | { rows: "5:9" }, pixels]`), at most 100 each. Unmerges run
+  before merges, and merges before cell formats. Merging cells that hold values keeps
+  only the top-left value. Document-style sheets no longer need an .xlsx fallback.
+- `get_table_style` cell styles report `fontFamily`, `underline`, `strikethrough` and
+  `verticalAlignment`; `read_formats` takes the fields `underline`, `fontFamily`,
+  `fontSize` and `verticalAlignment`, palette-encoded like the others.
+
 ## [2.3.0] - 2026-09-30
 
 ### Added

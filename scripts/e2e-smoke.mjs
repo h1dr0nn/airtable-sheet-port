@@ -160,18 +160,21 @@ try {
   const byName = Object.fromEntries(tools.result.tools.map((t) => [t.name, t]));
   for (const name of ["format_table", "append_records"]) {
     const props = byName[name].inputSchema.properties;
-    for (const key of ["formats", "validations", "conditionalFormats", "replaceIntersecting"]) {
+    for (const key of ["formats", "validations", "conditionalFormats", "replaceIntersecting", "merges", "unmerges", "rowHeights"]) {
       assert.ok(key in props, `${name} schema lists ${key}`);
     }
     assert.ok("type" in props.validations.items.properties, `${name} validations items describe type`);
     assert.ok("when" in props.conditionalFormats.items.properties, `${name} conditionalFormats items describe when`);
     assert.ok("range" in props.formats.items.properties, `${name} formats items describe range`);
+    assert.ok("fontFamily" in props.formats.items.properties, `${name} formats items describe fontFamily`);
   }
   assert.match(byName.format_table.description, /validations/);
   assert.match(byName.format_table.description, /conditionalFormats/);
   assert.ok("headerRow" in byName.get_table_style.inputSchema.properties, "get_table_style takes headerRow");
   assert.match(instructions, /conditionalFormats/, "instructions mention color rules");
   assert.match(instructions, /read_formats/, "instructions point at read_formats");
+  assert.match(instructions, /fontFamily/, "instructions mention fonts");
+  assert.match(byName.format_table.description, /merges/);
   assert.match(instructions, /saveTo/, "instructions explain saveTo");
   for (const name of ["read_formats", "read_cells", "read_table"]) {
     assert.ok("saveTo" in byName[name].inputSchema.properties, `${name} takes saveTo`);
@@ -248,6 +251,32 @@ try {
   }));
   assert.ok(!intersecting.isError, `replaceIntersecting failed: ${intersecting.text}`);
   assert.equal(intersecting.json.change.diff.replaceIntersecting, true, "the flag reaches the plan");
+
+  // Fonts, merges, and row heights for document-style layouts.
+  const docStyle = toolJson(await callTool("format_table", {
+    sourceId: "mock-source", tableId: "customers", dryRun: true,
+    formats: [{ range: "A1:F1", fontFamily: "Lexend", fontSize: 18, underline: true, verticalAlignment: "MIDDLE" }],
+    merges: [{ range: "A1:F1" }, { range: "A2:C3", type: "rows" }],
+    unmerges: ["H1:J2"],
+    rowHeights: [{ row: 1, pixels: 48 }, { rows: "5:9", pixels: 24 }]
+  }));
+  assert.ok(!docStyle.isError, `format_table with fonts and merges failed: ${docStyle.text}`);
+  const docDiff = docStyle.json.change.diff;
+  assert.equal(docDiff.formats[0].fontFamily, "Lexend", "fontFamily reaches the diff");
+  assert.equal(docDiff.formats[0].verticalAlignment, "MIDDLE");
+  assert.equal(docDiff.formats[0].underline, true);
+  assert.deepEqual(docDiff.merges, [{ range: "A1:F1", type: "all" }, { range: "A2:C3", type: "rows" }]);
+  assert.deepEqual(docDiff.unmerges, ["H1:J2"]);
+  assert.deepEqual(docDiff.rowHeights, [
+    { startRow: 1, endRow: 1, pixels: 48 },
+    { startRow: 5, endRow: 9, pixels: 24 }
+  ]);
+  const badMerge = toolJson(await callTool("format_table", {
+    sourceId: "mock-source", tableId: "customers", dryRun: true,
+    merges: [{ range: "A1:B1", type: "diagonal" }]
+  }));
+  assert.ok(badMerge.isError, "an unknown merge type is rejected");
+  assert.match(badMerge.text, /merges\[0\]\.type must be one of all, rows, columns/);
 
   const badHeader = toolJson(await callTool("get_table_style", {
     sourceId: "mock-source", tableId: "customers", headerRow: 0

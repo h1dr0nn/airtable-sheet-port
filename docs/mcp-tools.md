@@ -19,9 +19,9 @@ writes an audit event (actor `agent`).
 | `read_formats` | read | `{ sourceId?, tableId, range?, fields?, source?, saveTo? }` |
 | `get_table_style` | read | `{ sourceId?, tableId, headerRow? }` |
 | `update_records` | write | `{ sourceId?, tableId, patches, dryRun? }` |
-| `append_records` | write | `{ sourceId?, tableId, records, formats?, freezeRows?, freezeColumns?, columnWidths?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
+| `append_records` | write | `{ sourceId?, tableId, records, formats?, merges?, unmerges?, freezeRows?, freezeColumns?, columnWidths?, rowHeights?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
 | `update_cells` | write | `{ sourceId?, tableId, cells, dryRun? }` |
-| `format_table` | write | `{ sourceId?, tableId, formats?, freezeRows?, freezeColumns?, columnWidths?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
+| `format_table` | write | `{ sourceId?, tableId, formats?, merges?, unmerges?, freezeRows?, freezeColumns?, columnWidths?, rowHeights?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
 | `create_spreadsheet` | write | `{ sourceId?, title, dryRun? }` |
 | `create_sheet` | write | `{ sourceId?, tableId, title, dryRun? }` |
 | `delete_sheet` | delete | `{ sourceId?, tableId, confirm: true, dryRun? }` |
@@ -422,10 +422,14 @@ Output shape: `{ "style": TableStyle }` where
 ```ts
 type CellStyle = {
   column: string;                                    // A1 column letter
-  bold?: boolean; italic?: boolean; fontSize?: number;
+  bold?: boolean; italic?: boolean;                  // present only when true
+  underline?: boolean; strikethrough?: boolean;      // present only when true
+  fontFamily?: string;                               // e.g. "Lexend", "Arial"
+  fontSize?: number;
   fontColor?: string;                                // "#rrggbb"
   backgroundColor?: string;                          // "#rrggbb"
   horizontalAlignment?: "LEFT" | "CENTER" | "RIGHT";
+  verticalAlignment?: "TOP" | "MIDDLE" | "BOTTOM";
   numberFormat?: string;                             // pattern
   wrap?: boolean;
   validation?: string;                               // "list", "checkbox", or another type in lowercase
@@ -463,7 +467,7 @@ Input schema:
 | `sourceId` | string | optional, min length 1 |
 | `tableId` | string | min length 1 |
 | `range` | string | optional A1 window, same syntax and rules as `read_cells` (`A1:OA95`, `A:C`, `5:9`, no sheet name); omitted = the whole tab |
-| `fields` | string[] | optional, non-empty subset of `background`, `fontColor`, `bold`, `italic`, `strikethrough`, `value`; default `["background"]` |
+| `fields` | string[] | optional, non-empty subset of `background`, `fontColor`, `bold`, `italic`, `strikethrough`, `underline`, `fontFamily`, `fontSize`, `verticalAlignment`, `value`; default `["background"]` |
 | `source` | string | optional, `effective` (default) or `userEntered` |
 | `saveTo` | string | optional file name, see [Large reads: `saveTo`](#large-reads-saveto) |
 
@@ -503,10 +507,16 @@ Output shape (compact JSON on one line, not pretty-printed; the grids here are s
 ```
 
 Encoding (each format field: `background`, `fontColor`, `bold`, `italic`,
-`strikethrough`, present only when requested):
+`strikethrough`, `underline`, `fontFamily`, `fontSize`, `verticalAlignment`, present
+only when requested):
 
-- `palette[0]` is always the default: `null` for colors (no fill, default text color),
-  `false` for the flags. Other entries follow in order of first appearance, row by row.
+- `palette[0]` is always the default: `null` for colors (no fill, default text color)
+  and for `fontFamily` (a font name such as `"Lexend"`), `fontSize` (points) and
+  `verticalAlignment` (`"TOP"`, `"MIDDLE"`, `"BOTTOM"`) when the cell's format carries
+  none; `false` for the flags. Other entries follow in order of first appearance, row
+  by row. In `effective` mode every formatted cell carries the sheet defaults (for
+  example `"Arial"`, `10`, `"BOTTOM"`), so `null` there means a cell with no format at
+  all; use `userEntered` to see only fonts set on the cell.
 - `counts[i]` is how many cells of the `rows x columns` window use `palette[i]`; the
   counts add up to `rows * columns`.
 - `grid` has exactly `rows` strings; `grid[r]` is sheet row `startRow + r`. A row is a
@@ -621,9 +631,9 @@ Example response:
 Purpose: append rows at the bottom of a tab and return the diff. On an empty tab the
 record field names seed the header row. Commits in the same call unless `dryRun` is set.
 
-Optionally, the append may carry a formatting plan (the same `formats`, `freezeRows`,
-`freezeColumns`, `columnWidths`, `validations`, `conditionalFormats`, and
-`replaceIntersecting` fields as `format_table`). It is applied in the SAME
+Optionally, the append may carry a formatting plan (the same `formats`, `merges`,
+`unmerges`, `freezeRows`, `freezeColumns`, `columnWidths`, `rowHeights`, `validations`,
+`conditionalFormats`, and `replaceIntersecting` fields as `format_table`). It is applied in the SAME
 commit, right after the rows land, so a fresh table is written and styled in one call.
 
 Input schema:
@@ -637,6 +647,9 @@ Input schema:
 | `freezeRows` | integer | optional, 0 to 100 |
 | `freezeColumns` | integer | optional, 0 to 100 |
 | `columnWidths` | array of `{ column, pixels }` | optional, at most 100 |
+| `rowHeights` | array of `RowHeight` (see `format_table`) | optional, at most 100 |
+| `merges` | array of `Merge` (see `format_table`) | optional, at most 100 |
+| `unmerges` | array of A1 ranges | optional, at most 100 |
 | `validations` | array of `Validation` (see `format_table`) | optional, at most 100 |
 | `conditionalFormats` | array of `ConditionalFormat` (see `format_table`) | optional, at most 100 |
 | `replaceIntersecting` | boolean | optional, default `false` (see `format_table`) |
@@ -715,9 +728,9 @@ escalates to `bulk_update` like a large record update).
 
 ## `format_table`
 
-Purpose: apply formatting to a tab. A plan is any mix of per-range cell formats, a
-freeze, column widths, native data validations (dropdowns and checkboxes), and
-conditional formats; only the properties you set are changed (partial formatting).
+Purpose: apply formatting to a tab. A plan is any mix of per-range cell formats (fonts
+included), merges and unmerges, a freeze, column widths, row heights, native data
+validations (dropdowns and checkboxes), and conditional formats; only the properties you set are changed (partial formatting).
 Commits in the same call unless `dryRun` is set.
 
 Input schema:
@@ -730,27 +743,48 @@ Input schema:
 | `freezeRows` | number (optional) | 0 to 100 |
 | `freezeColumns` | number (optional) | 0 to 100 |
 | `columnWidths` | array of `{ column: string, pixels: number (2..2000) }` | 0 to 100 items |
+| `rowHeights` | array of `RowHeight` (below) | 0 to 100 items |
+| `merges` | array of `Merge` (below) | 0 to 100 items |
+| `unmerges` | array of A1 range strings | 0 to 100 items |
 | `validations` | array of `Validation` (below) | 0 to 100 items |
 | `conditionalFormats` | array of `ConditionalFormat` (below) | 0 to 100 items |
 | `replaceIntersecting` | boolean | optional, default `false`; widens the rule replace (below) |
 | `dryRun` | boolean | optional, default `false` |
 
-At least one of `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `validations`,
-or `conditionalFormats` must be set.
+At least one of `formats`, `merges`, `unmerges`, `freezeRows`, `freezeColumns`,
+`columnWidths`, `rowHeights`, `validations`, or `conditionalFormats` must be set.
 
 ```ts
 type CellFormat = {
   range: string;                                     // A1 range, e.g. "A1:D1", "B:B", "2:2"
   bold?: boolean; italic?: boolean;
+  underline?: boolean; strikethrough?: boolean;
+  fontFamily?: string;                               // 1..100 chars, any Google Sheets font:
+                                                     // "Lexend", "Inter", "Roboto Mono"
   fontSize?: number;                                 // 1..400
   fontColor?: string;                                // "#rrggbb"
   backgroundColor?: string;                          // "#rrggbb"
   horizontalAlignment?: "LEFT" | "CENTER" | "RIGHT";
+  verticalAlignment?: "TOP" | "MIDDLE" | "BOTTOM";
   numberFormat?: string;                             // pattern, e.g. "#,##0", "yyyy-mm-dd"
   numberFormatType?:                                 // inferred from the pattern when omitted
     "TEXT" | "NUMBER" | "PERCENT" | "CURRENCY" | "DATE" | "TIME" | "DATE_TIME" | "SCIENTIFIC";
   wrap?: boolean;
   border?: "none" | "all" | "outer" | "bottom";
+};
+
+// mergeCells. type defaults to "all" (MERGE_ALL); "rows" is MERGE_ROWS (one
+// merge per row), "columns" is MERGE_COLUMNS (one per column).
+type Merge = {
+  range: string;                                     // A1 range, e.g. "A1:F1"
+  type?: "all" | "rows" | "columns";
+};
+
+// updateDimensionProperties on ROWS. Set exactly one of row or rows.
+type RowHeight = {
+  row?: number;                                      // 1-based row, >= 1
+  rows?: string;                                     // inclusive row span, e.g. "5:9"
+  pixels: number;                                    // 2..2000
 };
 
 // Native data validation (setDataValidation). Setting a rule replaces the
@@ -782,6 +816,23 @@ type ConditionalFormat = {
 };
 ```
 
+`fontFamily` is passed through as `textFormat.fontFamily`; Sheets accepts any font in
+its font list (the Google Fonts catalog). Each set property adds its own path to the
+`repeatCell` fields mask (`userEnteredFormat.textFormat.fontFamily`,
+`...textFormat.underline`, `...textFormat.strikethrough`,
+`userEnteredFormat.verticalAlignment`), so a font change leaves bold, size, and color
+alone.
+
+Request order within the one `batchUpdate`: `unmergeCells` for each `unmerges` range,
+then `mergeCells` for each `merges` entry, then cell formats and borders, validations,
+conditional formats, the freeze, column widths, and row heights. Formatting a merged
+range after the merge styles the merged cell (Sheets keeps the top-left cell's format).
+Merging cells that already hold values keeps only the top-left value and drops the
+rest, without a prompt (the same as merging in the Sheets UI), so merge banner rows
+whose other cells are empty. A merge that partially overlaps an existing merge fails;
+list that old range in `unmerges` first. In the diff, a merge always shows its `type`
+and a row height shows `{ startRow, endRow, pixels }` (1-based, inclusive).
+
 A `list` validation gives the native dropdown chip; `checkbox` gives native checkboxes
 (`strict` rejects other values). `values` and `showDropdown` are rejected on a checkbox.
 
@@ -804,8 +855,8 @@ A `formula` is sent as written, so write it in the spreadsheet's locale syntax (
 separators in comma-decimal locales).
 
 Output shape: as in "Writes". Diff shape (in `change.diff`): the plan itself (the
-`FormatPlan`: `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `validations`,
-`conditionalFormats`, `replaceIntersecting` with empty parts and a false flag omitted; validations show their effective `strict`
+`FormatPlan`: `formats`, `freezeRows`, `freezeColumns`, `columnWidths`, `rowHeights`,
+`unmerges`, `merges`, `validations`, `conditionalFormats`, `replaceIntersecting` with empty parts and a false flag omitted; validations show their effective `strict`
 and, for lists, `showDropdown`).
 
 Permission required: `write` (evaluated as the `format` action). Only the Google Sheets
@@ -815,6 +866,8 @@ House style: when laying out a fresh sheet or writing new data, freeze the heade
 make the header bold with a light neutral fill and a thin bottom border, give numeric and
 date columns a consistent `numberFormat`, and set `columnWidths` so nothing is clipped.
 When the sheet already has data or formatting, call `get_table_style` first and match it.
+In document-style sheets (GDD one-pagers, dashboards), merge title and banner rows across
+the content width and set their `rowHeights` instead of relying on text overflow.
 
 Example call:
 
@@ -827,6 +880,33 @@ Example call:
   ],
   "freezeRows": 1,
   "columnWidths": [{ "column": "A", "pixels": 220 }]
+}
+```
+
+Example call (document-style title banner in Lexend):
+
+```json
+{
+  "tableId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms:Overview",
+  "merges": [{ "range": "A1:F1" }],
+  "formats": [
+    { "range": "A1:F1", "fontFamily": "Lexend", "fontSize": 20, "bold": true, "verticalAlignment": "MIDDLE" },
+    { "range": "A2:F40", "fontFamily": "Lexend" }
+  ],
+  "rowHeights": [{ "row": 1, "pixels": 48 }, { "rows": "3:5", "pixels": 28 }]
+}
+```
+
+Resulting diff (`change.diff`):
+
+```json
+{
+  "formats": [
+    { "range": "A1:F1", "bold": true, "fontFamily": "Lexend", "fontSize": 20, "verticalAlignment": "MIDDLE" },
+    { "range": "A2:F40", "fontFamily": "Lexend" }
+  ],
+  "rowHeights": [{ "startRow": 1, "endRow": 1, "pixels": 48 }, { "startRow": 3, "endRow": 5, "pixels": 28 }],
+  "merges": [{ "range": "A1:F1", "type": "all" }]
 }
 ```
 

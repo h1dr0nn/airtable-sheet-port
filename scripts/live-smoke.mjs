@@ -111,17 +111,21 @@ try {
       { Name: "Alpha", Score: 10 },
       { Name: "Beta", Score: 20 }
     ],
-    formats: [{ range: "A1:B1", bold: true, backgroundColor: "#dde7f5" }],
+    formats: [{ range: "A1:B1", bold: true, backgroundColor: "#dde7f5", fontFamily: "Lexend" }],
+    merges: [{ range: "D1:E1" }],
+    rowHeights: [{ row: 1, pixels: 36 }],
     freezeRows: 1
   });
   assert.equal(appended.committed, true);
   assert.equal(appended.formatError ?? null, null, "bundled format applied");
   console.log("append_records + format ok");
 
-  const headerFormats = await tool("read_formats", { tableId: tab, range: "A1:B1", fields: ["background", "bold", "value"] });
+  const headerFormats = await tool("read_formats", { tableId: tab, range: "A1:B1", fields: ["background", "bold", "value", "fontFamily"] });
   assert.ok(headerFormats.background.palette.includes("#dde7f5"), `header fill read back: ${JSON.stringify(headerFormats.background)}`);
   assert.deepEqual(headerFormats.bold.palette, [false, true], "header bold read back");
   assert.deepEqual(headerFormats.value.grid[0], ["Name", "Score"]);
+  const firstFontIndex = Number((headerFormats.fontFamily.grid[0] || "0").split(",")[0].split("*")[0]);
+  assert.equal(headerFormats.fontFamily.palette[firstFontIndex], "Lexend", `A1 font read back: ${JSON.stringify(headerFormats.fontFamily)}`);
   console.log("read_formats ok");
 
   const read = await tool("read_table", { tableId: tab });
