@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `read_formats` MCP tool: reads the formatting of a whole tab or an A1 range in one
+  call (`background`, `fontColor`, `bold`, `italic`, `strikethrough`, and optionally
+  the formatted `value`), from the effective format (what the user sees, including
+  conditional formatting) or the user-entered one. The result stays small: one palette
+  per field plus a run-length row per sheet row (`"0*12,3*4,0,2"`), with per-entry
+  counts. Up to 250,000 cells per call. A 95 x 391 level-design tab now takes one call
+  instead of about 48 `get_table_style` calls.
+- `saveTo` on `read_formats`, `read_cells`, `read_table` and `read_formulas`: a bare
+  `.json` file name. The full result is written to the `exports` folder beside the app
+  database and the tool returns only `{ savedTo, bytes, summary }`, so large reads go to
+  a file the agent processes locally instead of into its context. With `saveTo`,
+  `read_formats` accepts up to 2,000,000 cells.
+
 ## [2.2.2] - 2026-09-25
 
 ### Added

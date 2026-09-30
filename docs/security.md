@@ -198,10 +198,12 @@ never as a raw schema failure.
 
 ## Tool Allowlist
 
-Exposed (18 tools, `docs/mcp-tools.md`):
+Exposed (19 tools, `docs/mcp-tools.md`):
 
 - list sources, spreadsheets and tabs; describe schema
-- bounded reads, formula reads, raw cell reads, text search, style reads
+- bounded reads, formula reads, raw cell reads, cell-format reads, text search, style reads
+- `saveTo` result files: a bare `.json` file name, written only inside the `exports`
+  directory beside the app database (never a caller-supplied path)
 - record updates, appends, cell writes, formatting, spreadsheet/tab creation, tab
   deletion (each staged as a change, committed unless `dryRun`)
 - commit staged changes

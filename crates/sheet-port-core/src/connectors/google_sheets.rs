@@ -5,9 +5,15 @@
 //! Tokens are obtained through the crate-private google module and never
 //! leave this crate.
 
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use super::formats::{
+    check_fetch_size, shape_format_grid, CellSample, FormatFields, FormatGrid, FormatSource,
+    FormatsRequest,
+};
 use super::{
     clamp_read_window, column_id_for_index, column_index_for_id, grid_window, js_string,
     parse_a1_range, window_a1, A1Range, GridWindow, TableConnector,
@@ -680,6 +686,60 @@ impl TableConnector for GoogleSheetsConnector {
         read_table_style_for(&token, &sheet, &range, header_row)
     }
 
+    /// Per-cell formats of one window via a single `spreadsheets.get` with
+    /// `includeGridData` and a fields mask trimmed to the requested fields
+    /// (docs/mcp-tools.md "read_formats"). The metadata read that resolves
+    /// the tab also gives its grid size, so an oversized window is refused
+    /// before the grid is fetched.
+    fn read_formats(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        request: &FormatsRequest,
+    ) -> Result<FormatGrid, CoreError> {
+        let token = google::access_token(conn, source_id)?;
+        let parsed = ParsedTableId::parse(table_id)?;
+        let meta = fetch_spreadsheet_meta(&token, &parsed.spreadsheet_id)?;
+        let sheet_id = resolve_sheet_id(&parsed, &meta)?;
+        let tab = meta
+            .sheets
+            .iter()
+            .find(|sheet| sheet.sheet_id == sheet_id)
+            .ok_or_else(|| {
+                CoreError::NotFound(format!(
+                    "Spreadsheet {} has no tab with gid {sheet_id}",
+                    parsed.spreadsheet_id
+                ))
+            })?;
+        check_fetch_size(
+            request.range.as_ref(),
+            tab.grid_rows,
+            tab.grid_cols,
+            request.max_cells,
+        )?;
+        let mut url = sheets_base_url(&parsed.spreadsheet_id)?;
+        url.query_pairs_mut()
+            .append_pair(
+                "ranges",
+                &formats_range_a1(&tab.title, request.range.as_ref()),
+            )
+            .append_pair("includeGridData", "true")
+            .append_pair(
+                "fields",
+                &formats_fields_mask(&request.fields, request.source),
+            );
+        let body = google::get_json(&token, url.as_str())?;
+        let cells = format_samples_from_body(&body, request);
+        shape_format_grid(
+            tab.title.clone(),
+            request,
+            Some(tab.grid_rows),
+            Some(tab.grid_cols),
+            cells,
+        )
+    }
+
     /// Applies a formatting plan through `spreadsheets.batchUpdate` (cell
     /// formats, header freeze, and column widths). Called only from the
     /// staged-change commit path.
@@ -929,15 +989,18 @@ struct SheetProperties {
     title: String,
     /// Tab order, left to right (`sheets[].properties.index`).
     index: i64,
+    /// Grid size (`gridProperties.rowCount` / `columnCount`); 0 when absent.
+    grid_rows: usize,
+    grid_cols: usize,
 }
 
-/// `GET {SHEETS_ENDPOINT}/{id}?fields=properties(title,locale,timeZone),sheets.properties(sheetId,title,index)`.
+/// `GET {SHEETS_ENDPOINT}/{id}?fields=properties(title,locale,timeZone),sheets.properties(sheetId,title,index,gridProperties(rowCount,columnCount))`.
 /// Fixed endpoint + token; the id only selects the resource.
 fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<SpreadsheetMeta, CoreError> {
     let mut url = sheets_base_url(spreadsheet_id)?;
     url.query_pairs_mut().append_pair(
         "fields",
-        "properties(title,locale,timeZone),sheets.properties(sheetId,title,index)",
+        "properties(title,locale,timeZone),sheets.properties(sheetId,title,index,gridProperties(rowCount,columnCount))",
     );
     let body = google::get_json(token, url.as_str())?;
     let title = body["properties"]["title"]
@@ -956,6 +1019,8 @@ fn fetch_spreadsheet_meta(token: &str, spreadsheet_id: &str) -> Result<Spreadshe
                         title: properties["title"].as_str()?.to_string(),
                         // The first tab may omit index in the API response.
                         index: properties["index"].as_i64().unwrap_or(0),
+                        grid_rows: grid_dimension(&properties["gridProperties"]["rowCount"]),
+                        grid_cols: grid_dimension(&properties["gridProperties"]["columnCount"]),
                     })
                 })
                 .collect()
@@ -2082,6 +2147,189 @@ fn google_color_to_hex(color: &Value) -> Option<String> {
     ))
 }
 
+/// A non-negative grid dimension or offset from an API body (absent or bad
+/// = 0, since the API omits zero values).
+fn grid_dimension(value: &Value) -> usize {
+    value
+        .as_u64()
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(0)
+}
+
+/// The `ranges` value of a `read_formats` read: the quoted tab title alone
+/// (the whole tab) or qualified with the window (see [`window_a1`]).
+fn formats_range_a1(title: &str, range: Option<&A1Range>) -> String {
+    match range {
+        Some(range) => format!("{}!{}", quote_sheet_title(title), window_a1(range)),
+        None => quote_sheet_title(title),
+    }
+}
+
+/// The JSON key of the chosen format source in a `CellData`.
+fn format_source_key(source: FormatSource) -> &'static str {
+    match source {
+        FormatSource::Effective => "effectiveFormat",
+        FormatSource::UserEntered => "userEnteredFormat",
+    }
+}
+
+/// The `fields` mask of a `read_formats` grid read: only the requested
+/// properties of the chosen format (`effectiveFormat` or
+/// `userEnteredFormat`), `formattedValue` when values are requested, the data
+/// block's start offsets, and the spreadsheet theme when a color may be a
+/// theme reference.
+fn formats_fields_mask(fields: &FormatFields, source: FormatSource) -> String {
+    let mut text_parts = Vec::new();
+    if fields.font_color {
+        text_parts.push("foregroundColor,foregroundColorStyle");
+    }
+    for (set, name) in [
+        (fields.bold, "bold"),
+        (fields.italic, "italic"),
+        (fields.strikethrough, "strikethrough"),
+    ] {
+        if set {
+            text_parts.push(name);
+        }
+    }
+    let mut format_parts = Vec::new();
+    if fields.background {
+        format_parts.push("backgroundColor,backgroundColorStyle".to_string());
+    }
+    if !text_parts.is_empty() {
+        format_parts.push(format!("textFormat({})", text_parts.join(",")));
+    }
+    let mut value_parts = Vec::new();
+    if !format_parts.is_empty() {
+        value_parts.push(format!(
+            "{}({})",
+            format_source_key(source),
+            format_parts.join(",")
+        ));
+    }
+    if fields.value {
+        value_parts.push("formattedValue".to_string());
+    }
+    let sheets = format!(
+        "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values({}))))",
+        value_parts.join(",")
+    );
+    if fields.any_color() {
+        format!("properties.spreadsheetTheme.themeColors,{sheets}")
+    } else {
+        sheets
+    }
+}
+
+/// The window-anchored cells of a `read_formats` grid read. The API omits
+/// zero values, so a missing `startRow`/`startColumn` is 0 and a missing
+/// color component is 0; rows and cells may be missing or short (a missing
+/// cell is a default cell). Cells above or left of the window are dropped.
+fn format_samples_from_body(body: &Value, request: &FormatsRequest) -> Vec<Vec<CellSample>> {
+    let theme = theme_colors(body);
+    let window_row = request.range.and_then(|range| range.start_row).unwrap_or(0);
+    let window_col = request.range.and_then(|range| range.start_col).unwrap_or(0);
+    let format_key = format_source_key(request.source);
+    let mut rows: Vec<Vec<CellSample>> = Vec::new();
+    let Some(blocks) = body["sheets"][0]["data"].as_array() else {
+        return rows;
+    };
+    for block in blocks {
+        let start_row = grid_dimension(&block["startRow"]);
+        let start_col = grid_dimension(&block["startColumn"]);
+        let Some(row_data) = block["rowData"].as_array() else {
+            continue;
+        };
+        for (offset, row) in row_data.iter().enumerate() {
+            let Some(row_index) = (start_row + offset).checked_sub(window_row) else {
+                continue;
+            };
+            let Some(values) = row["values"].as_array() else {
+                continue;
+            };
+            let mut samples: Vec<CellSample> = Vec::new();
+            for (position, cell) in values.iter().enumerate() {
+                let Some(col_index) = (start_col + position).checked_sub(window_col) else {
+                    continue;
+                };
+                if samples.len() <= col_index {
+                    samples.resize(col_index + 1, CellSample::default());
+                }
+                samples[col_index] = cell_sample(cell, format_key, &theme).masked(&request.fields);
+            }
+            if rows.len() <= row_index {
+                rows.resize(row_index + 1, Vec::new());
+            }
+            rows[row_index] = samples;
+        }
+    }
+    rows
+}
+
+/// One `CellData` as a [`CellSample`] (every property; the caller masks).
+fn cell_sample(cell: &Value, format_key: &str, theme: &HashMap<String, String>) -> CellSample {
+    let format = &cell[format_key];
+    let text = &format["textFormat"];
+    let flag = |key: &str| text[key].as_bool().unwrap_or(false);
+    CellSample {
+        background: styled_color_to_hex(
+            &format["backgroundColor"],
+            &format["backgroundColorStyle"],
+            theme,
+        ),
+        font_color: styled_color_to_hex(
+            &text["foregroundColor"],
+            &text["foregroundColorStyle"],
+            theme,
+        ),
+        bold: flag("bold"),
+        italic: flag("italic"),
+        strikethrough: flag("strikethrough"),
+        value: cell["formattedValue"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
+/// A color from a `*ColorStyle` (which takes precedence) or the plain,
+/// deprecated color field, as `#rrggbb`. A theme reference is looked up in
+/// the spreadsheet theme; an unresolved one falls back to the plain field.
+/// `None` when neither is present (the default).
+fn styled_color_to_hex(
+    plain: &Value,
+    style: &Value,
+    theme: &HashMap<String, String>,
+) -> Option<String> {
+    if style["rgbColor"].is_object() {
+        return google_color_to_hex(&style["rgbColor"]);
+    }
+    if let Some(color) = style["themeColor"]
+        .as_str()
+        .and_then(|name| theme.get(name))
+    {
+        return Some(color.clone());
+    }
+    google_color_to_hex(plain)
+}
+
+/// The spreadsheet theme's colors by type (`ACCENT1` -> `#rrggbb`).
+fn theme_colors(body: &Value) -> HashMap<String, String> {
+    body["properties"]["spreadsheetTheme"]["themeColors"]
+        .as_array()
+        .map(|colors| {
+            colors
+                .iter()
+                .filter_map(|entry| {
+                    let name = entry["colorType"].as_str()?;
+                    let hex = google_color_to_hex(&entry["color"]["rgbColor"])?;
+                    Some((name.to_string(), hex))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Per-column pixel widths for the used columns, from the style read's
 /// `columnMetadata` (skipping columns with no reported width).
 fn style_column_widths(column_metadata: &Value, used: usize) -> Vec<ColumnWidth> {
@@ -2507,11 +2755,15 @@ mod tests {
                     sheet_id: 0,
                     title: "Sheet1".to_string(),
                     index: 0,
+                    grid_rows: 1000,
+                    grid_cols: 26,
                 },
                 SheetProperties {
                     sheet_id: 987,
                     title: "Data".to_string(),
                     index: 1,
+                    grid_rows: 1000,
+                    grid_cols: 26,
                 },
             ],
         };
@@ -3167,5 +3419,198 @@ mod tests {
         ];
         assert_eq!(used_style_columns(&header), 2);
         assert_eq!(used_style_columns(&[]), 0);
+    }
+    fn formats_request(range: Option<&str>, fields: FormatFields) -> FormatsRequest {
+        FormatsRequest {
+            range: range.map(|range| parse_a1_range(range).expect("range")),
+            fields,
+            source: FormatSource::Effective,
+            max_cells: 1_000,
+        }
+    }
+
+    #[test]
+    fn colors_convert_float_rgb_and_color_styles_to_hex() {
+        let theme = HashMap::from([("ACCENT1".to_string(), "#4285f4".to_string())]);
+        let none = Value::Null;
+        // Zero components are omitted by the API: {} is black.
+        assert_eq!(
+            styled_color_to_hex(&json!({}), &none, &theme),
+            Some("#000000".to_string())
+        );
+        assert_eq!(
+            styled_color_to_hex(
+                &json!({ "red": 0.8666667, "green": 0.90588236, "blue": 0.9607843 }),
+                &none,
+                &theme
+            ),
+            Some("#dde7f5".to_string())
+        );
+        // Out-of-range components clamp.
+        assert_eq!(
+            styled_color_to_hex(&json!({ "red": 2.0, "green": -1.0 }), &none, &theme),
+            Some("#ff0000".to_string())
+        );
+        // The style wins over the plain field; a theme reference resolves.
+        assert_eq!(
+            styled_color_to_hex(
+                &json!({ "red": 1.0 }),
+                &json!({ "rgbColor": { "blue": 1.0 } }),
+                &theme
+            ),
+            Some("#0000ff".to_string())
+        );
+        assert_eq!(
+            styled_color_to_hex(&none, &json!({ "themeColor": "ACCENT1" }), &theme),
+            Some("#4285f4".to_string())
+        );
+        // An unknown theme color falls back to the plain field, then to none.
+        assert_eq!(
+            styled_color_to_hex(
+                &json!({ "green": 1.0 }),
+                &json!({ "themeColor": "ACCENT6" }),
+                &theme
+            ),
+            Some("#00ff00".to_string())
+        );
+        assert_eq!(styled_color_to_hex(&none, &none, &theme), None);
+    }
+
+    #[test]
+    fn theme_colors_are_read_from_the_spreadsheet_properties() {
+        let body = json!({ "properties": { "spreadsheetTheme": { "themeColors": [
+            { "colorType": "TEXT", "color": { "rgbColor": {} } },
+            { "colorType": "ACCENT1", "color": { "rgbColor": { "red": 1.0 } } },
+            { "colorType": "LINK" }
+        ] } } });
+        let theme = theme_colors(&body);
+        assert_eq!(theme.get("TEXT").map(String::as_str), Some("#000000"));
+        assert_eq!(theme.get("ACCENT1").map(String::as_str), Some("#ff0000"));
+        assert!(!theme.contains_key("LINK"));
+    }
+
+    #[test]
+    fn formats_fields_mask_requests_only_the_needed_fields() {
+        let background = FormatFields {
+            background: true,
+            ..FormatFields::default()
+        };
+        assert_eq!(
+            formats_fields_mask(&background, FormatSource::Effective),
+            "properties.spreadsheetTheme.themeColors,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(effectiveFormat(backgroundColor,backgroundColorStyle)))))"
+        );
+        let text = FormatFields {
+            bold: true,
+            strikethrough: true,
+            value: true,
+            ..FormatFields::default()
+        };
+        assert_eq!(
+            formats_fields_mask(&text, FormatSource::UserEntered),
+            "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredFormat(textFormat(bold,strikethrough)),formattedValue))))"
+        );
+        let all = FormatFields {
+            background: true,
+            font_color: true,
+            bold: true,
+            italic: true,
+            strikethrough: true,
+            value: true,
+        };
+        assert_eq!(
+            formats_fields_mask(&all, FormatSource::Effective),
+            "properties.spreadsheetTheme.themeColors,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(effectiveFormat(backgroundColor,backgroundColorStyle,textFormat(foregroundColor,foregroundColorStyle,bold,italic,strikethrough)),formattedValue))))"
+        );
+        let value_only = FormatFields {
+            value: true,
+            ..FormatFields::default()
+        };
+        assert_eq!(
+            formats_fields_mask(&value_only, FormatSource::Effective),
+            "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue))))"
+        );
+    }
+
+    #[test]
+    fn formats_range_quotes_the_tab_and_adds_the_window() {
+        assert_eq!(formats_range_a1("Level 1", None), "'Level 1'");
+        let window = parse_a1_range("A1:OA95").unwrap();
+        assert_eq!(formats_range_a1("Bob's", Some(&window)), "'Bob''s'!A1:OA95");
+        let rows = parse_a1_range("5:9").unwrap();
+        assert_eq!(formats_range_a1("T", Some(&rows)), "'T'!A5:ZZ9");
+    }
+
+    #[test]
+    fn format_samples_handle_omitted_offsets_and_ragged_rows() {
+        let fields = FormatFields {
+            background: true,
+            bold: true,
+            value: true,
+            ..FormatFields::default()
+        };
+        // No startRow/startColumn (0), an empty row object, a row without
+        // values, a short row, and a cell without effectiveFormat.
+        let body = json!({ "sheets": [{ "data": [{ "rowData": [
+            { "values": [
+                { "effectiveFormat": { "backgroundColor": { "red": 1.0 }, "textFormat": { "bold": true } }, "formattedValue": "F" },
+                {},
+                { "effectiveFormat": { "backgroundColorStyle": { "rgbColor": {} } } }
+            ] },
+            {},
+            { "values": [{ "formattedValue": "x" }] }
+        ] }] }] });
+        let cells = format_samples_from_body(&body, &formats_request(None, fields));
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0].len(), 3);
+        assert_eq!(cells[0][0].background.as_deref(), Some("#ff0000"));
+        assert!(cells[0][0].bold);
+        assert_eq!(cells[0][0].value, "F");
+        assert_eq!(cells[0][1], CellSample::default());
+        assert_eq!(cells[0][2].background.as_deref(), Some("#000000"));
+        assert!(cells[1].is_empty());
+        assert_eq!(cells[2][0].value, "x");
+        assert_eq!(cells[2][0].background, None);
+
+        let grid = shape_format_grid(
+            "T".to_string(),
+            &formats_request(None, fields),
+            None,
+            None,
+            cells,
+        )
+        .expect("shape");
+        assert_eq!((grid.rows, grid.columns), (3, 3));
+    }
+
+    #[test]
+    fn format_samples_are_anchored_at_the_window() {
+        let fields = FormatFields {
+            background: true,
+            ..FormatFields::default()
+        };
+        let body = json!({ "sheets": [{ "data": [{ "startRow": 4, "startColumn": 2, "rowData": [
+            { "values": [{ "effectiveFormat": { "backgroundColor": { "blue": 1.0 } } }] },
+            { "values": [{}, { "userEnteredFormat": { "backgroundColor": {} }, "effectiveFormat": { "backgroundColor": { "green": 1.0 } } }] }
+        ] }] }] });
+        let request = formats_request(Some("C5:E9"), fields);
+        let cells = format_samples_from_body(&body, &request);
+        assert_eq!(cells[0][0].background.as_deref(), Some("#0000ff"));
+        assert_eq!(cells[1][1].background.as_deref(), Some("#00ff00"));
+
+        let user = FormatsRequest {
+            source: FormatSource::UserEntered,
+            ..request.clone()
+        };
+        let cells = format_samples_from_body(&body, &user);
+        assert_eq!(cells[0][0].background, None);
+        assert_eq!(cells[1][1].background.as_deref(), Some("#000000"));
+
+        // A block starting above/left of the window drops the outside cells.
+        let shifted = formats_request(Some("D6:E9"), fields);
+        let cells = format_samples_from_body(&body, &shifted);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0][0].background.as_deref(), Some("#00ff00"));
+
+        assert!(format_samples_from_body(&json!({}), &request).is_empty());
     }
 }

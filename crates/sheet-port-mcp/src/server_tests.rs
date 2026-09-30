@@ -146,3 +146,27 @@ fn client_identity_trims_caps_and_drops_blank_values() {
     let long = client_identity(&"x".repeat(500), "1");
     assert_eq!(long.client_name.map(|name| name.len()), Some(128));
 }
+
+#[test]
+fn read_formats_schema_lists_fields_and_sources_inline() {
+    let schema = input_schema("read_formats");
+    let text = schema.to_string();
+    assert!(!text.contains("$ref") && !text.contains("$defs"), "{text}");
+    for value in [
+        "background",
+        "fontColor",
+        "bold",
+        "italic",
+        "strikethrough",
+        "value",
+        "effective",
+        "userEntered",
+    ] {
+        assert!(
+            text.contains(&format!("\"{value}\"")),
+            "schema lacks {value}"
+        );
+    }
+    assert!(schema["properties"]["saveTo"]["description"].is_string());
+    assert_eq!(schema["required"], serde_json::json!(["tableId"]));
+}

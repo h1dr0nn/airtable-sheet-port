@@ -118,6 +118,12 @@ try {
   assert.equal(appended.formatError ?? null, null, "bundled format applied");
   console.log("append_records + format ok");
 
+  const headerFormats = await tool("read_formats", { tableId: tab, range: "A1:B1", fields: ["background", "bold", "value"] });
+  assert.ok(headerFormats.background.palette.includes("#dde7f5"), `header fill read back: ${JSON.stringify(headerFormats.background)}`);
+  assert.deepEqual(headerFormats.bold.palette, [false, true], "header bold read back");
+  assert.deepEqual(headerFormats.value.grid[0], ["Name", "Score"]);
+  console.log("read_formats ok");
+
   const read = await tool("read_table", { tableId: tab });
   assert.deepEqual(read.records.map((r) => r.fields.Name), ["Alpha", "Beta"]);
   console.log("read_table ok");
@@ -137,6 +143,19 @@ try {
   assert.equal(byRow[3].B, "25", "committed update visible");
   assert.equal(byRow[2].C, "35", "formula evaluated");
   console.log("update_cells + read_cells range ok");
+
+  // Informational: does effectiveFormat carry conditional-format colors?
+  // (The Sheets API docs say it does.) Reported, never failed on.
+  await tool("format_table", {
+    tableId: tab,
+    conditionalFormats: [{ range: "A2:A3", when: { textEq: "Alpha" }, backgroundColor: "#d1fae5" }]
+  });
+  const conditional = await tool("read_formats", { tableId: tab, range: "A2:A3" });
+  const userEntered = await tool("read_formats", { tableId: tab, range: "A2:A3", source: "userEntered" });
+  console.log(
+    `read_formats conditional fill: effective ${conditional.background.palette.includes("#d1fae5") ? "includes" : "does NOT include"} it` +
+      ` (effective ${JSON.stringify(conditional.background)}, userEntered ${JSON.stringify(userEntered.background)})`
+  );
 
   const style = await tool("get_table_style", { tableId: tab });
   assert.equal(style.style.frozenRowCount, 1, "freeze applied");

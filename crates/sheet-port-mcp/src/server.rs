@@ -21,7 +21,8 @@ use crate::logging::log;
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
     FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, GetTableStyleArgs, ListTablesArgs,
-    ReadCellsArgs, ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
+    ReadCellsArgs, ReadFormatsArgs, ReadTableArgs, SourceTableArgs, UpdateCellsArgs,
+    UpdateRecordsArgs,
 };
 use crate::state::BrokerState;
 use crate::tools;
@@ -39,7 +40,7 @@ tableId: pass a Google Sheets URL, a bare spreadsheet id, spreadsheetId:gid, or 
 
 sourceId: optional on every tool. Omit it and the call is routed to the connected bridge that can open the spreadsheet (list_sources shows the bridges). Pass it only to force a specific source. Access is configured in the desktop app; never ask the user for passwords or tokens.
 
-Reading: the record tools (read_table, find_records, read_formulas, describe_table) treat row 1 as the header. When a sheet is document-style (banner rows, headers further down, totals, several blocks) use read_cells, which returns raw cells by A1 coordinate with real row numbers, and update_cells to write any single cell. Never tell the user a cell cannot be edited. Use read_formulas before overwriting cells that may hold formulas.
+Reading: the record tools (read_table, find_records, read_formulas, describe_table) treat row 1 as the header. When a sheet is document-style (banner rows, headers further down, totals, several blocks) use read_cells, which returns raw cells by A1 coordinate with real row numbers, and update_cells to write any single cell. Never tell the user a cell cannot be edited. Use read_formulas before overwriting cells that may hold formulas. To read cell colors or other formatting of a range (for example a layout encoded in fills), call read_formats once for the whole range instead of get_table_style row by row. For large reads pass saveTo (a file name like levels.json) to read_formats, read_cells or read_table: the data goes to a local file you can process with code instead of into your context.
 
 Writing: update_records, append_records, update_cells, format_table, create_spreadsheet, create_sheet, and delete_sheet apply immediately and return the committed change with its diff, plus records, created, or formatError when relevant. Review the diff against what you meant to write and fix anything wrong with a follow-up call. Pass dryRun: true to only stage a change; it then returns a changeId that commit_change applies later (changeIds commits several in one call). An empty tab is never a reason to refuse: append_records writes the field names as the header row. delete_sheet also needs confirm: true.
 
@@ -193,6 +194,17 @@ impl SheetPortServer {
     async fn read_cells(&self, Parameters(args): Parameters<ReadCellsArgs>) -> CallToolResult {
         let state = Arc::clone(&self.state);
         respond_blocking(move || tools::read_cells(&state, &args)).await
+    }
+
+    #[tool(
+        name = "read_formats",
+        description = "Read cell formatting of a whole tab or an A1 range in one call: fields picks background (default), fontColor, bold, italic, strikethrough, and value (the formatted text). Omitting range reads the whole tab, trimmed to the last row and column where a requested field is not default. source effective (default) is what the user sees, including conditional-formatting colors; userEntered is only the format set on each cell. Output (compact JSON): {sheetTitle, range, startRow, startColumn, rows, columns, source, <field>...}. Each format field is {palette, counts, grid}: palette[0] is the default (null = no fill or default color, false for bold/italic/strikethrough), colors are \"#rrggbb\", counts[i] is how many cells use palette[i]. grid has one string per row (grid[r] is sheet row startRow + r); it is comma-separated runs, \"i*n\" meaning n cells of palette[i] and a bare \"i\" one cell, left to right from startColumn. A row stops early when the rest is palette[0], so pad it to columns with 0; \"\" is an all-default row. Example: \"0*12,3*4,0,2\" = 12 default cells, 4 of palette[3], 1 default, 1 of palette[2], then defaults. value is {grid: [[string]]}, one array per row with trailing empty cells trimmed. In effective mode a cell that has any format but no fill reports #ffffff (and default text #000000) rather than null. Up to 250000 cells per call; with saveTo up to 2000000, written to a file.",
+        annotations(read_only_hint = true),
+        input_schema = inline_input_schema::<ReadFormatsArgs>()
+    )]
+    async fn read_formats(&self, Parameters(args): Parameters<ReadFormatsArgs>) -> CallToolResult {
+        let state = Arc::clone(&self.state);
+        respond_blocking(move || tools::read_formats(&state, &args)).await
     }
 
     #[tool(

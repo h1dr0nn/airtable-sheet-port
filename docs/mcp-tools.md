@@ -1,6 +1,6 @@
 # MCP Tools
 
-The Rust sidecar (`crates/sheet-port-mcp`) registers 18 tools. All input schemas are
+The Rust sidecar (`crates/sheet-port-mcp`) registers 19 tools. All input schemas are
 provider-neutral (generated via `schemars`, with every bound enforced in `src/args.rs`);
 none expose raw Google APIs, tokens, or the bridge secret. Every tool returns a single
 text content block containing pretty-printed JSON with the shapes below. Every call
@@ -12,10 +12,11 @@ writes an audit event (actor `agent`).
 | `list_tables` | read | `{ sourceId? }` |
 | `list_sheets` | read | `{ sourceId?, tableId }` |
 | `describe_table` | read | `{ sourceId?, tableId }` |
-| `read_table` | read | `{ sourceId?, tableId, limit, offset }` |
-| `read_formulas` | read | `{ sourceId?, tableId, limit, offset }` |
+| `read_table` | read | `{ sourceId?, tableId, limit, offset, saveTo? }` |
+| `read_formulas` | read | `{ sourceId?, tableId, limit, offset, saveTo? }` |
 | `find_records` | read | `{ sourceId?, tableId, query }` |
-| `read_cells` | read | `{ sourceId?, tableId, range?, limit, offset }` |
+| `read_cells` | read | `{ sourceId?, tableId, range?, limit, offset, saveTo? }` |
+| `read_formats` | read | `{ sourceId?, tableId, range?, fields?, source?, saveTo? }` |
 | `get_table_style` | read | `{ sourceId?, tableId, headerRow? }` |
 | `update_records` | write | `{ sourceId?, tableId, patches, dryRun? }` |
 | `append_records` | write | `{ sourceId?, tableId, records, formats?, freezeRows?, freezeColumns?, columnWidths?, validations?, conditionalFormats?, replaceIntersecting?, dryRun? }` |
@@ -115,7 +116,7 @@ approval step in between.
 ## Google Sheets `tableId` forms
 
 For a Google Sheets source, every table tool (`list_sheets`, `describe_table`,
-`read_table`, `read_formulas`, `find_records`, `read_cells`, `get_table_style`,
+`read_table`, `read_formulas`, `find_records`, `read_cells`, `read_formats`, `get_table_style`,
 `update_records`, `append_records`, `update_cells`, `format_table`, `create_sheet`,
 `delete_sheet`) accepts the `tableId` in any of these forms. This lets an agent paste a
 spreadsheet link the user shared and read the exact tab without extra lookups:
@@ -281,6 +282,7 @@ Input schema:
 | `tableId` | string | min length 1 |
 | `limit` | integer | 1 to 500, default 100 |
 | `offset` | integer | >= 0, default 0 |
+| `saveTo` | string | optional file name; writes the result to a file, see [Large reads: `saveTo`](#large-reads-saveto) |
 
 Output shape: `{ "records": TableRecord[] }` (in sheet row order)
 
@@ -318,6 +320,7 @@ Input schema:
 | `tableId` | string | min length 1 |
 | `limit` | integer | optional, 1 to 500 (default 100) |
 | `offset` | integer | optional, >= 0 (default 0) |
+| `saveTo` | string | optional file name; writes the result to a file, see [Large reads: `saveTo`](#large-reads-saveto) |
 
 Output shape: `{ "records": TableRecord[] }` where a field value is the cell's formula
 string when it holds one, else its literal value.
@@ -374,6 +377,7 @@ Input schema:
 | `range` | string | optional A1 range within the tab, e.g. `B40:F60`; omitted = the whole tab from row 1 |
 | `limit` | integer | optional, 1 to 500 (default 100); rows |
 | `offset` | integer | optional, >= 0 (default 0); rows into the range |
+| `saveTo` | string | optional file name; writes the result to a file, see [Large reads: `saveTo`](#large-reads-saveto) |
 
 Output shape:
 
@@ -443,6 +447,109 @@ type TableStyle = {
 
 Permission required: `read` on the source/table. Only the Google Sheets connector
 implements this.
+
+## `read_formats`
+
+Purpose: read the formatting of every cell in a tab or an A1 window in one call
+(read-only), for sheets whose meaning is in the formatting, such as a level layout
+encoded in cell fills. `get_table_style` only samples two rows; `read_cells` returns
+values only. One `spreadsheets.get` with `includeGridData` and a fields mask trimmed to
+the requested fields backs each call.
+
+Input schema:
+
+| Field | Type | Bounds |
+|---|---|---|
+| `sourceId` | string | optional, min length 1 |
+| `tableId` | string | min length 1 |
+| `range` | string | optional A1 window, same syntax and rules as `read_cells` (`A1:OA95`, `A:C`, `5:9`, no sheet name); omitted = the whole tab |
+| `fields` | string[] | optional, non-empty subset of `background`, `fontColor`, `bold`, `italic`, `strikethrough`, `value`; default `["background"]` |
+| `source` | string | optional, `effective` (default) or `userEntered` |
+| `saveTo` | string | optional file name, see [Large reads: `saveTo`](#large-reads-saveto) |
+
+Window size: a dimension the range bounds keeps its requested size, clamped to the tab's
+grid and to the A:ZZ column window. An open dimension (no `range`, or `A:C`, `5:9`) is
+trimmed to the last row or column where a requested field is not default.
+
+`source`:
+
+- `effective` is what the user sees: Sheets `effectiveFormat`, the cell format merged
+  with defaults. The Sheets API reference says it "includes the results of applying any
+  conditional formatting", so conditional-format fills and text styles are included.
+  A cell with any format but no fill reports `#ffffff` (and default text `#000000`)
+  rather than `null`; a cell with no format at all reports `null`.
+- `userEntered` is only the format set on each cell (`userEnteredFormat`): no
+  conditional formatting, and `null` for anything not set. Use it to tell "no fill" from
+  "white fill". `get_table_style`'s `conditionalFormatCount` says whether the tab has
+  conditional rules at all.
+
+Colors come from the `*ColorStyle` field when present (theme colors resolved through the
+spreadsheet theme), else the plain color field, as `#rrggbb`. Alpha is ignored.
+
+Output shape (compact JSON on one line, not pretty-printed; the grids here are shortened):
+
+```json
+{
+  "sheetTitle": "Level 1-20", "range": "A1:OA95", "startRow": 1, "startColumn": "A",
+  "rows": 95, "columns": 391, "source": "effective",
+  "background": {
+    "palette": [null, "#ff0000", "#ffff00", "#4a86e8"],
+    "counts": [36000, 540, 310, 295],
+    "grid": ["", "0*12,3*4,0,2", "1*8"]
+  },
+  "bold": { "palette": [false, true], "counts": [37140, 5], "grid": ["1*5", "", ""] },
+  "value": { "grid": [["Level 1"], ["", "", "F"], []] }
+}
+```
+
+Encoding (each format field: `background`, `fontColor`, `bold`, `italic`,
+`strikethrough`, present only when requested):
+
+- `palette[0]` is always the default: `null` for colors (no fill, default text color),
+  `false` for the flags. Other entries follow in order of first appearance, row by row.
+- `counts[i]` is how many cells of the `rows x columns` window use `palette[i]`; the
+  counts add up to `rows * columns`.
+- `grid` has exactly `rows` strings; `grid[r]` is sheet row `startRow + r`. A row is a
+  comma-separated list of runs read left to right from `startColumn`: `i*n` is `n` cells
+  of `palette[i]`, a bare `i` is one cell. Trailing runs of `palette[0]` are dropped, so
+  pad each decoded row with `0` up to `columns`; `""` is an all-default row.
+- Decoding: `row.split(",")`, split each run on `*` (count 1 when absent), repeat the
+  index, pad with 0 to `columns`. `"0*12,3*4,0,2"` is 12 default cells, 4 of
+  `palette[3]`, 1 default, 1 of `palette[2]`, then defaults.
+
+`value` is not palette-encoded: `value.grid` has one array per row with the formatted
+values (as shown in the sheet) and trailing empty cells trimmed.
+
+Bounds: at most 250,000 cells (`rows * columns`) per call, 2,000,000 with `saveTo`. A
+bounded window is checked before anything is fetched (after clamping to the tab's
+grid); an open window is checked after trimming. Over the cap the call fails with an
+InvalidInput error that suggests a smaller range or `saveTo`.
+
+Permission required: `read` on the source/table. Audited as `read_formats` with the
+range, fields, source, cell count, and `saveTo`. Only the Google Sheets connector
+implements it in release builds (the mock connector returns a bold, `#f3f4f6`-filled
+header row for tests).
+
+## Large reads: `saveTo`
+
+`read_formats`, `read_cells`, `read_table`, and `read_formulas` take an optional
+`saveTo`: a file name only, 1 to 100 characters of `A-Z a-z 0-9 . _ -`, ending in
+`.json`, with no path separators, no `..`, and not a Windows device name (`NUL.json`).
+With it, the full result (the same JSON the tool would return, written compact) goes to
+that file in the `exports` directory beside the app database, which is created when
+missing; a file of the same name is replaced. Nothing is ever written outside that
+directory. The tool then returns only:
+
+```json
+{ "savedTo": "C:\\Users\\me\\AppData\\Roaming\\airtable-sheet-port\\exports\\levels.json", "bytes": 48213, "summary": { } }
+```
+
+`summary` is, for `read_formats`, the output without its grids (dims, `source`, and each
+field's `palette` and `counts`); for `read_cells`, `{ columns, firstColumn, lastColumn,
+rows, firstRow, lastRow, totalRows }`; for `read_table` and `read_formulas`,
+`{ records, columns, fields }`. The exports directory follows the database, so
+`SHEET_PORT_DB` moves it too. `saveTo` does not raise the `read_cells`/`read_table`
+page limit (500 rows); it raises the `read_formats` cell cap.
 
 ## `update_records`
 

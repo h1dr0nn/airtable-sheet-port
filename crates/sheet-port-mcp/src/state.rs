@@ -4,6 +4,7 @@
 //! may block on HTTP (Google Sheets), which is why the server layer runs
 //! every tool body on `spawn_blocking` instead of the async runtime threads.
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use sheet_port_core::connectors::ConnectorRegistry;
@@ -22,15 +23,23 @@ pub struct BrokerState {
     /// Exe paths from startup plus the client info from `initialize`;
     /// rewritten on every heartbeat so a deleted row comes back complete.
     identity: Mutex<HeartbeatIdentity>,
+    /// Where `saveTo` result files go (`exports` beside the database).
+    exports_dir: PathBuf,
 }
 
 impl BrokerState {
-    pub fn new(conn: Connection) -> Self {
+    pub fn new(conn: Connection, exports_dir: PathBuf) -> Self {
         Self {
             conn: Mutex::new(conn),
             registry: ConnectorRegistry::with_default_connectors(),
             identity: Mutex::new(HeartbeatIdentity::default()),
+            exports_dir,
         }
+    }
+
+    /// The directory `saveTo` files are written to.
+    pub fn exports_dir(&self) -> &Path {
+        &self.exports_dir
     }
 
     /// Merges the known fields of `update` into the heartbeat identity.

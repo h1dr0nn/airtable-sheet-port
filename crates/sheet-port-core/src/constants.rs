@@ -16,6 +16,12 @@ pub const READ_LIMIT_DEFAULT: i64 = 100;
 pub const READ_LIMIT_MIN: i64 = 1;
 pub const READ_LIMIT_MAX: i64 = 500;
 
+/// read_formats: most cells (rows x columns of the returned grid) one call may
+/// return inline, and the higher cap when the result is written to a file
+/// with `saveTo`.
+pub const READ_FORMATS_MAX_CELLS: usize = 250_000;
+pub const READ_FORMATS_MAX_CELLS_SAVED: usize = 2_000_000;
+
 /// find_records query strings longer than this are rejected.
 pub const FIND_QUERY_MAX_LEN: usize = 200;
 

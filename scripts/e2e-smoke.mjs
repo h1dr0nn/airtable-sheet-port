@@ -1,7 +1,8 @@
 // Protocol-level E2E smoke: spawns the Rust MCP sidecar, speaks JSON-RPC over
 // stdio, and verifies the v2 tool contract end to end: the tool list, direct
 // writes that return a diff, dryRun staging + commit_change, ranged read_cells,
-// and audit events.
+// read_formats and its run-length encoding, saveTo result files, and audit
+// events.
 //
 // PREREQUISITE: the debug sidecar must be built WITH the mock connector:
 //   cargo build -p sheet-port-mcp --features mock
@@ -9,9 +10,9 @@
 // and fails fast when it is missing.
 import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
@@ -29,7 +30,12 @@ if (!existsSync(serverBinary)) {
   process.exit(1);
 }
 
-const dbPath = join(tmpdir(), `sheet-port-e2e-${process.pid}.db`);
+// A per-run directory, so the saveTo exports dir beside the DB is isolated.
+const runDir = join(tmpdir(), `sheet-port-e2e-${process.pid}`);
+mkdirSync(runDir, { recursive: true });
+const dbPath = join(runDir, "broker.db");
+// saveTo files land in `exports` beside the database.
+const exportsDir = join(runDir, "exports");
 
 // Seed v2 leaves fresh databases empty, so the smoke installs its own test
 // workspace before spawning the sidecar: the same schema + seed SQL the core
@@ -139,9 +145,9 @@ try {
     "append_records", "commit_change", "create_sheet", "create_spreadsheet",
     "delete_sheet", "describe_table", "find_records", "format_table",
     "get_audit_log", "get_table_style", "list_sheets", "list_sources",
-    "list_tables", "read_cells", "read_formulas", "read_table",
+    "list_tables", "read_cells", "read_formats", "read_formulas", "read_table",
     "update_cells", "update_records"
-  ], "exactly the 18 contract tools");
+  ], "exactly the 19 contract tools");
   for (const tool of tools.result.tools) {
     assert.doesNotMatch(tool.description, /approv/i, `${tool.name} has no approval wording`);
     const required = tool.inputSchema?.required ?? [];
@@ -165,6 +171,16 @@ try {
   assert.match(byName.format_table.description, /conditionalFormats/);
   assert.ok("headerRow" in byName.get_table_style.inputSchema.properties, "get_table_style takes headerRow");
   assert.match(instructions, /conditionalFormats/, "instructions mention color rules");
+  assert.match(instructions, /read_formats/, "instructions point at read_formats");
+  assert.match(instructions, /saveTo/, "instructions explain saveTo");
+  for (const name of ["read_formats", "read_cells", "read_table"]) {
+    assert.ok("saveTo" in byName[name].inputSchema.properties, `${name} takes saveTo`);
+  }
+  const formatsProps = byName.read_formats.inputSchema.properties;
+  for (const key of ["range", "fields", "source"]) {
+    assert.ok(key in formatsProps, `read_formats schema lists ${key}`);
+  }
+  assert.match(byName.read_formats.description, /i\*n/, "read_formats documents the run encoding");
 
   const src = toolJson(await callTool("list_sources"));
   assert.ok(!src.isError && JSON.stringify(src.json).includes("mock-source"), "list_sources works");
@@ -260,6 +276,80 @@ try {
   assert.equal(cells.json.rows[0].row, 3);
   assert.equal(cells.json.rows[0].cells.B, "smoke@basalt.co", "committed cell write visible");
 
+  // read_formats: one call, palette + run-length rows that decode to the grid.
+  const decodeRow = (row, columns) => {
+    const out = [];
+    if (row !== "") {
+      for (const run of row.split(",")) {
+        const [index, count = "1"] = run.split("*");
+        for (let i = 0; i < Number(count); i++) out.push(Number(index));
+      }
+    }
+    assert.ok(out.length <= columns, `row ${row} fits ${columns} columns`);
+    while (out.length < columns) out.push(0);
+    return out;
+  };
+  const formats = toolJson(await callTool("read_formats", {
+    sourceId: "mock-source", tableId: "customers", fields: ["background", "bold", "value"]
+  }));
+  assert.ok(!formats.isError, `read_formats failed: ${formats.text}`);
+  assert.ok(!formats.text.includes("\n"), "read_formats output is compact");
+  for (const key of ["sheetTitle", "range", "startRow", "startColumn", "rows", "columns", "source"]) {
+    assert.ok(key in formats.json, `read_formats returns ${key}`);
+  }
+  assert.equal(formats.json.range, "A1:E4");
+  assert.equal(formats.json.startColumn, "A");
+  assert.equal(formats.json.source, "effective");
+  const bg = formats.json.background;
+  assert.equal(bg.palette[0], null, "palette[0] is no fill");
+  assert.equal(bg.palette.length, bg.counts.length, "one count per palette entry");
+  assert.equal(bg.grid.length, formats.json.rows, "one grid row per sheet row");
+  const decoded = bg.grid.map((row) => decodeRow(row, formats.json.columns));
+  const total = bg.counts.reduce((a, b) => a + b, 0);
+  assert.equal(total, formats.json.rows * formats.json.columns, "counts cover every cell");
+  const headerFill = bg.palette.indexOf("#f3f4f6");
+  assert.ok(headerFill > 0, "the mock header fill is in the palette");
+  assert.deepEqual(decoded[0], Array(formats.json.columns).fill(headerFill), "row 1 is filled");
+  assert.deepEqual(decoded[1], Array(formats.json.columns).fill(0), "data rows have no fill");
+  assert.deepEqual(formats.json.bold.palette, [false, true]);
+  assert.equal(formats.json.value.grid[0][0], "Name");
+  assert.ok(!("italic" in formats.json), "only requested fields come back");
+
+  // saveTo: the full result goes to a file under the DB's exports dir.
+  const saved = toolJson(await callTool("read_formats", {
+    sourceId: "mock-source", tableId: "customers", fields: ["background", "value"],
+    saveTo: "smoke-formats.json"
+  }));
+  assert.ok(!saved.isError, `read_formats saveTo failed: ${saved.text}`);
+  assert.ok(isAbsolute(saved.json.savedTo), "savedTo is absolute");
+  assert.equal(resolve(dirname(saved.json.savedTo)).toLowerCase(), resolve(exportsDir).toLowerCase(), "written into exports/");
+  const savedBody = readFileSync(saved.json.savedTo, "utf8");
+  assert.equal(Buffer.byteLength(savedBody), saved.json.bytes, "bytes matches the file");
+  assert.equal(JSON.parse(savedBody).value.grid[0][0], "Name", "the file holds the full result");
+  assert.ok(!("grid" in saved.json.summary.background), "the summary has no grids");
+  assert.ok(Array.isArray(saved.json.summary.background.palette), "the summary keeps palettes");
+
+  const savedCells = toolJson(await callTool("read_cells", {
+    sourceId: "mock-source", tableId: "customers", range: "A1:C4", saveTo: "smoke-cells.json"
+  }));
+  assert.ok(!savedCells.isError, `read_cells saveTo failed: ${savedCells.text}`);
+  assert.equal(savedCells.json.summary.rows, 4);
+  assert.equal(JSON.parse(readFileSync(savedCells.json.savedTo, "utf8")).rows.length, 4);
+  const savedTable = toolJson(await callTool("read_table", {
+    sourceId: "mock-source", tableId: "customers", saveTo: "smoke-table.json"
+  }));
+  assert.ok(!savedTable.isError, `read_table saveTo failed: ${savedTable.text}`);
+  assert.equal(savedTable.json.summary.records, 3);
+
+  for (const bad of ["../x.json", "a/b.json"]) {
+    const refused = toolJson(await callTool("read_formats", {
+      sourceId: "mock-source", tableId: "customers", saveTo: bad
+    }));
+    assert.ok(refused.isError, `saveTo ${bad} is rejected`);
+    assert.match(refused.text, /saveTo/);
+  }
+  assert.ok(!existsSync(join(runDir, "x.json")), "nothing written outside exports/");
+
   const qualified = toolJson(await callTool("read_cells", {
     sourceId: "mock-source", tableId: "customers", range: "Sheet1!A1:B2"
   }));
@@ -273,7 +363,7 @@ try {
 
   const audit = toolJson(await callTool("get_audit_log", { limit: 50 }));
   const actions = audit.json.events.map((e) => e.action);
-  for (const action of ["update_records", "update_cells", "commit_change", "read_cells", "get_audit_log"]) {
+  for (const action of ["update_records", "update_cells", "commit_change", "read_cells", "read_formats", "get_audit_log"]) {
     assert.ok(actions.includes(action), `audit has ${action}`);
   }
   const dryAudit = audit.json.events.find((e) => e.action === "update_cells");
@@ -309,4 +399,5 @@ try {
   child.kill();
   await new Promise((r) => setTimeout(r, 300));
   try { rmSync(dbPath); rmSync(dbPath + "-wal", { force: true }); rmSync(dbPath + "-shm", { force: true }); } catch {}
+  rmSync(runDir, { recursive: true, force: true });
 }

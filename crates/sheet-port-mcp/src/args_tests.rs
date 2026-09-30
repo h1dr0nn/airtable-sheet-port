@@ -49,6 +49,7 @@ fn read_cells_parses_an_optional_range() {
         range: range.map(str::to_string),
         limit: None,
         offset: None,
+        save_to: None,
     };
     let (limit, offset, range) = base(None).validate().expect("no range");
     assert_eq!((limit, offset), (100, 0));
@@ -109,6 +110,7 @@ fn read_table_applies_defaults() {
         table_id: "customers".to_string(),
         limit: None,
         offset: None,
+        save_to: None,
     };
     assert_eq!(args.validate().expect("defaults valid"), (100, 0));
 }
@@ -120,6 +122,7 @@ fn read_table_rejects_out_of_range_limit_and_offset() {
         table_id: "t".to_string(),
         limit,
         offset,
+        save_to: None,
     };
     assert!(base(Some(0), None).validate().is_err(), "limit below 1");
     assert!(base(Some(501), None).validate().is_err(), "limit above 500");
@@ -703,4 +706,69 @@ fn get_table_style_defaults_header_row_and_checks_bounds() {
     let parsed: GetTableStyleArgs =
         serde_json::from_str(r#"{"tableId":"t","headerRow":9}"#).expect("parse");
     assert_eq!(parsed.header_row, Some(9));
+}
+
+#[test]
+fn read_formats_defaults_to_the_effective_background() {
+    let args: ReadFormatsArgs =
+        serde_json::from_str(r#"{"tableId":"t"}"#).expect("minimal args parse");
+    let request = args.validate().expect("defaults valid");
+    assert!(request.fields.background);
+    assert_eq!(request.fields.names(), vec!["background"]);
+    assert_eq!(request.source, FormatSource::Effective);
+    assert!(request.range.is_none());
+    assert_eq!(request.max_cells, READ_FORMATS_MAX_CELLS);
+}
+
+#[test]
+fn read_formats_parses_fields_source_range_and_save_to() {
+    let args: ReadFormatsArgs = serde_json::from_str(
+        r#"{"tableId":"t","range":"A1:OA95","fields":["value","bold","fontColor","bold"],"source":"userEntered","saveTo":"levels.json"}"#,
+    )
+    .expect("full args parse");
+    let request = args.validate().expect("valid");
+    assert_eq!(request.fields.names(), vec!["fontColor", "bold", "value"]);
+    assert_eq!(request.source, FormatSource::UserEntered);
+    let range = request.range.expect("range");
+    assert_eq!((range.end_col, range.end_row), (Some(391), Some(95)));
+    assert_eq!(request.max_cells, READ_FORMATS_MAX_CELLS_SAVED);
+
+    assert!(
+        serde_json::from_str::<ReadFormatsArgs>(r#"{"tableId":"t","fields":["color"]}"#).is_err(),
+        "unknown field names fail to parse"
+    );
+    assert!(
+        serde_json::from_str::<ReadFormatsArgs>(r#"{"tableId":"t","source":"visible"}"#).is_err()
+    );
+}
+
+#[test]
+fn read_formats_rejects_empty_fields_bad_ranges_and_bad_save_to() {
+    let parse = |json: &str| serde_json::from_str::<ReadFormatsArgs>(json).expect("parses");
+    let error = parse(r#"{"tableId":"t","fields":[]}"#)
+        .validate()
+        .expect_err("empty fields");
+    assert!(error.to_string().contains("at least one"), "{error}");
+    assert!(parse(r#"{"tableId":"t","range":"Sheet1!A1:B2"}"#)
+        .validate()
+        .is_err());
+    assert!(parse(r#"{"tableId":"t","range":""}"#).validate().is_err());
+    for bad in ["../x.json", "a/b.json", "x.txt", r"a\\b.json"] {
+        let json = format!(r#"{{"tableId":"t","saveTo":"{bad}"}}"#);
+        let error = parse(&json).validate().expect_err(bad);
+        assert!(error.to_string().contains("saveTo"), "{bad}: {error}");
+    }
+}
+
+#[test]
+fn read_cells_and_read_table_validate_save_to() {
+    let cells: ReadCellsArgs =
+        serde_json::from_str(r#"{"tableId":"t","saveTo":"../x.json"}"#).expect("parses");
+    assert!(cells.validate().is_err());
+    let table: ReadTableArgs =
+        serde_json::from_str(r#"{"tableId":"t","saveTo":"rows.json"}"#).expect("parses");
+    assert!(table.validate().is_ok());
+    let table: ReadTableArgs =
+        serde_json::from_str(r#"{"tableId":"t","saveTo":"a/b.json"}"#).expect("parses");
+    assert!(table.validate().is_err());
 }

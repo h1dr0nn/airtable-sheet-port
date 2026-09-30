@@ -1,10 +1,12 @@
 //! Connector abstraction and the registry that routes calls by source kind.
 //! second connector for the same kind replaces the first.
 
+pub mod formats;
 mod google_sheets;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 
+pub use formats::{FormatFields, FormatGrid, FormatSource, FormatsOutput, FormatsRequest};
 pub use google_sheets::{
     parse_spreadsheet_id, spreadsheet_title, GoogleSheetsConnector, STYLE_HEADER_ROW_MAX,
 };
@@ -195,6 +197,21 @@ pub trait TableConnector: Send + Sync {
     ) -> Result<TableStyle, CoreError> {
         Err(CoreError::Unsupported(
             "This source does not support reading cell formatting".to_string(),
+        ))
+    }
+
+    /// Per-cell formatting (and optionally formatted values) of one window of
+    /// a tab, shaped by [`formats::shape_format_grid`] so the grid size and
+    /// the cell cap behave the same for every connector.
+    fn read_formats(
+        &self,
+        _conn: &Connection,
+        _source_id: &str,
+        _table_id: &str,
+        _request: &FormatsRequest,
+    ) -> Result<FormatGrid, CoreError> {
+        Err(CoreError::Unsupported(
+            "This source does not support reading cell formats".to_string(),
         ))
     }
 
@@ -466,6 +483,17 @@ impl ConnectorRegistry {
             .read_table_style(conn, source_id, table_id, header_row)
     }
 
+    pub fn read_formats(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        request: &FormatsRequest,
+    ) -> Result<FormatGrid, CoreError> {
+        self.for_source(conn, source_id)?
+            .read_formats(conn, source_id, table_id, request)
+    }
+
     pub fn format_cells(
         &self,
         conn: &Connection,
@@ -638,7 +666,7 @@ pub(crate) fn js_string(value: &serde_json::Value) -> String {
 
 /// Highest column count a formatting range may span (A..ZZ, matching the
 /// connector's value window).
-const GRID_MAX_COLUMNS: usize = 702;
+pub(crate) const GRID_MAX_COLUMNS: usize = 702;
 /// Highest 1-based row a formatting range may reference; a sane upper bound so
 /// a typo cannot build an absurd grid range.
 const GRID_MAX_ROWS: usize = 10_000_000;

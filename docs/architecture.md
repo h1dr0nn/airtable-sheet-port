@@ -8,7 +8,7 @@ the OS keychain, and one core crate:
 - The Tauri desktop app (`apps/desktop`): a thin Rust shell (`src-tauri`) plus a React
   frontend. It manages Google bridges, permission rules, the audit
   log, the spreadsheet workbench, MCP client registration, and app settings.
-- The Rust MCP sidecar (`crates/sheet-port-mcp`): an MCP server exposing 18 typed tools
+- The Rust MCP sidecar (`crates/sheet-port-mcp`): an MCP server exposing 19 typed tools
   to agents. It enforces permissions and runs the staged-change pipeline. It serves
   either the default stdio transport or an optional loopback HTTP transport (see
   "MCP Transports" below).
@@ -38,7 +38,7 @@ flowchart LR
   Google["Google Sheets / Drive APIs"]
 
   subgraph Sidecar["Rust process (MCP sidecar)"]
-    MCP["crates/sheet-port-mcp<br/>rmcp server (stdio or 127.0.0.1 http)<br/>18 typed tools"]
+    MCP["crates/sheet-port-mcp<br/>rmcp server (stdio or 127.0.0.1 http)<br/>19 typed tools"]
   end
 
   subgraph Core["crates/sheet-port-core (shared library)"]
@@ -167,7 +167,7 @@ An MCP server built on `rmcp` that registers exactly these tools (see
 `docs/mcp-tools.md` for the full reference):
 
 `list_sources`, `list_tables`, `list_sheets`, `describe_table`, `read_table`,
-`read_formulas`, `find_records`, `read_cells`, `get_table_style`, `update_records`,
+`read_formulas`, `find_records`, `read_cells`, `read_formats`, `get_table_style`, `update_records`,
 `append_records`, `update_cells`, `format_table`, `create_spreadsheet`, `create_sheet`,
 `delete_sheet`, `commit_change`, `get_audit_log`.
 

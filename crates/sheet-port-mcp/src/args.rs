@@ -6,19 +6,20 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 use sheet_port_core::connectors::{
-    parse_cell_ref, parse_cells_range, validate_a1_range, A1Range, STYLE_HEADER_ROW_MAX,
+    parse_cell_ref, parse_cells_range, validate_a1_range, A1Range, FormatFields, FormatSource,
+    FormatsRequest, STYLE_HEADER_ROW_MAX,
 };
 use sheet_port_core::constants::{
     AUDIT_LIMIT_DEFAULT, AUDIT_LIMIT_MAX, COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN,
     CONDITIONAL_FORMATS_MAX, FIND_QUERY_MAX_LEN, FONT_SIZE_MAX, FONT_SIZE_MIN, FORMAT_OPS_MAX,
-    FREEZE_MAX, READ_LIMIT_DEFAULT, READ_LIMIT_MAX, READ_LIMIT_MIN, VALIDATIONS_MAX,
-    VALIDATION_LIST_VALUES_MAX, WRITE_BATCH_MAX,
+    FREEZE_MAX, READ_FORMATS_MAX_CELLS, READ_FORMATS_MAX_CELLS_SAVED, READ_LIMIT_DEFAULT,
+    READ_LIMIT_MAX, READ_LIMIT_MIN, VALIDATIONS_MAX, VALIDATION_LIST_VALUES_MAX, WRITE_BATCH_MAX,
 };
 use sheet_port_core::types::{
     BorderStyle, CellFormat, CellWrite, ColumnWidth, ConditionWhen, ConditionalFormat,
     DataValidation, FormatPlan, HorizontalAlignment, JsonMap, NumberFormatType, ValidationKind,
 };
-use sheet_port_core::CoreError;
+use sheet_port_core::{exports, CoreError};
 
 /// Matches the audit module's own lower bound (kept private there).
 const AUDIT_LIMIT_MIN: i64 = 1;
@@ -64,6 +65,11 @@ fn bounded_limit(limit: Option<i64>, default: i64, min: i64, max: i64) -> Result
         )));
     }
     Ok(limit)
+}
+
+/// A `saveTo` value, when given, must be a plain `.json` file name.
+fn validate_save_to(save_to: Option<&str>) -> Result<(), CoreError> {
+    save_to.map_or(Ok(()), exports::validate_export_name)
 }
 
 /// The read-page bounds shared by read_table, read_formulas, and read_cells.
@@ -121,6 +127,9 @@ pub struct ReadTableArgs {
     /// Data rows to skip before the first returned record (default 0).
     #[serde(default)]
     pub offset: Option<i64>,
+    /// Optional file name only (e.g. "levels.json": A-Z a-z 0-9 . _ -, ending in .json). The full result is written to the app's exports folder and only {savedTo, bytes, summary} is returned; process the file locally.
+    #[serde(default)]
+    pub save_to: Option<String>,
 }
 
 impl ReadTableArgs {
@@ -128,6 +137,7 @@ impl ReadTableArgs {
     pub fn validate(&self) -> Result<(i64, i64), CoreError> {
         require_source(self.source_id.as_deref())?;
         require_non_empty(&self.table_id, "tableId")?;
+        validate_save_to(self.save_to.as_deref())?;
         read_window(self.limit, self.offset)
     }
 }
@@ -149,6 +159,9 @@ pub struct ReadCellsArgs {
     /// Rows to skip within the window before the first returned row (default 0).
     #[serde(default)]
     pub offset: Option<i64>,
+    /// Optional file name only (e.g. "levels.json": A-Z a-z 0-9 . _ -, ending in .json). The full result is written to the app's exports folder and only {savedTo, bytes, summary} is returned; process the file locally.
+    #[serde(default)]
+    pub save_to: Option<String>,
 }
 
 impl ReadCellsArgs {
@@ -165,8 +178,109 @@ impl ReadCellsArgs {
                 parse_cells_range(range)
             })
             .transpose()?;
+        validate_save_to(self.save_to.as_deref())?;
         let (limit, offset) = read_window(self.limit, self.offset)?;
         Ok((limit, offset, range))
+    }
+}
+
+/// One property `read_formats` can return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum FormatFieldArg {
+    Background,
+    FontColor,
+    Bold,
+    Italic,
+    Strikethrough,
+    /// The formatted value as shown in the sheet.
+    Value,
+}
+
+/// Which format `read_formats` reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum FormatSourceArg {
+    /// What the user sees, including conditional-formatting results.
+    #[default]
+    Effective,
+    /// Only the format set on each cell.
+    UserEntered,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFormatsArgs {
+    /// Connected source to use. Omit to auto-route to the bridge that can open the spreadsheet.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Spreadsheet URL, id, id:gid, or id:SheetName.
+    pub table_id: String,
+    /// Optional A1 window within the tab, like "A1:OA95", "A:C", or "5:9" (no sheet name). Omit to read the whole tab, trimmed to its used cells.
+    #[serde(default)]
+    pub range: Option<String>,
+    /// Properties to return (default ["background"]): background, fontColor, bold, italic, strikethrough, value.
+    #[serde(default)]
+    pub fields: Option<Vec<FormatFieldArg>>,
+    /// "effective" (default: what the user sees, including conditional formatting) or "userEntered" (only the format set on the cell).
+    #[serde(default)]
+    pub source: Option<FormatSourceArg>,
+    /// Optional file name only (e.g. "levels.json": A-Z a-z 0-9 . _ -, ending in .json). The full result is written to the app's exports folder and only {savedTo, bytes, summary} is returned; process the file locally.
+    #[serde(default)]
+    pub save_to: Option<String>,
+}
+
+impl ReadFormatsArgs {
+    /// The connector request: parsed window, requested fields, format source,
+    /// and the cell cap (higher with `saveTo`).
+    pub fn validate(&self) -> Result<FormatsRequest, CoreError> {
+        require_source(self.source_id.as_deref())?;
+        require_non_empty(&self.table_id, "tableId")?;
+        let range = self
+            .range
+            .as_deref()
+            .map(|range| {
+                require_non_empty(range, "range")?;
+                parse_cells_range(range)
+            })
+            .transpose()?;
+        validate_save_to(self.save_to.as_deref())?;
+        let mut fields = FormatFields::default();
+        match &self.fields {
+            None => fields.background = true,
+            Some(list) if list.is_empty() => {
+                return Err(invalid(
+                    "fields must list at least one of background, fontColor, bold, italic, strikethrough, value"
+                        .to_string(),
+                ))
+            }
+            Some(list) => {
+                for field in list {
+                    match field {
+                        FormatFieldArg::Background => fields.background = true,
+                        FormatFieldArg::FontColor => fields.font_color = true,
+                        FormatFieldArg::Bold => fields.bold = true,
+                        FormatFieldArg::Italic => fields.italic = true,
+                        FormatFieldArg::Strikethrough => fields.strikethrough = true,
+                        FormatFieldArg::Value => fields.value = true,
+                    }
+                }
+            }
+        }
+        let source = match self.source.unwrap_or_default() {
+            FormatSourceArg::Effective => FormatSource::Effective,
+            FormatSourceArg::UserEntered => FormatSource::UserEntered,
+        };
+        Ok(FormatsRequest {
+            range,
+            fields,
+            source,
+            max_cells: if self.save_to.is_some() {
+                READ_FORMATS_MAX_CELLS_SAVED
+            } else {
+                READ_FORMATS_MAX_CELLS
+            },
+        })
     }
 }
 

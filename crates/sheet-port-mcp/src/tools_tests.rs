@@ -67,10 +67,13 @@ fn install_demo_workspace(conn: &Connection) {
 fn temp_state() -> BrokerState {
     let path = std::env::temp_dir()
         .join("sheet-port-mcp-tests")
-        .join(format!("{}.db", uuid::Uuid::new_v4()));
+        // One directory per state so each test gets its own exports folder.
+        .join(uuid::Uuid::new_v4().to_string())
+        .join("broker.db");
     let conn = db::open_at(&path).expect("temp db should open");
     install_demo_workspace(&conn);
-    BrokerState::new(conn)
+    let exports_dir = sheet_port_core::exports::exports_dir_for(&path);
+    BrokerState::new(conn, exports_dir)
 }
 
 fn exec(state: &BrokerState, sql: &str) {
@@ -112,6 +115,7 @@ fn read_args() -> ReadTableArgs {
         table_id: TABLE.to_string(),
         limit: None,
         offset: None,
+        save_to: None,
     }
 }
 
@@ -339,6 +343,7 @@ fn cells_args(range: Option<&str>, limit: Option<i64>, offset: Option<i64>) -> R
         range: range.map(str::to_string),
         limit,
         offset,
+        save_to: None,
     }
 }
 
@@ -649,4 +654,121 @@ fn format_table_stages_validations_and_conditional_formats_in_the_diff() {
             "backgroundColor": "#d1fae5",
         })
     );
+}
+
+fn formats_args(json: &str) -> ReadFormatsArgs {
+    let mut value: Value = serde_json::from_str(json).expect("args json");
+    value["sourceId"] = Value::from(SOURCE);
+    value["tableId"] = Value::from(TABLE);
+    serde_json::from_value(value).expect("read_formats args")
+}
+
+/// Expands one run-length grid row (docs/mcp-tools.md "read_formats").
+fn decode_row(row: &str, columns: usize) -> Vec<usize> {
+    sheet_port_core::connectors::formats::decode_runs(row, columns).expect("valid runs")
+}
+
+#[test]
+fn read_formats_returns_compact_palette_grids() {
+    let state = temp_state();
+    let text = read_formats(
+        &state,
+        &formats_args(r#"{"fields":["background","bold","value"]}"#),
+    )
+    .expect("read_formats");
+    assert!(!text.contains('\n'), "output is compact JSON");
+    let output = parse(&text);
+    assert_eq!(output["sheetTitle"], "Sheet1");
+    assert_eq!(output["range"], "A1:E4");
+    assert_eq!(output["startRow"], 1);
+    assert_eq!(output["startColumn"], "A");
+    assert_eq!(output["rows"], 4);
+    assert_eq!(output["columns"], 5);
+    assert_eq!(output["source"], "effective");
+    let background = &output["background"];
+    assert_eq!(background["palette"], serde_json::json!([null, "#f3f4f6"]));
+    assert_eq!(background["counts"], serde_json::json!([15, 5]));
+    let rows: Vec<Vec<usize>> = background["grid"]
+        .as_array()
+        .expect("grid")
+        .iter()
+        .map(|row| decode_row(row.as_str().expect("row string"), 5))
+        .collect();
+    assert_eq!(rows[0], vec![1; 5]);
+    assert_eq!(rows[3], vec![0; 5]);
+    assert_eq!(output["bold"]["palette"], serde_json::json!([false, true]));
+    assert_eq!(output["value"]["grid"][1][0], "Aurora Labs");
+    assert!(output.get("italic").is_none(), "only requested fields");
+
+    let event = audit_events(&state)
+        .into_iter()
+        .find(|event| event["action"] == "read_formats")
+        .expect("audited");
+    assert_eq!(event["metadata"]["cells"], 20);
+}
+
+#[test]
+fn read_formats_clamps_a_bounded_range_to_the_grid() {
+    let state = temp_state();
+    // A1:ZZ1000 is clamped to the mock grid (4 x 5) before the cell cap is
+    // applied; the cap itself is covered by the core shaping tests.
+    let output =
+        parse(&read_formats(&state, &formats_args(r#"{"range":"A1:ZZ1000"}"#)).expect("clamped"));
+    assert_eq!(output["rows"], 4);
+    assert_eq!(output["columns"], 5);
+}
+
+#[test]
+fn save_to_writes_the_full_result_into_the_exports_dir() {
+    let state = temp_state();
+    let saved = parse(
+        &read_formats(
+            &state,
+            &formats_args(r#"{"fields":["background","value"],"saveTo":"formats.json"}"#),
+        )
+        .expect("saved read_formats"),
+    );
+    let path = std::path::PathBuf::from(saved["savedTo"].as_str().expect("savedTo"));
+    assert!(path.is_absolute());
+    let exports_dir = std::path::absolute(state.exports_dir()).expect("absolute exports dir");
+    assert_eq!(path.parent(), Some(exports_dir.as_path()));
+    let written = std::fs::read(&path).expect("file written");
+    assert_eq!(saved["bytes"].as_u64(), Some(written.len() as u64));
+    let full: Value = serde_json::from_slice(&written).expect("file is JSON");
+    assert_eq!(full["value"]["grid"][0][0], "Name");
+    assert!(full["background"]["grid"].is_array());
+    let summary = &saved["summary"];
+    assert_eq!(summary["rows"], 4);
+    assert_eq!(
+        summary["background"]["palette"],
+        serde_json::json!([null, "#f3f4f6"])
+    );
+    assert!(summary["background"].get("grid").is_none());
+    assert!(summary.get("value").is_none());
+
+    let mut cells = cells_args(Some("A1:C4"), None, None);
+    cells.save_to = Some("cells.json".to_string());
+    let saved = parse(&read_cells(&state, &cells).expect("saved read_cells"));
+    assert_eq!(saved["summary"]["rows"], 4);
+    assert_eq!(saved["summary"]["columns"], 3);
+    let full: Value =
+        serde_json::from_slice(&std::fs::read(saved["savedTo"].as_str().unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(full["rows"][1]["cells"]["A"], "Aurora Labs");
+
+    let table = ReadTableArgs {
+        save_to: Some("cells.json".to_string()),
+        ..read_args()
+    };
+    let saved = parse(&read_table(&state, &table).expect("saved read_table overwrites"));
+    assert_eq!(saved["summary"]["records"], 3);
+    assert_eq!(saved["summary"]["fields"][0], "Name");
+    let full: Value =
+        serde_json::from_slice(&std::fs::read(saved["savedTo"].as_str().unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(full["records"].as_array().unwrap().len(), 3);
+
+    let error = read_formats(&state, &formats_args(r#"{"saveTo":"../x.json"}"#))
+        .expect_err("traversal refused");
+    assert!(error.to_string().contains("saveTo"), "{error}");
 }

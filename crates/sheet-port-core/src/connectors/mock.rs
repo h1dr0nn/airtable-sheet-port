@@ -5,6 +5,7 @@
 use rusqlite::Connection;
 use serde_json::Value;
 
+use super::formats::{check_fetch_size, shape_format_grid, CellSample, FormatGrid, FormatsRequest};
 use super::{
     clamp_read_window, column_id_for_index, column_index_for_id, grid_window, js_string, A1Range,
     GridWindow, TableConnector,
@@ -21,6 +22,9 @@ use crate::{mock_data, sources};
 /// tabs). Mirrors a spreadsheet's default first sheet.
 const MOCK_TAB_GID: &str = "0";
 const MOCK_TAB_TITLE: &str = "Sheet1";
+/// The fixed look of a mock sheet for `read_formats`: the header row (row 1)
+/// is bold on this fill; data rows carry no format.
+const MOCK_HEADER_FILL: &str = "#f3f4f6";
 
 pub struct MockConnector;
 
@@ -240,6 +244,69 @@ impl TableConnector for MockConnector {
             .map(|row| row.into_iter().skip(first_col).collect())
             .collect();
         Ok(grid_window(&rows, range, limit, offset))
+    }
+
+    /// Formats of the same raw mirror as [`read_grid`](Self::read_grid): the
+    /// header row is bold on [`MOCK_HEADER_FILL`], data rows are unformatted,
+    /// and every cell's value is its string. Both format sources read the
+    /// same (the mock has no conditional formatting).
+    fn read_formats(
+        &self,
+        conn: &Connection,
+        source_id: &str,
+        table_id: &str,
+        request: &FormatsRequest,
+    ) -> Result<FormatGrid, CoreError> {
+        let schema = self.require_table(conn, source_id, table_id)?;
+        let records =
+            mock_data::list_records(conn, source_id, table_id, ReadOptions::default())?.records;
+        let first_row = request.range.and_then(|range| range.start_row).unwrap_or(0);
+        let first_col = request.range.and_then(|range| range.start_col).unwrap_or(0);
+        let header = schema.fields.iter().map(|field| CellSample {
+            background: Some(MOCK_HEADER_FILL.to_string()),
+            bold: true,
+            value: field.name.clone(),
+            ..CellSample::default()
+        });
+        let header: Vec<CellSample> = header.collect();
+        let body = records.iter().map(|record| {
+            schema
+                .fields
+                .iter()
+                .map(|field| CellSample {
+                    value: record
+                        .fields
+                        .get(&field.name)
+                        .map(js_string)
+                        .unwrap_or_default(),
+                    ..CellSample::default()
+                })
+                .collect::<Vec<_>>()
+        });
+        let grid_rows = records.len() + 1;
+        check_fetch_size(
+            request.range.as_ref(),
+            grid_rows,
+            schema.fields.len(),
+            request.max_cells,
+        )?;
+        let cells: Vec<Vec<CellSample>> = std::iter::once(header)
+            .chain(body)
+            .skip(first_row)
+            .map(|row| {
+                row.into_iter()
+                    .skip(first_col)
+                    .map(|cell| cell.masked(&request.fields))
+                    .collect()
+            })
+            .collect();
+        shape_format_grid(
+            MOCK_TAB_TITLE.to_string(),
+            request,
+            Some(grid_rows),
+            Some(schema.fields.len()),
+            cells,
+        )
     }
 
     /// Maps the column letter and the 0-based `row_index` (over all rows, row 0

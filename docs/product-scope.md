@@ -44,7 +44,7 @@ a token.
 
 - Desktop app: Dashboard, Data Sources (Google bridges), Tables (workbench), and Settings (Google bridges, permissions, MCP server and clients, appearance, updates),
   live-wired to the Rust backend via typed Tauri IPC (`docs/ipc.md`).
-- Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 18 tools over stdio or loopback
+- Local Rust MCP sidecar (`crates/sheet-port-mcp`) with 19 tools over stdio or loopback
   HTTP. `sourceId` is optional and routed automatically.
 - Google access through Apps Script bridges: a pool of accounts, one source per account,
   credentials and cached tokens in the OS keychain. No OAuth client or Cloud Console.

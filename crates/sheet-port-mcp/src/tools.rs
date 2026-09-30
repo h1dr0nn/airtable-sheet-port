@@ -11,6 +11,7 @@
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use sheet_port_core::connectors::formats::encode_formats;
 use sheet_port_core::connectors::{parse_spreadsheet_id, ConnectorRegistry};
 use sheet_port_core::constants::BULK_UPDATE_THRESHOLD;
 use sheet_port_core::rusqlite::Connection;
@@ -18,12 +19,13 @@ use sheet_port_core::types::{
     AuditActor, AuditEvent, ChangeType, CreatedResource, DataSource, GridRow, PendingChange,
     ReadOptions, RecordPatch, TableRecord, TableRef, TableSchema, TableStyle, WriteAction,
 };
-use sheet_port_core::{audit, changes, google, permissions, CoreError};
+use sheet_port_core::{audit, changes, exports, google, permissions, CoreError};
 
 use crate::args::{
     AppendRecordsArgs, CommitChangeArgs, CreateSheetArgs, CreateSpreadsheetArgs, DeleteSheetArgs,
     FindRecordsArgs, FormatTableArgs, GetAuditLogArgs, GetTableStyleArgs, ListTablesArgs,
-    ReadCellsArgs, ReadTableArgs, SourceTableArgs, UpdateCellsArgs, UpdateRecordsArgs,
+    ReadCellsArgs, ReadFormatsArgs, ReadTableArgs, SourceTableArgs, UpdateCellsArgs,
+    UpdateRecordsArgs,
 };
 use crate::state::BrokerState;
 
@@ -130,6 +132,64 @@ struct StyleOutput {
 fn pretty<T: Serialize>(value: &T) -> Result<String, CoreError> {
     serde_json::to_string_pretty(value)
         .map_err(|error| CoreError::Storage(format!("Could not encode tool result: {error}")))
+}
+
+fn encode_error(error: serde_json::Error) -> CoreError {
+    CoreError::Storage(format!("Could not encode tool result: {error}"))
+}
+
+/// What a read with `saveTo` returns instead of its data.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedOutput {
+    /// Absolute path of the written file.
+    saved_to: String,
+    bytes: usize,
+    summary: Value,
+}
+
+/// Writes `full` as compact JSON to the `saveTo` file in the exports
+/// directory and returns the `{ savedTo, bytes, summary }` result.
+fn save_result<T: Serialize>(
+    state: &BrokerState,
+    name: &str,
+    full: &T,
+    summary: Value,
+) -> Result<String, CoreError> {
+    let bytes = serde_json::to_vec(full).map_err(encode_error)?;
+    let path = exports::write_export(state.exports_dir(), name, &bytes)?;
+    pretty(&SavedOutput {
+        saved_to: path.display().to_string(),
+        bytes: bytes.len(),
+        summary,
+    })
+}
+
+/// A records result, inline or written to `saveTo` with a summary of the row
+/// count and the field names.
+fn records_result(
+    state: &BrokerState,
+    save_to: Option<&str>,
+    records: Vec<TableRecord>,
+) -> Result<String, CoreError> {
+    let output = RecordsOutput { records };
+    let Some(name) = save_to else {
+        return pretty(&output);
+    };
+    let mut fields: Vec<&str> = Vec::new();
+    for record in &output.records {
+        for key in record.fields.keys() {
+            if !fields.contains(&key.as_str()) {
+                fields.push(key);
+            }
+        }
+    }
+    let summary = json!({
+        "records": output.records.len(),
+        "columns": fields.len(),
+        "fields": fields,
+    });
+    save_result(state, name, &output, summary)
 }
 
 /// Resolves the effective source for a call (see the module docs).
@@ -288,9 +348,14 @@ pub fn read_table(state: &BrokerState, args: &ReadTableArgs) -> Result<String, C
             "read_table",
             Some(&source_id),
             Some(&args.table_id),
-            Some(&json!({ "limit": limit, "offset": offset, "count": records.len() })),
+            Some(&json!({
+                "limit": limit,
+                "offset": offset,
+                "count": records.len(),
+                "saveTo": args.save_to,
+            })),
         )?;
-        pretty(&RecordsOutput { records })
+        records_result(state, args.save_to.as_deref(), records)
     })
 }
 
@@ -380,10 +445,77 @@ pub fn read_cells(state: &BrokerState, args: &ReadCellsArgs) -> Result<String, C
                 "offset": offset,
                 "range": args.range,
                 "count": output.rows.len(),
+                "saveTo": args.save_to,
             })),
         )?;
-        pretty(&output)
+        match args.save_to.as_deref() {
+            Some(name) => {
+                let summary = json!({
+                    "columns": output.columns.len(),
+                    "firstColumn": output.columns.first(),
+                    "lastColumn": output.columns.last(),
+                    "rows": output.rows.len(),
+                    "firstRow": output.rows.first().map(|row| row.row),
+                    "lastRow": output.rows.last().map(|row| row.row),
+                    "totalRows": output.total_rows,
+                });
+                save_result(state, name, &output, summary)
+            }
+            None => pretty(&output),
+        }
     })
+}
+
+/// Per-cell formatting of a tab window in one provider read, palette and
+/// run-length encoded (docs/mcp-tools.md "read_formats"). The result is
+/// compact JSON; with `saveTo` it goes to a file and only the dims, palettes
+/// and counts come back.
+pub fn read_formats(state: &BrokerState, args: &ReadFormatsArgs) -> Result<String, CoreError> {
+    let request = args.validate()?;
+    state.with_conn(|conn, registry| {
+        let source_id = resolve(conn, args.source_id.as_deref(), Some(&args.table_id))?;
+        permissions::assert_can_read(conn, &source_id, Some(&args.table_id))?;
+        let grid = registry.read_formats(conn, &source_id, &args.table_id, &request)?;
+        let output = encode_formats(&grid, &request.fields, request.source);
+        audit::record(
+            conn,
+            AuditActor::Agent,
+            "read_formats",
+            Some(&source_id),
+            Some(&args.table_id),
+            Some(&json!({
+                "range": args.range,
+                "fields": request.fields.names(),
+                "source": request.source.as_str(),
+                "cells": grid.cell_count(),
+                "saveTo": args.save_to,
+            })),
+        )?;
+        match args.save_to.as_deref() {
+            Some(name) => {
+                let summary = formats_summary(&output)?;
+                save_result(state, name, &output, summary)
+            }
+            None => serde_json::to_string(&output).map_err(encode_error),
+        }
+    })
+}
+
+/// The `saveTo` summary of a read_formats result: everything but the grids
+/// (dims, palettes and counts).
+fn formats_summary(
+    output: &sheet_port_core::connectors::FormatsOutput,
+) -> Result<Value, CoreError> {
+    let mut summary = serde_json::to_value(output).map_err(encode_error)?;
+    if let Some(object) = summary.as_object_mut() {
+        object.remove("value");
+        for layer in object.values_mut() {
+            if let Some(layer) = layer.as_object_mut() {
+                layer.remove("grid");
+            }
+        }
+    }
+    Ok(summary)
 }
 
 pub fn read_formulas(state: &BrokerState, args: &ReadTableArgs) -> Result<String, CoreError> {
@@ -402,9 +534,14 @@ pub fn read_formulas(state: &BrokerState, args: &ReadTableArgs) -> Result<String
             "read_formulas",
             Some(&source_id),
             Some(&args.table_id),
-            Some(&json!({ "limit": limit, "offset": offset, "count": records.len() })),
+            Some(&json!({
+                "limit": limit,
+                "offset": offset,
+                "count": records.len(),
+                "saveTo": args.save_to,
+            })),
         )?;
-        pretty(&RecordsOutput { records })
+        records_result(state, args.save_to.as_deref(), records)
     })
 }
 

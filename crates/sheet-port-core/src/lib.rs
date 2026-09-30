@@ -13,6 +13,7 @@ pub mod connectors;
 pub mod constants;
 pub mod db;
 pub mod error;
+pub mod exports;
 pub mod google;
 pub mod heartbeat;
 pub mod mcp_clients;

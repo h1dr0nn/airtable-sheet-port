@@ -75,7 +75,10 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (conn, db_path) = db::open_default()?;
-    let state = Arc::new(BrokerState::new(conn));
+    let state = Arc::new(BrokerState::new(
+        conn,
+        sheet_port_core::exports::exports_dir_for(&db_path),
+    ));
     // i64 matches the mcp_heartbeat.pid column affinity.
     let pid = i64::from(std::process::id());
 
